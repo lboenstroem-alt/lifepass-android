@@ -22,6 +22,10 @@
  *   fileSystemState.seed('health/p1/today.json', '{"date":"2026-10-16"}');
  *   expect(fileSystemState.files()).toEqual([]);   // after the wipe
  */
+// Node's, imported: the test realm has no global Buffer, like the phone
+// (test/setup/env.ts). The fake's base64 is harness code, not app code.
+import { Buffer } from 'node:buffer';
+
 const APP = 'file:///data/user/0/is.lifepass.android';
 export const DOCUMENT_DIRECTORY = `${APP}/files/`;
 export const CACHE_DIRECTORY = `${APP}/cache/`;
