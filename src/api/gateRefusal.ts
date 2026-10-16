@@ -1,57 +1,42 @@
-// Maps a booking / walk-in DomainError code to friendly copy + whether it's a
-// membership-shaped refusal (adds a "View plans" CTA). Mirrors iOS
-// BookingViewModel.gateRefusal(forCode:). Returns null for anything not a known
-// gate refusal so the caller falls back to the raw error message.
+/* eslint lifepass/no-literal-copy: "error" */
+/**
+ * SHIM for the screens written before the refusal table (the legacy booking
+ * and check-in screens). It answers from `MemberRefusal` (./refusals), in the
+ * language on screen; BOOK-1 and CHECKIN-1/2 replace those screens and their
+ * calls, and QA-1 deletes this file.
+ *
+ * A gate refusal is a row the booking preview alone may block on (iOS
+ * `BookingViewModel.gateRefusal(forCode:)`: plan, trial and pause gates,
+ * caps, already booked, a time that is gone or full, a price the venue never
+ * set). Null for everything else (429, 5xx, `invalid_*`, an unknown code, a
+ * money state), and the caller shows the error's own message, which is the
+ * table's copy for every code the table knows.
+ */
+import { t } from '../i18n';
+
+import { specificRefusal, type RefusalCta } from './refusals';
 
 export type GateRefusal = {
   title: string;
   message: string;
-  /** Membership-shaped — the fix is a plan, so offer a "View plans" CTA. */
+  /** Membership-shaped: the fix is a plan, so offer "View plans". */
   needsMembership: boolean;
+  /** The row's one next step, for screens that can take it. */
+  cta: RefusalCta | null;
 };
 
-export function gateRefusalFor(code: string | undefined): GateRefusal | null {
-  switch (code) {
-    case 'no_active_plan_or_pass':
-      return {
-        title: 'Plan needed',
-        message: 'You need an active plan or pass to book this venue.',
-        needsMembership: true,
-      };
-    case 'boutique_requires_membership':
-      return {
-        title: 'Membership needed',
-        message:
-          "This boutique studio is only available with a monthly plan — a pass doesn't cover it.",
-        needsMembership: true,
-      };
-    case 'daily_use_cap_reached':
-      return {
-        title: 'Daily limit reached',
-        message:
-          "You've used all your included visits for today. Premium venues are still available.",
-        needsMembership: false,
-      };
-    case 'venue_already_booked_today':
-      return {
-        title: 'Already booked',
-        message: 'You already have a booking at this venue today.',
-        needsMembership: false,
-      };
-    case 'slot_already_booked':
-      return {
-        title: 'Already booked',
-        message: "You've already booked this time slot.",
-        needsMembership: false,
-      };
-    case 'concurrent_cap_reached':
-      return {
-        title: 'Too many active bookings',
-        message:
-          "You've reached the limit of upcoming bookings. Complete or cancel one first.",
-        needsMembership: false,
-      };
-    default:
-      return null;
-  }
+export function gateRefusalFor(
+  code: string | undefined,
+  reason?: string | null,
+  status = 409,
+): GateRefusal | null {
+  if (!code) return null;
+  const row = specificRefusal(code, reason, status);
+  if (!row || !row.blocksAtPreview) return null;
+  return {
+    title: t('booking.err.title'),
+    message: t(row.messageKey),
+    needsMembership: row.cta === 'seePlans',
+    cta: row.cta,
+  };
 }
