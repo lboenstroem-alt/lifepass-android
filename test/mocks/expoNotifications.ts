@@ -15,6 +15,11 @@
  *   await scheduleClassReminders(booking);
  *   expect(notificationsState.scheduled().map((n) => n.identifier)).toEqual([...]);
  *   notificationsState.tap('plan.checkin');
+ *
+ * Scheduling follows Android (a past one-off date is dropped, a channel-only
+ * trigger shows at once), `useLastNotificationResponse` is three-way like the
+ * SDK 54 hook (undefined, null, a response), and every function is a jest.fn
+ * whose own behaviour comes back after each test.
  */
 import type {
   NotificationChannel,
@@ -23,6 +28,7 @@ import type {
   NotificationRequestInput,
   NotificationTriggerInput,
 } from 'expo-notifications';
+import { useLayoutEffect, useState } from 'react';
 
 // The enums are plain JS in the package; reuse them so values never drift.
 const channelTypes = jest.requireActual('expo-notifications/build/NotificationChannelManager.types');
@@ -78,9 +84,30 @@ const state = {
   responseListeners: new Set<Listener<FakeNotificationResponse>>(),
   receivedListeners: new Set<Listener<FakeNotification>>(),
   lastResponse: null as FakeNotificationResponse | null,
+  /** While true, `useLastNotificationResponse` has not heard back yet (undefined). */
+  lastResponseHeld: false,
+  lastResponseSubscribers: new Set<() => void>(),
   badge: 0,
   nextId: 1,
 };
+
+/**
+ * Every exported function is a jest.fn so a test can spy on it or make it
+ * fail (`scheduleNotificationAsync.mockRejectedValueOnce(...)`). `reset()`
+ * puts the fake's own behaviour back after each test: `clearMocks` only
+ * clears the calls, so an override would otherwise outlive its test.
+ */
+type AnyFunction = (...args: any[]) => any;
+const defaults = new Map<jest.Mock, AnyFunction>();
+function fake<T extends AnyFunction>(implementation: T): jest.Mock<ReturnType<T>, Parameters<T>> {
+  const fn = jest.fn<ReturnType<T>, Parameters<T>>(implementation);
+  defaults.set(fn, implementation);
+  return fn;
+}
+
+function notifyLastResponse(): void {
+  state.lastResponseSubscribers.forEach((update) => update());
+}
 
 function permissionResponse() {
   return {
@@ -92,9 +119,9 @@ function permissionResponse() {
   };
 }
 
-export const getPermissionsAsync = jest.fn(async () => permissionResponse());
+export const getPermissionsAsync = fake(async () => permissionResponse());
 
-export const requestPermissionsAsync = jest.fn(async () => {
+export const requestPermissionsAsync = fake(async () => {
   state.requestCount += 1;
   if (state.status === 'undetermined' || (state.status === 'denied' && state.canAskAgain)) {
     state.status = state.answer;
@@ -105,116 +132,183 @@ export const requestPermissionsAsync = jest.fn(async () => {
 });
 
 /**
- * Keeps the request as the app passed it (the trigger is the INPUT shape, not
- * the native one). A `null` trigger shows the notification at once, as on a
- * phone: it goes straight to the presented list.
+ * The moment a schedulable trigger fires next, as expo-notifications 0.32 on
+ * Android computes it: `null` for a one-off date already in the past.
+ * Repeating triggers (daily, weekly, calendar, ...) always have a next date.
  */
-export const scheduleNotificationAsync = jest.fn(async (input: NotificationRequestInput) => {
+function nextTriggerTime(trigger: Record<string, unknown>): number | null {
+  if (trigger.type === 'date') {
+    const date = trigger.date as Date | number | string;
+    const at = date instanceof Date ? date.getTime() : new Date(date).getTime();
+    return at < Date.now() ? null : at;
+  }
+  if (trigger.type === 'timeInterval') return Date.now() + Number(trigger.seconds) * 1000;
+  return Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Keeps the request as the app passed it (the trigger is the INPUT shape, not
+ * the native one), and files it the way Android does
+ * (ExpoSchedulingDelegate.scheduleNotification):
+ *
+ *   - a `null` trigger, or one that names only a channel (`{ channelId }`),
+ *     shows the notification at once: it goes straight to the presented list;
+ *   - a one-off date before now never fires: Android drops the request (and
+ *     any earlier one with the same identifier) and still returns the
+ *     identifier, so it never shows up in getAllScheduledNotificationsAsync;
+ *   - anything else is scheduled, replacing a request with the same identifier.
+ *
+ * A missing (`undefined`) or shapeless trigger throws, as the SDK does.
+ */
+export const scheduleNotificationAsync = fake(async (input: NotificationRequestInput) => {
+  const trigger = input.trigger as unknown;
+  if (trigger === undefined) {
+    throw new TypeError(
+      'Encountered an `undefined` notification trigger. If you want to trigger the notification immediately, pass in an explicit `null` value.',
+    );
+  }
+  if (trigger !== null && (typeof trigger !== 'object' || !('type' in trigger || 'channelId' in trigger))) {
+    throw new TypeError('The `trigger` object you provided is invalid. It needs to contain a `type` or `channelId` entry.');
+  }
   const identifier = input.identifier ?? `fake-notification-${state.nextId++}`;
   const request: FakeNotificationRequest = {
     identifier,
     content: input.content as FakeNotificationRequest['content'],
-    trigger: input.trigger ?? null,
+    trigger: input.trigger,
   };
-  if (request.trigger === null) {
+  const triggerObject = trigger as Record<string, unknown> | null;
+  if (triggerObject === null || !('type' in triggerObject)) {
     state.presented.set(identifier, { date: Date.now(), request });
+  } else if (nextTriggerTime(triggerObject) === null) {
+    state.scheduled.delete(identifier);
   } else {
     state.scheduled.set(identifier, request);
   }
   return identifier;
 });
 
-export const cancelScheduledNotificationAsync = jest.fn(async (identifier: string) => {
+export const cancelScheduledNotificationAsync = fake(async (identifier: string) => {
   state.scheduled.delete(identifier);
 });
 
-export const cancelAllScheduledNotificationsAsync = jest.fn(async () => {
+export const cancelAllScheduledNotificationsAsync = fake(async () => {
   state.scheduled.clear();
 });
 
-export const getAllScheduledNotificationsAsync = jest.fn(async () => [...state.scheduled.values()]);
+export const getAllScheduledNotificationsAsync = fake(async () => [...state.scheduled.values()]);
 
-export const getNextTriggerDateAsync = jest.fn(async (trigger: NotificationTriggerInput) => {
+export const getNextTriggerDateAsync = fake(async (trigger: NotificationTriggerInput) => {
   const t = trigger as { type?: string; date?: Date | number } | null;
   if (t?.type === 'date' && t.date !== undefined) return new Date(t.date).getTime();
   return null;
 });
 
-export const getPresentedNotificationsAsync = jest.fn(async () => [...state.presented.values()]);
+export const getPresentedNotificationsAsync = fake(async () => [...state.presented.values()]);
 
-export const dismissNotificationAsync = jest.fn(async (identifier: string) => {
+export const dismissNotificationAsync = fake(async (identifier: string) => {
   state.presented.delete(identifier);
 });
 
-export const dismissAllNotificationsAsync = jest.fn(async () => {
+export const dismissAllNotificationsAsync = fake(async () => {
   state.presented.clear();
 });
 
-export const setNotificationChannelAsync = jest.fn(async (id: string, input: NotificationChannelInput) => {
+export const setNotificationChannelAsync = fake(async (id: string, input: NotificationChannelInput) => {
   const channel = { id, ...input } as unknown as NotificationChannel;
   state.channels.set(id, channel);
   return channel;
 });
 
-export const getNotificationChannelAsync = jest.fn(async (id: string) => state.channels.get(id) ?? null);
-export const getNotificationChannelsAsync = jest.fn(async () => [...state.channels.values()]);
-export const deleteNotificationChannelAsync = jest.fn(async (id: string) => {
+export const getNotificationChannelAsync = fake(async (id: string) => state.channels.get(id) ?? null);
+export const getNotificationChannelsAsync = fake(async () => [...state.channels.values()]);
+export const deleteNotificationChannelAsync = fake(async (id: string) => {
   state.channels.delete(id);
 });
 
-export const setNotificationChannelGroupAsync = jest.fn(async (id: string, group: object) => ({ id, ...group }));
-export const getNotificationChannelGroupsAsync = jest.fn(async () => []);
-export const getNotificationChannelGroupAsync = jest.fn(async () => null);
-export const deleteNotificationChannelGroupAsync = jest.fn(async () => undefined);
+export const setNotificationChannelGroupAsync = fake(async (id: string, group: object) => ({ id, ...group }));
+export const getNotificationChannelGroupsAsync = fake(async () => []);
+export const getNotificationChannelGroupAsync = fake(async () => null);
+export const deleteNotificationChannelGroupAsync = fake(async () => undefined);
 
-export const setNotificationCategoryAsync = jest.fn(async (id: string, actions: unknown[]) => ({ identifier: id, actions }));
-export const getNotificationCategoriesAsync = jest.fn(async () => []);
-export const deleteNotificationCategoryAsync = jest.fn(async () => true);
+export const setNotificationCategoryAsync = fake(async (id: string, actions: unknown[]) => ({ identifier: id, actions }));
+export const getNotificationCategoriesAsync = fake(async () => []);
+export const deleteNotificationCategoryAsync = fake(async () => true);
 
-export const setNotificationHandler = jest.fn((handler: Handler) => {
+export const setNotificationHandler = fake((handler: Handler) => {
   state.handler = handler;
 });
 
-export const addNotificationResponseReceivedListener = jest.fn((listener: Listener<FakeNotificationResponse>) => {
+export const addNotificationResponseReceivedListener = fake((listener: Listener<FakeNotificationResponse>) => {
   state.responseListeners.add(listener);
   return { remove: () => state.responseListeners.delete(listener) };
 });
 
-export const addNotificationReceivedListener = jest.fn((listener: Listener<FakeNotification>) => {
+export const addNotificationReceivedListener = fake((listener: Listener<FakeNotification>) => {
   state.receivedListeners.add(listener);
   return { remove: () => state.receivedListeners.delete(listener) };
 });
 
-export const addNotificationsDroppedListener = jest.fn(() => ({ remove: () => undefined }));
-export const addPushTokenListener = jest.fn(() => ({ remove: () => undefined }));
-export const removeNotificationSubscription = jest.fn((subscription: { remove: () => void }) => subscription.remove());
+export const addNotificationsDroppedListener = fake(() => ({ remove: () => undefined }));
+export const addPushTokenListener = fake(() => ({ remove: () => undefined }));
+export const removeNotificationSubscription = fake((subscription: { remove: () => void }) => subscription.remove());
 
-export const getLastNotificationResponseAsync = jest.fn(async () => state.lastResponse);
-export const getLastNotificationResponse = jest.fn(() => state.lastResponse);
-export const clearLastNotificationResponseAsync = jest.fn(async () => {
+export const getLastNotificationResponseAsync = fake(async () => state.lastResponse);
+export const getLastNotificationResponse = fake(() => state.lastResponse);
+export const clearLastNotificationResponseAsync = fake(async () => {
   state.lastResponse = null;
+  notifyLastResponse();
 });
-export const clearLastNotificationResponse = jest.fn(() => {
+export const clearLastNotificationResponse = fake(() => {
   state.lastResponse = null;
+  notifyLastResponse();
 });
-export const useLastNotificationResponse = jest.fn(() => state.lastResponse);
 
-export const getBadgeCountAsync = jest.fn(async () => state.badge);
-export const setBadgeCountAsync = jest.fn(async (count: number) => {
+/** The SDK's rule: a new identifier replaces the last response, the same one keeps it. */
+function nextResponse(
+  previous: FakeNotificationResponse | null | undefined,
+  next: FakeNotificationResponse | null,
+): FakeNotificationResponse | null {
+  if (!next) return null;
+  if (!previous) return next;
+  return previous.notification.request.identifier !== next.notification.request.identifier ? next : previous;
+}
+
+/**
+ * The SDK 54 hook, three-way: `undefined` until it knows (the first render,
+ * or while `notificationsState.holdLastResponse()` is in force), then `null`
+ * when no notification was tapped, or the response. A tap while mounted
+ * updates it; clearing the last response sets it back to null.
+ */
+export const useLastNotificationResponse = fake((): FakeNotificationResponse | null | undefined => {
+  const [response, setResponse] = useState<FakeNotificationResponse | null | undefined>(undefined);
+  useLayoutEffect(() => {
+    const update = () =>
+      setResponse((previous) => (state.lastResponseHeld ? undefined : nextResponse(previous, state.lastResponse)));
+    update();
+    state.lastResponseSubscribers.add(update);
+    return () => {
+      state.lastResponseSubscribers.delete(update);
+    };
+  }, []);
+  return response;
+});
+
+export const getBadgeCountAsync = fake(async () => state.badge);
+export const setBadgeCountAsync = fake(async (count: number) => {
   state.badge = count;
   return true;
 });
 
-export const registerTaskAsync = jest.fn(async () => undefined);
-export const unregisterTaskAsync = jest.fn(async () => undefined);
-export const unregisterForNotificationsAsync = jest.fn(async () => undefined);
-export const setAutoServerRegistrationEnabledAsync = jest.fn(async () => undefined);
+export const registerTaskAsync = fake(async () => undefined);
+export const unregisterTaskAsync = fake(async () => undefined);
+export const unregisterForNotificationsAsync = fake(async () => undefined);
+export const setAutoServerRegistrationEnabledAsync = fake(async () => undefined);
 
 // LifePass sends no push (owner ruling 4, as on iOS). Asking for a token is a bug.
-export const getExpoPushTokenAsync = jest.fn(async () => {
+export const getExpoPushTokenAsync = fake(async () => {
   throw new Error('LifePass must not request a push token (local notifications only)');
 });
-export const getDevicePushTokenAsync = jest.fn(async () => {
+export const getDevicePushTokenAsync = fake(async () => {
   throw new Error('LifePass must not request a push token (local notifications only)');
 });
 
@@ -280,11 +374,22 @@ export const notificationsState = {
     };
     state.lastResponse = response;
     state.responseListeners.forEach((listener) => listener(response));
+    notifyLastResponse();
     return response;
   },
   /** A cold start from a tapped notification: only the last response is set. */
   launchFrom(request: FakeNotificationRequest, actionIdentifier = DEFAULT_ACTION_IDENTIFIER): void {
     state.lastResponse = { notification: { date: Date.now(), request }, actionIdentifier };
+    notifyLastResponse();
+  },
+  /**
+   * Holds `useLastNotificationResponse` at `undefined` ("not known yet"), so
+   * a test can see what a screen does before the answer; `false` lets it
+   * answer (null or the last response).
+   */
+  holdLastResponse(held = true): void {
+    state.lastResponseHeld = held;
+    notifyLastResponse();
   },
   /** The foreground handler the app registered, or null. */
   handler(): Handler {
@@ -302,7 +407,15 @@ export const notificationsState = {
     state.responseListeners.clear();
     state.receivedListeners.clear();
     state.lastResponse = null;
+    state.lastResponseHeld = false;
+    state.lastResponseSubscribers.clear();
     state.badge = 0;
     state.nextId = 1;
+    // Back to the fake's own behaviour: drops a test's mockImplementation,
+    // mockReturnValue or mockRejectedValue, and any queued *Once values.
+    defaults.forEach((implementation, fn) => {
+      fn.mockReset();
+      fn.mockImplementation(implementation);
+    });
   },
 };

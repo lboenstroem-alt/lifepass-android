@@ -4,6 +4,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
+import { act, renderHook } from '@testing-library/react-native';
 import * as SecureStore from 'expo-secure-store';
 import * as Notifications from 'expo-notifications';
 
@@ -75,7 +76,7 @@ describe('expo-notifications (local only)', () => {
         shouldSetBadge: false,
       }),
     });
-    const at = new Date('2026-10-20T17:50:00Z');
+    const at = new Date(Date.now() + 2 * 60 * 60 * 1000);
     await Notifications.scheduleNotificationAsync({
       identifier: 'booking.reminder.abc.t10',
       content: { title: 'Yoga', body: 'In 10 minutes', data: { route: 'library' } },
@@ -117,6 +118,61 @@ describe('expo-notifications (local only)', () => {
     sub.remove();
   });
 
+  it('drops a one-off date already in the past, as Android does (and returns the id)', async () => {
+    const future = { type: Notifications.SchedulableTriggerInputTypes.DATE, date: Date.now() + 60_000 } as const;
+    const past = { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(Date.now() - 1000) } as const;
+    await Notifications.scheduleNotificationAsync({ identifier: 'class.reminder.1', content: { title: 'x' }, trigger: future });
+    // Rescheduling the same id into the past removes the earlier request too.
+    expect(
+      await Notifications.scheduleNotificationAsync({ identifier: 'class.reminder.1', content: { title: 'x' }, trigger: past }),
+    ).toBe('class.reminder.1');
+    expect(await Notifications.scheduleNotificationAsync({ identifier: 'late', content: { title: 'y' }, trigger: past })).toBe(
+      'late',
+    );
+    expect(await Notifications.getAllScheduledNotificationsAsync()).toEqual([]);
+    expect(notificationsState.presented()).toEqual([]);
+  });
+
+  it('shows a channel-only trigger at once, as Android does', async () => {
+    await Notifications.scheduleNotificationAsync({
+      identifier: 'rest.over',
+      content: { title: 'x' },
+      trigger: { channelId: 'rest_timer' },
+    });
+    expect(notificationsState.scheduled()).toEqual([]);
+    expect(notificationsState.presented().map((n) => n.request.identifier)).toEqual(['rest.over']);
+  });
+
+  it('refuses a missing or shapeless trigger, as the SDK does', async () => {
+    await expect(
+      Notifications.scheduleNotificationAsync({
+        content: { title: 'x' },
+        trigger: undefined as unknown as Notifications.NotificationTriggerInput,
+      }),
+    ).rejects.toThrow(/explicit `null`/);
+    await expect(
+      Notifications.scheduleNotificationAsync({
+        content: { title: 'x' },
+        trigger: { seconds: 5 } as unknown as Notifications.NotificationTriggerInput,
+      }),
+    ).rejects.toThrow(/`type` or `channelId`/);
+  });
+
+  it('lets a test make a call fail ...', async () => {
+    (Notifications.scheduleNotificationAsync as jest.Mock).mockRejectedValue(new Error('alarm manager unavailable'));
+    (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'granted', granted: true });
+    await expect(
+      Notifications.scheduleNotificationAsync({ content: { title: 'x' }, trigger: null }),
+    ).rejects.toThrow(/alarm manager/);
+  });
+
+  it('... and the next test gets the fake back', async () => {
+    expect((await Notifications.getPermissionsAsync()).status).toBe('undetermined');
+    await expect(
+      Notifications.scheduleNotificationAsync({ identifier: 'ok', content: { title: 'x' }, trigger: null }),
+    ).resolves.toBe('ok');
+  });
+
   it('keeps channels with their importance', async () => {
     await Notifications.setNotificationChannelAsync('rest_timer', {
       name: 'Rest timer',
@@ -136,6 +192,46 @@ describe('expo-notifications (local only)', () => {
     expect(notificationsState.scheduled()).toEqual([]);
     expect((await Notifications.getPermissionsAsync()).status).toBe('undetermined');
     expect(notificationsState.handler()).toBeNull();
+  });
+});
+
+describe('useLastNotificationResponse (SDK 54, three-way)', () => {
+  const request = {
+    identifier: 'plan.checkin',
+    content: { title: 'Check-in', data: { route: 'plan.checkin' } },
+    trigger: null,
+  };
+
+  it('is undefined until it knows, then null when nothing was tapped', async () => {
+    const seen: unknown[] = [];
+    const { result } = await renderHook(() => {
+      const response = Notifications.useLastNotificationResponse();
+      seen.push(response);
+      return response;
+    });
+    expect(seen[0]).toBeUndefined();
+    expect(result.current).toBeNull();
+  });
+
+  it('answers a cold start from a tapped notification with the response', async () => {
+    notificationsState.launchFrom(request);
+    const { result } = await renderHook(() => Notifications.useLastNotificationResponse());
+    expect(result.current?.notification.request.identifier).toBe('plan.checkin');
+  });
+
+  it('can be held at "not known yet", then follows taps and clears', async () => {
+    notificationsState.holdLastResponse();
+    const { result } = await renderHook(() => Notifications.useLastNotificationResponse());
+    expect(result.current).toBeUndefined();
+    await act(async () => notificationsState.holdLastResponse(false));
+    expect(result.current).toBeNull();
+    await Notifications.scheduleNotificationAsync(request);
+    await act(async () => {
+      notificationsState.tap('plan.checkin');
+    });
+    expect(result.current?.notification.request.identifier).toBe('plan.checkin');
+    await act(async () => Notifications.clearLastNotificationResponseAsync());
+    expect(result.current).toBeNull();
   });
 });
 
