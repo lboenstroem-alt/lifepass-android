@@ -15,6 +15,7 @@
 //   t('checkin.credits_left', { count })  // "{count} credits remaining"
 //   tp('account.pass_visits_left', 21)    // Icelandic singular for 21
 //
+// Numbers, dates and durations in the account language: ./format.ts.
 import { getLocales } from 'expo-localization';
 import { useMemo } from 'react';
 import { create } from 'zustand';
@@ -150,3 +151,5 @@ export function useT(): Translator {
     [language],
   );
 }
+
+export { HealthFormat, VenueTimeFormat, formatDistance, iskPrefix } from './format';
