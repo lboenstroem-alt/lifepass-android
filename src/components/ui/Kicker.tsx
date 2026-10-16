@@ -1,7 +1,10 @@
 // A small uppercase label (iOS Kicker): Inter Tight 10 semibold, tracking 1.6.
+// A caller's style may change size or spacing; the face stays the kicker's
+// unless the caller names a family itself (theme/fontInjection.ts).
 import { StyleSheet, Text, type StyleProp, type TextStyle } from 'react-native';
 
-import { colors, sans } from '../../theme';
+import { colors, fonts, sans } from '../../theme';
+import { hasExplicitFontFamily } from '../../theme/fontInjection';
 
 export type KickerProps = {
   text: string;
@@ -14,6 +17,8 @@ export type KickerProps = {
   testID?: string;
 };
 
+const KICKER_FACE = { fontFamily: fonts.sansSemiBold } as const;
+
 export default function Kicker({ text, color = colors.paper3, style, maxScale, accessibilityRole, numberOfLines, testID }: KickerProps) {
   return (
     <Text
@@ -21,7 +26,7 @@ export default function Kicker({ text, color = colors.paper3, style, maxScale, a
       accessibilityRole={accessibilityRole}
       maxFontSizeMultiplier={maxScale}
       numberOfLines={numberOfLines}
-      style={[styles.kicker, { color }, style]}
+      style={[styles.kicker, { color }, style, !hasExplicitFontFamily(style) && KICKER_FACE]}
     >
       {text.toUpperCase()}
     </Text>

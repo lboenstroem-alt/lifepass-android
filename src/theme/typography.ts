@@ -3,9 +3,14 @@
 //   Fraunces     editorial headings (iOS `LPFont.serif(size, weight:)`)
 //
 // Font families are registered under these keys by `useFonts` in App.tsx.
-// Inter Tight is applied globally as the default Text font (weight- and
-// italic-aware, via theme/installFontDefaults). Custom fonts ship one file per
-// weight/style, so every cut we use must be listed here AND loaded in App.tsx.
+// Custom fonts ship one file per weight/style, so every cut we use must be
+// listed here AND loaded in App.tsx.
+//
+// THERE IS NO GLOBAL DEFAULT FONT. theme/installFontDefaults gives Inter Tight
+// only to StyleSheet styles that set a fontSize, fontWeight or fontStyle; a
+// bare <Text>, an inline style or a colour-only style renders in Roboto
+// (React 19 ignores `defaultProps` on function components such as Text). Draw
+// every text with `LPText` (src/components/ui) or spread `sans()`/`serif()`.
 //
 // `sans()` and `serif()` port the iOS helpers: they name the exact face for a
 // weight, so a style built inline (outside StyleSheet.create, where the font
