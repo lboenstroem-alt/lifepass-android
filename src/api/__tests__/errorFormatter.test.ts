@@ -9,6 +9,7 @@ import { AuthApiError, AuthRetryableFetchError, FunctionsHttpError, PostgrestErr
 import { setDev } from '@test/harness';
 
 import { setCurrentLanguage, translate } from '../../i18n';
+import { noteConnectivity } from '../connectivity';
 import {
   DecodingError,
   HttpStatusError,
@@ -20,7 +21,7 @@ import {
   TransportError,
   type ProblemDetails,
 } from '../errors';
-import { errorMessage, ErrorFormatter, refusalMessage, setRefusalLogger } from '../errorFormatter';
+import { errorMessage, ErrorFormatter, refusalFor, refusalMessage, setRefusalLogger } from '../errorFormatter';
 import { gateRefusalFor } from '../gateRefusal';
 
 function fixture(status: number, slug: string, detail = 'Server detail.'): ProblemDetails {
@@ -97,12 +98,28 @@ describe('problem messages', () => {
     expect(new DecodingError('{}').message).toBe(translate('error.decoding', 'en'));
     expect(new NotAuthenticatedError().message).toBe(translate('error.sign_in', 'en'));
     expect(new TransportError('network').message).toBe(translate('error.network', 'en'));
-    expect(new TransportError('cancelled').message).toBe(translate('error.cancelled', 'en'));
+    expect(new TransportError('offline').message).toBe(translate('error.offline', 'en'));
+    // iOS words every URLError but offline and timed out as a network error,
+    // a cancellation included; `error.cancelled` is only for a raw abort.
+    expect(new TransportError('cancelled').message).toBe(translate('error.network', 'en'));
+    expect(errorMessage(new TransportError('cancelled'))).toBe(translate('error.network', 'en'));
+  });
+
+  it('a JSON error body with no status reads as iOS reads it: no status at all', () => {
+    // A proxy's own JSON error page in front of the API.
+    const proxy = new ProblemError({ type: 'https://lifepass.is/problems/busy' }, 504);
+    expect(proxy.status).toBeUndefined();
+    expect(proxy.httpStatus).toBe(504);
+    expect(proxy.isRetryable).toBe(false);
+    expect(proxy.messageIn('is')).toBe(translate('error.generic', 'is'));
+    expect(refusalMessage(proxy)).toBe(translate('error.refusal_fallback', 'en'));
+    expect(refusalFor(proxy)).toEqual({ messageKey: 'error.refusal_fallback', cta: null, blocksAtPreview: false });
   });
 });
 
 describe('ErrorFormatter.message', () => {
   beforeEach(() => setCurrentLanguage('en'));
+  afterEach(() => noteConnectivity({ isConnected: true }));
 
   it("shows the app's own errors", () => {
     expect(errorMessage(new LocalizedError('Already in the right words.'))).toBe('Already in the right words.');
@@ -145,6 +162,16 @@ describe('ErrorFormatter.message', () => {
     aborted.name = 'AbortError';
     expect(errorMessage(aborted)).toBe(translate('error.cancelled', 'en'));
   });
+
+  it('a connection failure on a phone NetInfo says has no network reads as offline, as iOS', () => {
+    noteConnectivity({ isConnected: false });
+    // A sign-in or password reset with no network (iOS: notConnectedToInternet).
+    expect(errorMessage(new AuthRetryableFetchError('Failed to fetch', 0))).toBe(translate('error.offline', 'en'));
+    expect(errorMessage(new TypeError('Network request failed'))).toBe(translate('error.offline', 'en'));
+    // An auth server answering 5xx is still the server.
+    expect(errorMessage(new AuthRetryableFetchError('Bad gateway', 502))).toBe(translate('error.server', 'en'));
+    expect(errorMessage(new TypeError('Network request timed out'))).toBe(translate('error.timeout', 'en'));
+  });
 });
 
 describe('the refusal log', () => {
@@ -177,6 +204,25 @@ describe('the legacy gate-refusal shim', () => {
     });
     expect(gateRefusalFor('slot-already-booked')).toMatchObject({ needsMembership: false, cta: 'myBookings' });
     expect(gateRefusalFor('slot_unavailable', 'class_full')?.message).toBe(translate('booking.class.err_full', 'is'));
+  });
+
+  it('at the scanner, answers in the check-in words under the scanner alert title', () => {
+    setCurrentLanguage('en');
+    expect(gateRefusalFor('daily_use_cap_reached', null, 403, 'checkIn')).toEqual({
+      title: translate('common.error_title', 'en'),
+      message: translate('checkin.err.daily_cap', 'en'),
+      needsMembership: false,
+      cta: null,
+    });
+    expect(gateRefusalFor('no_active_plan_or_pass', null, 403, 'checkIn')).toMatchObject({
+      message: translate('checkin.err.no_plan', 'en'),
+      needsMembership: true,
+    });
+    expect(gateRefusalFor('monthly_cap_reached', null, 403, 'checkIn')?.message).toBe(
+      translate('checkin.err.monthly_cap', 'en'),
+    );
+    // The booking default is unchanged.
+    expect(gateRefusalFor('daily_use_cap_reached')?.message).toBe(translate('booking.err.daily_cap', 'en'));
   });
 
   it('is null for anything that does not block at the preview', () => {

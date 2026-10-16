@@ -731,7 +731,7 @@ function errorFor(answer: Answer): ApiError {
   } catch {
     return new HttpStatusError(answer.status, snippet(answer.text), answer.meta);
   }
-  const problem = decodeProblemDetails(json, answer.status);
+  const problem = decodeProblemDetails(json);
   if (problem) return new ProblemError(problem, answer.status, answer.meta);
   return new HttpStatusError(answer.status, snippet(answer.text), answer.meta);
 }

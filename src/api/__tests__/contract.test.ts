@@ -80,26 +80,26 @@ describe('problems', () => {
       for (const mode of ['minimal', 'full'] as const) {
         const body = sampleSchema(name, mode) as Record<string, unknown>;
         expect(validateSchema(name, body).valid).toBe(true);
-        const details = decodeProblemDetails(body, 409);
+        const details = decodeProblemDetails(body);
         expect([name, mode, details === null]).toEqual([name, mode, false]);
       }
     }
   });
 
   it('keeps what each extension carries', () => {
-    const consent = decodeProblemDetails(sampleSchema('ChargeConsentProblem', 'full'), 402)!;
+    const consent = decodeProblemDetails(sampleSchema('ChargeConsentProblem', 'full'))!;
     const offer = sampleSchema('ChargeConsentOffer', 'full') as Record<string, unknown>;
     expect(consent.offer).toMatchObject({ kind: offer.kind, amountIsk: offer.amountIsk, lane: offer.lane, reason: offer.reason });
     expect(consent.offer?.party).toBeDefined();
 
-    const coach = decodeProblemDetails(sampleSchema('CoachFreeLimitProblem', 'full'), 429)!;
+    const coach = decodeProblemDetails(sampleSchema('CoachFreeLimitProblem', 'full'))!;
     expect(coach.freeMessages).toBeDefined();
     expect(coach.upgrade).toBeDefined();
 
-    const reason = decodeProblemDetails(sampleSchema('HealthReasonProblem', 'full'), 409)!;
+    const reason = decodeProblemDetails(sampleSchema('HealthReasonProblem', 'full'))!;
     expect(typeof reason.reason).toBe('string');
 
-    const access = decodeProblemDetails(sampleSchema('HealthAccessProblem', 'full'), 403)!;
+    const access = decodeProblemDetails(sampleSchema('HealthAccessProblem', 'full'))!;
     expect(typeof access.memberPricing).toBe('string');
   });
 

@@ -8,6 +8,7 @@ import NetInfo from '@react-native-community/netinfo';
 
 import { api, Reply } from '@test/server';
 
+import { translate } from '../../i18n';
 import {
   API_TIMEOUTS,
   apiGet,
@@ -29,6 +30,7 @@ import {
   ProblemError,
   TransportError,
 } from '../errors';
+import { refusalFor, refusalMessage } from '../errorFormatter';
 import { createStubApiClient, installStubApiClient } from '../testing';
 
 const client = () => createStubApiClient().client;
@@ -297,12 +299,18 @@ describe('problems', () => {
     expect(await failure(client().get('/b'))).toBeInstanceOf(HttpStatusError);
   });
 
-  it('a problem with no status of its own takes the response status', async () => {
-    api.on('GET', '/a', Reply.json(503, { type: 'https://lifepass.is/problems/busy' }));
+  it('a problem with no status of its own keeps none, as on iOS', async () => {
+    // A proxy's own JSON error page: iOS reads it by `status ?? 0`.
+    api.on('GET', '/a', Reply.json(504, { type: 'https://lifepass.is/problems/busy' }));
     const error = (await failure(client().get('/a'))) as ProblemError;
     expect(error).toBeInstanceOf(ProblemError);
-    expect(error.status).toBe(503);
-    expect(error.details.status).toBe(503);
+    expect(error.status).toBeUndefined();
+    expect(error.details.status).toBeUndefined();
+    expect(error.httpStatus).toBe(504);
+    expect(error.isRetryable).toBe(false);
+    expect(error.messageIn('en')).toBe(translate('error.generic', 'en'));
+    expect(refusalMessage(error)).toBe(translate('error.refusal_fallback', 'en'));
+    expect(refusalFor(error)?.cta).toBeNull();
   });
 
   it('surfaces Retry-After and the request id', async () => {

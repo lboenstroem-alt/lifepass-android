@@ -28,6 +28,7 @@ import {
 
 import { t } from '../i18n';
 
+import { knownDisconnected } from './connectivity';
 import { ApiError, HttpStatusError, LocalizedError, ProblemError } from './errors';
 import { resolveRefusal, type MemberRefusal, type RefusalContext } from './refusals';
 
@@ -58,10 +59,13 @@ export function errorMessage(error: unknown): string {
   if (error instanceof PostgrestError) return t('error.generic');
 
   // Supabase Auth. Its own refusals carry user-safe sentences (as on iOS);
-  // the auth server being unreachable is a network failure, not a sentence.
+  // the auth server being unreachable is a connection failure, not a
+  // sentence. On iOS that is a URLError, read as "offline" on a phone with
+  // no network: NetInfo's last word says which here.
   if (isAuthError(error)) {
     if (isAuthRetryableFetchError(error)) {
-      return t(error.status && error.status >= 500 ? 'error.server' : 'error.network');
+      if (error.status && error.status >= 500) return t('error.server');
+      return t(connectionFailureKey());
     }
     if (error.message) return error.message;
   }
@@ -151,10 +155,19 @@ function logRefusal(error: ProblemError, refusal: MemberRefusal): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * A connection that failed with no answer: "offline" when NetInfo last said
+ * the phone has no network (iOS `notConnectedToInternet`), else "network
+ * error". The last known state, because this cannot wait for NetInfo.
+ */
+function connectionFailureKey(): string {
+  return knownDisconnected() ? 'error.offline' : 'error.network';
+}
+
+/**
  * React Native's fetch rejects with a TypeError ("Network request failed",
- * "Network request timed out") and an aborted one with an AbortError. Only
- * the API client can tell offline from another network failure (it asks
- * NetInfo), so a raw one reads as a network error.
+ * "Network request timed out") and an aborted one with an AbortError: the
+ * raw URLError branch of iOS ErrorFormatter, the only place a cancellation
+ * has words of its own.
  */
 function rawTransportKey(error: unknown): string | null {
   if (!(error instanceof Error)) return null;
@@ -162,7 +175,7 @@ function rawTransportKey(error: unknown): string | null {
   if (error instanceof TypeError) {
     if (/timed out/i.test(error.message)) return 'error.timeout';
     if (/network request failed|failed to fetch|fetch failed|network error/i.test(error.message)) {
-      return 'error.network';
+      return connectionFailureKey();
     }
   }
   return null;

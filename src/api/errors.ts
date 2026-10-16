@@ -108,9 +108,11 @@ export interface ProblemDetails {
   readonly type?: string;
   readonly title?: string;
   /**
-   * The problem's status. The server always sends it; a JSON body without one
-   * (a proxy's own error page) takes the response's status instead, so it
-   * reads by its status like its HTML twin would.
+   * The body's own status, as sent. The server always sends it; a JSON body
+   * without one (a proxy's own error page) has none, and reads as iOS reads
+   * it: by `status ?? 0`, so the generic sentence, the refusal fallback with
+   * no step, and not retryable. The response's status is
+   * `ProblemError.httpStatus`, for diagnostics.
    */
   readonly status?: number;
   readonly detail?: string;
@@ -232,16 +234,16 @@ function isAbsoluteUrl(value: string): boolean {
  * problem", so the error reads by its HTTP status), the Coach's two read
  * fail-soft. Any JSON object is a problem; an array, a string or HTML is not.
  *
- * `httpStatus` fills `status` when the body has none (see `ProblemDetails.status`).
+ * `status` is the body's own (see `ProblemDetails.status`), never the
+ * response's.
  */
-export function decodeProblemDetails(body: unknown, httpStatus?: number): ProblemDetails | null {
+export function decodeProblemDetails(body: unknown): ProblemDetails | null {
   if (!isObject(body)) return null;
   try {
-    const status = optional(body, 'status', asInt) ?? httpStatus;
     return {
       type: optional(body, 'type', asString),
       title: optional(body, 'title', asString),
-      status,
+      status: optional(body, 'status', asInt),
       detail: optional(body, 'detail', asString),
       instance: optional(body, 'instance', asString),
       errors: optional(body, 'errors', asFieldErrors),
@@ -374,7 +376,10 @@ export abstract class ApiError extends Error {
     return slugs.some((slug) => foldCode(slug) === mine);
   }
 
-  /** The HTTP status, when there was a response. */
+  /**
+   * The status, as iOS `statusCode`: a problem's own `status` (undefined
+   * when its body sent none), or the response's for a non-problem answer.
+   */
   get status(): number | undefined {
     return undefined;
   }
@@ -442,7 +447,11 @@ Object.defineProperty(ApiError.prototype, 'message', {
 export class ProblemError extends ApiError {
   readonly kind = 'problem' as const;
   readonly details: ProblemDetails;
-  /** The response's own status (the body's `status` is `details.status`). */
+  /**
+   * The response's own status, for diagnostics. Everything that decides
+   * (`status`, the words, the refusal row, `isRetryable`) reads the body's
+   * `details.status`, as iOS does.
+   */
   readonly httpStatus: number;
 
   constructor(details: ProblemDetails, httpStatus: number, meta: ResponseMeta = {}) {
@@ -463,8 +472,9 @@ export class ProblemError extends ApiError {
     return this.slug;
   }
 
+  /** The body's status (iOS `statusCode`); `undefined` when the body sent none. */
   get status(): number | undefined {
-    return this.details.status ?? this.httpStatus;
+    return this.details.status;
   }
 
   get problem(): ProblemDetails {
@@ -564,14 +574,18 @@ export class TransportError extends ApiError {
     return this.transport !== 'cancelled';
   }
 
+  /**
+   * As iOS `APIError.transport` words a URLError: offline, timeout, and
+   * "network error" for everything else, a cancellation included (a screen
+   * never shows one anyway: see `isCancellation`). `error.cancelled` is only
+   * for a raw abort that never went through the client (./errorFormatter).
+   */
   messageIn(lang: Lang): string {
     switch (this.transport) {
       case 'offline':
         return translate('error.offline', lang);
       case 'timeout':
         return translate('error.timeout', lang);
-      case 'cancelled':
-        return translate('error.cancelled', lang);
       default:
         return translate('error.network', lang);
     }

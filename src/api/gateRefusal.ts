@@ -14,7 +14,7 @@
  */
 import { t } from '../i18n';
 
-import { specificRefusal, type RefusalCta } from './refusals';
+import { specificRefusal, type RefusalContext, type RefusalCta } from './refusals';
 
 export type GateRefusal = {
   title: string;
@@ -25,16 +25,23 @@ export type GateRefusal = {
   cta: RefusalCta | null;
 };
 
+/**
+ * `context` is where the member is: `checkIn` at the scanner, where the
+ * table's check-in rows ("it resets at midnight") and the scanner's alert
+ * title (iOS CheckInView: `common.error_title`) apply instead of the
+ * booking ones.
+ */
 export function gateRefusalFor(
   code: string | undefined,
   reason?: string | null,
   status = 409,
+  context: RefusalContext = 'general',
 ): GateRefusal | null {
   if (!code) return null;
-  const row = specificRefusal(code, reason, status);
+  const row = specificRefusal(code, reason, status, context);
   if (!row || !row.blocksAtPreview) return null;
   return {
-    title: t('booking.err.title'),
+    title: t(context === 'checkIn' ? 'common.error_title' : 'booking.err.title'),
     message: t(row.messageKey),
     needsMembership: row.cta === 'seePlans',
     cta: row.cta,
