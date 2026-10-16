@@ -7,7 +7,7 @@
 // (MemberRefusal.allRows, DiscountCode.Problem, Plan.all,
 // FeedbackActionButton, MerchantInfo) are left to that package; every
 // assertion on the words themselves is here.
-import { lookup, translate } from '..';
+import { ENGLISH_RULE_PLURALS, lookup, translate } from '..';
 import { markupPlain, markupRuns } from '../markup';
 import {
   app,
@@ -730,5 +730,22 @@ describe('the whole table', () => {
         .filter(([key, value]) => placeholders(value).some((p) => !(is[key] ?? '').includes(p)))
         .map(([key]) => key),
     );
+  });
+
+  // An Icelandic `.one` without its `.many`'s {count} is only right where iOS
+  // picks the pair with the English rule (count == 1), never with pluralKey:
+  // through tp an Icelandic 21 takes the singular and would print "1".
+  it('keeps every Icelandic singular that drops its plural’s placeholder on the English-rule list', () => {
+    const dropping = Object.keys(is)
+      .filter((key) => key.endsWith('.one'))
+      .map((key) => key.slice(0, -'.one'.length))
+      .filter((base) => {
+        const one = is[`${base}.one`] ?? '';
+        const many = is[`${base}.many`];
+        return many !== undefined && placeholders(many).some((p) => !one.includes(p));
+      })
+      .sort();
+    expect(dropping).toEqual(['account.refer_earned', 'home.pass_visits']);
+    expectNone(dropping.filter((base) => !ENGLISH_RULE_PLURALS.includes(base)));
   });
 });

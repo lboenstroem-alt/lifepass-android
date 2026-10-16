@@ -5,6 +5,7 @@ import { act, renderHook } from '@testing-library/react-native';
 
 import {
   currentLanguage,
+  ENGLISH_RULE_PLURALS,
   fill,
   hasKey,
   lookup,
@@ -19,6 +20,10 @@ import {
   useT,
   type Lang,
 } from '..';
+
+// The language is shared module state; every test starts from English
+// whatever ran before it (or was filtered out with -t).
+beforeEach(() => setCurrentLanguage('en'));
 
 describe('lookup (LPStrings.lookup)', () => {
   it('falls back is → en → the key, so a cell is never blank', () => {
@@ -99,6 +104,61 @@ describe('pluralKey (LocalizationPluralTests)', () => {
   it('fills {count} for the form it picks', () => {
     expect(translatePlural('coach.free.left', 2, 'en')).toBe('2 free messages left this month');
     expect(translatePlural('account.pass_visits_left', 21, 'is')).toContain('21');
+  });
+});
+
+describe('pairs iOS picks with the English rule (ENGLISH_RULE_PLURALS)', () => {
+  it('lists the bases iOS never reads through pluralKey', () => {
+    expect([...ENGLISH_RULE_PLURALS].sort()).toEqual(['account.refer_earned', 'coach.found', 'home.pass_visits']);
+  });
+
+  it('reads 21 pass visits the way iOS does, never “1”', () => {
+    // HomeView / AccountView: visitsLeft == 1 ? .one : .many(count).
+    const iosChoice = (count: number, lang: Lang) =>
+      count === 1 ? translate('home.pass_visits.one', lang) : translate('home.pass_visits.many', lang, { count });
+    expect(iosChoice(21, 'is')).toBe('21 passaheimsóknir eftir');
+    expect(iosChoice(1, 'is')).toBe('1 passaheimsókn eftir');
+    expect(iosChoice(31, 'en')).toBe('31 pass visits left');
+    // What tp would have printed: the Icelandic singular, which has no {count}.
+    const error = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(translatePlural('home.pass_visits', 21, 'is')).toBe('1 passaheimsókn eftir');
+    error.mockRestore();
+  });
+
+  it('says in development when one of them goes through tp', () => {
+    const error = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      for (const base of ENGLISH_RULE_PLURALS) {
+        error.mockClear();
+        translatePlural(base, 21, 'is');
+        expect(error).toHaveBeenCalledTimes(1);
+        expect(error.mock.calls[0]?.[0]).toContain(`"${base}"`);
+      }
+      setCurrentLanguage('is');
+      error.mockClear();
+      tp('account.refer_earned', 2);
+      expect(error).toHaveBeenCalledTimes(1);
+      // A key iOS reads through pluralKey says nothing.
+      error.mockClear();
+      tp('account.pass_visits_left', 21);
+      translatePlural('runner.summary.sets', 21, 'is');
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('lets runner.summary.sets through tp: both rules read the same in both languages', () => {
+    // PlanTodayCard picks it with `sets == 1`, RunnerFormat.summary with
+    // pluralKey; Icelandic "sett" is one word for both forms.
+    for (const lang of ['en', 'is'] as const) {
+      for (let count = 0; count <= 250; count += 1) {
+        const englishRule = translate(count === 1 ? 'runner.summary.sets.one' : 'runner.summary.sets.many', lang, { count });
+        if (translatePlural('runner.summary.sets', count, lang) !== englishRule) {
+          throw new Error(`runner.summary.sets ${count} (${lang}) differs between the rules`);
+        }
+      }
+    }
   });
 });
 

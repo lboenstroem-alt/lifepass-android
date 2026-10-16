@@ -15,7 +15,12 @@
 //   t('checkin.credits_left', { count })  // "{count} credits remaining"
 //   tp('account.pass_visits_left', 21)    // Icelandic singular for 21
 //
+// `tp` only for keys iOS reads through pluralKey; a few pairs iOS picks with
+// the English rule instead (ENGLISH_RULE_PLURALS below).
+//
 // Numbers, dates and durations in the account language: ./format.ts.
+// The workout runner's dose words and clock: ./runnerFormat.ts (imported
+// from that file directly; it reads `lookup` from here).
 // `*italic*` runs and `[label](url)` links in a string: ./markup.tsx.
 import { getLocales } from 'expo-localization';
 import { useMemo } from 'react';
@@ -115,8 +120,51 @@ export function translate(key: string, lang: Lang, params?: Params): string {
   return fill(lookup(key, lang), params);
 }
 
-/** Plural-aware translate in an explicit language; `{count}` is filled automatically. */
+/**
+ * The `.one`/`.many` pairs iOS picks with the ENGLISH rule in both languages
+ * and never reads through `LPStrings.pluralKey`. Do not pass them to
+ * `tp`/`translatePlural`; write the choice the way the Swift does:
+ *
+ * - `home.pass_visits` (HomeView's pass chip, AccountView's caps summary) and
+ *   `account.refer_earned` (AccountView's referral row):
+ *   `count === 1 ? t('home.pass_visits.one') : t('home.pass_visits.many', { count })`.
+ *   Their Icelandic `.one` has no `{count}` ("1 passaheimsókn eftir"), so
+ *   `tp` would take the Icelandic singular for 21, 31 and 101 and print "1".
+ *   iOS never does: it shows "21 passaheimsóknir eftir".
+ * - `coach.found` (CoachViewModel's search reply):
+ *   `count > 1 ? t('coach.found.many', …) : t('coach.found.one', …)`, both
+ *   with `{ count, category }`. Through `tp` an Icelandic 21 would read
+ *   "valkost" where iOS says "valkosti".
+ *
+ * Never work around one of these with an Android pack key: that retypes iOS
+ * copy. A copy-rule test (__tests__/copyRules.test.ts) keeps every generated
+ * pair whose Icelandic `.one` drops a placeholder of its `.many` on this list.
+ *
+ * Not listed: `runner.summary.sets`. The Today card picks it with `sets == 1`
+ * and the runner's summary with `pluralKey`; Icelandic "sett" is one word for
+ * both forms, so the two rules always agree and `tp` is safe for it.
+ */
+export const ENGLISH_RULE_PLURALS: readonly string[] = Object.freeze([
+  'account.refer_earned',
+  'coach.found',
+  'home.pass_visits',
+]);
+
+const englishRulePlurals: ReadonlySet<string> = new Set(ENGLISH_RULE_PLURALS);
+
+/**
+ * Plural-aware translate in an explicit language: the Icelandic rule of
+ * `pluralKey`, and `{count}` filled automatically. Only for keys iOS reads
+ * through `LPStrings.pluralKey`; the pairs iOS picks with the English rule
+ * are in `ENGLISH_RULE_PLURALS` and are written out at the call site.
+ */
 export function translatePlural(base: string, count: number, lang: Lang, params?: Params): string {
+  if (__DEV__ && englishRulePlurals.has(base)) {
+    console.error(
+      `i18n: "${base}" is picked with the English rule on iOS, never with pluralKey; ` +
+        'choose .one or .many at the call site as the Swift does (ENGLISH_RULE_PLURALS in src/i18n/index.ts).',
+    );
+  }
   return translate(pluralKey(base, count, lang), lang, { count, ...params });
 }
 
@@ -125,7 +173,11 @@ export function t(key: string, params?: Params): string {
   return translate(key, currentLanguage(), params);
 }
 
-/** Plural-aware translate in the current language; `{count}` is filled automatically. */
+/**
+ * Plural-aware translate in the current language; `{count}` is filled
+ * automatically. Only for keys iOS reads through `pluralKey`: see
+ * `ENGLISH_RULE_PLURALS` for the pairs it picks with the English rule.
+ */
 export function tp(base: string, count: number, params?: Params): string {
   return translatePlural(base, count, currentLanguage(), params);
 }
