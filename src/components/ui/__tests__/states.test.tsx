@@ -3,10 +3,10 @@
  * primary button.
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 
 import { setCurrentLanguage } from '../../../i18n';
-import { colors } from '../../../theme';
+import { colors, contrastRatio } from '../../../theme';
 import Card from '../Card';
 import EmptyState from '../EmptyState';
 import ErrorState from '../ErrorState';
@@ -120,5 +120,38 @@ describe('PrimaryButton (iOS LPPrimaryButton)', () => {
   it('uses the AA action fill where asked', async () => {
     await render(<PrimaryButton title="Confirm" onPress={jest.fn()} tone="action" testID="cta" />);
     expect(screen.getByTestId('cta')).toHaveStyle({ backgroundColor: colors.actionFill });
+  });
+
+  // iOS 2.5.4 (BookingFlowView.primaryButton, ClassBookingSheet.confirmButton,
+  // BookingContrastTests): a disabled booking Confirm is a readable grey
+  // button, never a half-transparent blue one whose white label fell to 1.9:1.
+  it('a disabled action button is readable grey: its label passes AA on its fill, at full opacity', async () => {
+    await render(<PrimaryButton title="Confirm" onPress={jest.fn()} tone="action" disabled testID="cta" />);
+    const button = screen.getByTestId('cta');
+    const fill = StyleSheet.flatten(button.props.style) as { backgroundColor: string; opacity?: number; elevation?: number };
+    expect(fill.backgroundColor).toBe(colors.ink3);
+    expect(fill.opacity ?? 1).toBe(1);
+    expect(fill.elevation).toBe(0);
+    const label = screen.getByText('Confirm');
+    const labelColor = (StyleSheet.flatten(label.props.style) as { color: string }).color;
+    expect(labelColor).toBe(colors.mutedTextStrong);
+    expect(contrastRatio(labelColor, fill.backgroundColor)).toBeGreaterThanOrEqual(4.5);
+    expect(button).toBeDisabled();
+  });
+
+  it('an action button that is booking keeps the blue fill and a white spinner', async () => {
+    await render(<PrimaryButton title="Confirm" onPress={jest.fn()} tone="action" disabled loading testID="cta" />);
+    expect(screen.getByTestId('cta')).toHaveStyle({ backgroundColor: colors.actionFill });
+    expect(screen.getByTestId('cta')).toBeBusy();
+  });
+
+  it('a disabled accent button still dims to 40 %, as iOS callers do', async () => {
+    await render(<PrimaryButton title="Save" onPress={jest.fn()} disabled testID="cta" />);
+    expect(screen.getByTestId('cta')).toHaveStyle({ backgroundColor: colors.rust, opacity: 0.4 });
+  });
+
+  it("takes the booking flows' geometry: radius 12, about 48 tall, no shadow", async () => {
+    await render(<PrimaryButton title="Confirm" onPress={jest.fn()} tone="action" shape="booking" testID="cta" />);
+    expect(screen.getByTestId('cta')).toHaveStyle({ borderRadius: 12, minHeight: 48, paddingVertical: 14, elevation: 0 });
   });
 });
