@@ -1,7 +1,8 @@
-import { act, isHiddenFromAccessibility, render, screen } from '@testing-library/react-native';
+import { act, isHiddenFromAccessibility, render, screen, waitFor } from '@testing-library/react-native';
 import { Text } from 'react-native';
 
 import { dismissAllDialogs, showDialog } from '../Dialog';
+import { resetUiKit } from '../reset';
 import Sheet from '../Sheet';
 import { dismissToast, showToast } from '../Toast';
 import UiKitProvider from '../UiKitProvider';
@@ -26,6 +27,26 @@ it('hosts the app, toasts and dialogs once for the whole app', async () => {
   });
   expect(screen.getByText('Saved')).toBeOnTheScreen();
   expect(screen.getByRole('header', { name: 'Discard this meal?' })).toBeOnTheScreen();
+});
+
+it("sign-out's reset drops queued dialogs and the toast without running a button", async () => {
+  const deleteMeal = jest.fn();
+  await render(
+    <UiKitProvider>
+      <Text>App</Text>
+    </UiKitProvider>,
+  );
+  await act(async () => {
+    showToast('Meal saved');
+    showDialog({ title: 'Delete this meal?', buttons: [{ label: 'Delete', role: 'destructive', onPress: deleteMeal }, { label: 'Cancel', role: 'cancel' }] });
+    showDialog({ title: 'Discard the draft?', buttons: [{ label: 'Discard', role: 'destructive', onPress: deleteMeal }] });
+  });
+  await act(async () => resetUiKit());
+  // The toast fades out, then goes.
+  await waitFor(() => expect(screen.queryByText('Meal saved')).toBeNull());
+  expect(screen.queryByText('Delete this meal?')).toBeNull();
+  expect(screen.queryByText('Discard the draft?')).toBeNull();
+  expect(deleteMeal).not.toHaveBeenCalled();
 });
 
 describe('a sheet is modal to TalkBack, as an iOS sheet is to VoiceOver', () => {

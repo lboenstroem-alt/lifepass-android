@@ -64,4 +64,5 @@ export type { VenueImageProps } from './VenueImage';
 export { normaliseImageUrl } from './imageUrl';
 export { default as UiKitProvider } from './UiKitProvider';
 export type { UiKitProviderProps } from './UiKitProvider';
+export { resetUiKit } from './reset';
 export { announce, recommendedTimeout, hiddenFromAccessibility } from './a11y';
