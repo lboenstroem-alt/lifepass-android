@@ -13,6 +13,8 @@
 //   - Icelandic (is_IS): "1.900", "72,5", "mið., 17. sep.", "17. september";
 //   - English (en_GB, for every non-Icelandic account): "1,900", "72.5",
 //     "Wed 17 Sept", "17 September". Metric, 24-hour, day first.
+// One English line is written with en_US_POSIX words instead (`'en-posix'`
+// below): the staff check-in proof's day, "Thu 17 Sep".
 //
 // TIME ZONES. Two kinds of time, never mixed:
 //   - Server calendar days (`YYYY-MM-DD`) and venue clocks are Iceland time,
@@ -41,16 +43,32 @@ type CalendarWords = {
   readonly weekdaysShort: readonly string[];
 };
 
-const CALENDAR_WORDS: Record<Lang, CalendarWords> = {
-  en: {
-    monthsLong: [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December',
-    ],
-    // en_GB abbreviates September as "Sept" (CLDR 38 onwards, on both phones).
-    monthsShort: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'],
-    weekdaysLong: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-    weekdaysShort: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+/**
+ * The words a date can be written in: the two account languages, and
+ * `'en-posix'`, iOS's `en_US_POSIX`. A formatter pinned to POSIX writes the
+ * same English as en_GB except one word: September is "Sep", not "Sept".
+ * iOS shows it on one member-facing line, the staff check-in proof's day
+ * (CheckInView `dayEN`, "EEE d MMM": "Thu 17 Sep"); every other English date
+ * is en_GB.
+ */
+export type DateLocale = Lang | 'en-posix';
+
+const ENGLISH_WORDS: CalendarWords = {
+  monthsLong: [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ],
+  // en_GB abbreviates September as "Sept" (CLDR 38 onwards, on both phones).
+  monthsShort: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'],
+  weekdaysLong: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+  weekdaysShort: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+};
+
+const CALENDAR_WORDS: Record<DateLocale, CalendarWords> = {
+  en: ENGLISH_WORDS,
+  'en-posix': {
+    ...ENGLISH_WORDS,
+    monthsShort: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
   },
   is: {
     monthsLong: [
@@ -74,17 +92,17 @@ export const ICELANDIC_ACCUSATIVE_WEEKDAYS: readonly string[] = [
   'sunnudaginn', 'mánudaginn', 'þriðjudaginn', 'miðvikudaginn', 'fimmtudaginn', 'föstudaginn', 'laugardaginn',
 ];
 
-/** The month and weekday words for a language (format context). */
-export function calendarWords(lang: Lang): CalendarWords {
-  return CALENDAR_WORDS[lang === 'is' ? 'is' : 'en'];
+/** The month and weekday words for a language (format context); English for any other. */
+export function calendarWords(locale: DateLocale): CalendarWords {
+  return CALENDAR_WORDS[locale === 'is' || locale === 'en-posix' ? locale : 'en'];
 }
 
 /**
  * The pattern each language's formatter picks for a template, as Foundation's
  * `setLocalizedDateFormatFromTemplate` (ICU's best-pattern match) does. The
- * keys are templates with the spaces removed ("EEE d MMM" → "EEEdMMM").
+ * keys are the templates as the Swift passes them ("EEEdMMM", no spaces).
  */
-const TEMPLATE_PATTERNS: Record<string, Record<Lang, string>> = {
+const TEMPLATE_PATTERNS = {
   EEEdMMM: { en: 'EEE d MMM', is: 'EEE, d. MMM' },
   EEEEdMMMM: { en: 'EEEE d MMMM', is: 'EEEE, d. MMMM' },
   dMMM: { en: 'd MMM', is: 'd. MMM' },
@@ -95,9 +113,17 @@ const TEMPLATE_PATTERNS: Record<string, Record<Lang, string>> = {
   EEE: { en: 'EEE', is: 'EEE' },
   EEEE: { en: 'EEEE', is: 'EEEE' },
   'HH:mm': { en: 'HH:mm', is: 'HH:mm' },
-};
+} as const satisfies Record<string, Record<Lang, string>>;
 
+/** A template the table knows, so a typo is a type error rather than a crash on screen. */
 export type DateTemplate = keyof typeof TEMPLATE_PATTERNS;
+
+const hasOwn = (object: object, key: string): boolean => Object.prototype.hasOwnProperty.call(object, key);
+
+/** True for a Date that holds no instant (`new Date('x')`, an unparsable API timestamp). */
+export function isInvalidDate(date: Date): boolean {
+  return Number.isNaN(date.getTime());
+}
 
 /**
  * Which clock a date is read on: `'iceland'` for server days and venue times
@@ -135,11 +161,13 @@ const pad = (value: number, width: number) => String(value).padStart(width, '0')
  * Format a date with an explicit pattern, as a `DateFormatter` with
  * `dateFormat` set does: `EEEE` `EEE` `E` (weekday), `d` `dd`, `MMMM` `MMM`
  * `MM` `M`, `y` `yyyy`, `HH` `H`, `mm`, `ss`; text in single quotes is
- * literal, as is any character that is not a letter.
+ * literal, as is any character that is not a letter. An invalid Date is ''
+ * (iOS cannot hold one: its decoder fails first), never "NaN" on screen.
  */
-export function formatDatePattern(date: Date, pattern: string, lang: Lang, clock: Clock = 'iceland'): string {
+export function formatDatePattern(date: Date, pattern: string, locale: DateLocale, clock: Clock = 'iceland'): string {
+  if (isInvalidDate(date)) return '';
   const parts = partsOf(date, clock);
-  const words = calendarWords(lang);
+  const words = calendarWords(locale);
   let out = '';
   let i = 0;
   while (i < pattern.length) {
@@ -203,11 +231,12 @@ export function formatDatePattern(date: Date, pattern: string, lang: Lang, clock
   return out;
 }
 
-/** Format with a template, as `setLocalizedDateFormatFromTemplate` does. */
-export function formatDateTemplate(date: Date, template: DateTemplate | string, lang: Lang, clock: Clock = 'iceland'): string {
-  const patterns = TEMPLATE_PATTERNS[template.replace(/\s+/g, '')];
-  if (!patterns) throw new Error(`formatDateTemplate: no pattern for template "${template}"`);
-  return formatDatePattern(date, patterns[lang === 'is' ? 'is' : 'en'], lang, clock);
+/** Format with a template, as `setLocalizedDateFormatFromTemplate` does; '' for an invalid Date. */
+export function formatDateTemplate(date: Date, template: DateTemplate, lang: Lang, clock: Clock = 'iceland'): string {
+  // Own keys only: "constructor" must be a missing template, not Object's.
+  if (!hasOwn(TEMPLATE_PATTERNS, template)) throw new Error(`formatDateTemplate: no pattern for template "${template}"`);
+  const language: Lang = lang === 'is' ? 'is' : 'en';
+  return formatDatePattern(date, TEMPLATE_PATTERNS[template][language], language, clock);
 }
 
 // MARK: - Rounding
@@ -215,6 +244,18 @@ export function formatDateTemplate(date: Date, template: DateTemplate | string, 
 /** Swift's `.rounded()`: to nearest, a half away from zero. */
 export function roundHalfAwayFromZero(value: number): number {
   return Math.sign(value) * Math.round(Math.abs(value));
+}
+
+/**
+ * A number the iOS function takes as an `Int` (minutes, kcal, a count): the
+ * nearest whole number, a half away from zero as Swift's `Int(x.rounded())`
+ * reads it, and never -0. iOS cannot be handed 80.5 minutes or 1800.4 kcal
+ * (its decoder refuses a fraction for an Int); a JavaScript caller can, from
+ * `seconds / 60` or an API that sends a fraction, so the boundary rounds.
+ */
+export function wholeNumberOf(value: number): number {
+  const rounded = roundHalfAwayFromZero(value);
+  return rounded === 0 ? 0 : rounded;
 }
 
 /**
@@ -408,19 +449,22 @@ export function weight(kg: number, lang: Lang): string {
   return `${decimal(kg, lang)} kg`;
 }
 
-/** "1.900 kcal" / "1,900 kcal". The unit word is the same in both. */
+/** "1.900 kcal" / "1,900 kcal". The unit word is the same in both. A fraction is rounded first (`wholeNumberOf`). */
 export function kcal(value: number, lang: Lang): string {
-  return `${integer(value, lang)} kcal`;
+  return `${integer(wholeNumberOf(value), lang)} kcal`;
 }
 
 /**
  * "1.800 til 2.000 kcal" / "1,800 to 2,000 kcal". Ranges are written with the
- * word, never a dash (the copy rules forbid en and em dashes).
+ * word, never a dash (the copy rules forbid en and em dashes). The ends are
+ * rounded BEFORE they are compared, so 1800.4 to 1800 is one figure.
  */
 export function kcalRange(low: number, high: number, lang: Lang): string {
-  if (low === high) return kcal(low, lang);
+  const lowKcal = wholeNumberOf(low);
+  const highKcal = wholeNumberOf(high);
+  if (lowKcal === highKcal) return kcal(lowKcal, lang);
   const joiner = lang === 'is' ? 'til' : 'to';
-  return `${integer(low, lang)} ${joiner} ${integer(high, lang)} kcal`;
+  return `${integer(lowKcal, lang)} ${joiner} ${integer(highKcal, lang)} kcal`;
 }
 
 /** "120 g", "7,5 g", or ml for a liquid item (1 g = 1 ml). */
@@ -452,8 +496,12 @@ export function formatDistance(km: number, lang: Lang): string {
 
 // MARK: - Durations
 
-/** "40 min" / "40 mín"; "1 h 20 min" / "1 klst 20 mín"; "2 h" / "2 klst". */
-export function duration(minutes: number, lang: Lang): string {
+/**
+ * "40 min" / "40 mín"; "1 h 20 min" / "1 klst 20 mín"; "2 h" / "2 klst". A
+ * fraction of a minute is rounded first (`wholeNumberOf`): 80.5 is "1 h 21 min".
+ */
+export function duration(rawMinutes: number, lang: Lang): string {
+  const minutes = wholeNumberOf(rawMinutes);
   const minuteWord = lang === 'is' ? 'mín' : 'min';
   if (minutes < 60) return `${minutes} ${minuteWord}`;
   const hours = Math.trunc(minutes / 60);
@@ -482,8 +530,15 @@ export function dateFromServerDay(day: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** A Date to the server's `YYYY-MM-DD` (Iceland time, which is UTC). */
+/**
+ * A Date to the server's `YYYY-MM-DD` (Iceland time, which is UTC).
+ *
+ * Throws a RangeError for an invalid Date rather than return "0NaN-NaN-NaN":
+ * this string goes into requests (`?start=`, `?end=`, a day's key), and a
+ * day the app cannot read must never reach the server as one.
+ */
 export function serverDay(date: Date): string {
+  if (isInvalidDate(date)) throw new RangeError('serverDay: the Date is invalid');
   return `${pad(date.getUTCFullYear(), 4)}-${pad(date.getUTCMonth() + 1, 2)}-${pad(date.getUTCDate(), 2)}`;
 }
 
@@ -500,10 +555,10 @@ export function addServerDays(day: string, days: number): string | null {
   return serverDay(date);
 }
 
-/** ISO weekday (1 = Monday … 7 = Sunday) of a server day; null when it is not one. */
+/** ISO weekday (1 = Monday … 7 = Sunday) of a server day or an instant; null when it is not one. */
 export function isoWeekday(day: string | Date): number | null {
   const date = typeof day === 'string' ? dateFromServerDay(day) : day;
-  if (!date) return null;
+  if (!date || isInvalidDate(date)) return null;
   return date.getUTCDay() === 0 ? 7 : date.getUTCDay();
 }
 
@@ -534,6 +589,7 @@ export function weekdayAbbreviation(isoWeekdayNumber: number, lang: Lang): strin
 /**
  * "18:00" for a wall-clock time in the PHONE's zone (iOS `HealthFormat.time`):
  * an instant the member reads off their own clock, unlike a venue time.
+ * '' for an invalid Date, as every display function here.
  */
 export function localTime(date: Date): string {
   return formatDatePattern(date, 'HH:mm', 'en', 'phone');
@@ -556,17 +612,20 @@ export function venueDate(date: Date, lang: Lang): string {
 
 /** "Thu 25 Sept, 14:00" / "fim., 25. sep., 14:00". */
 export function venueDayTime(date: Date, lang: Lang): string {
+  if (isInvalidDate(date)) return '';
   return `${formatDateTemplate(date, 'EEEdMMM', lang)}, ${venueTime(date)}`;
 }
 
 /** "Thu 14:00" / "fim. 14:00". */
 export function venueWeekdayTime(date: Date, lang: Lang): string {
+  if (isInvalidDate(date)) return '';
   return `${formatDateTemplate(date, 'EEE', lang)} ${venueTime(date)}`;
 }
 
 /**
  * The venue's calendar day as `YYYY-MM-DD`, the `?start=`/`?end=` an
- * availability request asks for (iOS `BookingService.ymd`).
+ * availability request asks for (iOS `BookingService.ymd`). Throws for an
+ * invalid Date, as `serverDay` does: never a junk day in a request.
  */
 export function venueDay(date: Date): string {
   return serverDay(date);
@@ -584,6 +643,7 @@ export function classShortDay(date: Date, lang: Lang): string {
  * with the article, the way a sentence names a day.
  */
 export function classLongDay(date: Date, lang: Lang): string {
+  if (isInvalidDate(date)) return '';
   if (lang !== 'is') return formatDatePattern(date, 'EEEE d MMMM', 'en');
   return `${ICELANDIC_ACCUSATIVE_WEEKDAYS[date.getUTCDay()]} ${formatDatePattern(date, 'd. MMMM', 'is')}`;
 }
@@ -625,10 +685,14 @@ export function round10(value: number): number {
  * the web panel mirrors it), so the same day never says two different things.
  */
 export function dayEnergy(totals: DayTotals, target: DayTarget | null): DayEnergy {
-  const eatenMid = round10((totals.kcalLow + totals.kcalHigh) / 2);
-  const isRange = totals.kcalLow !== totals.kcalHigh;
+  // The kcal fields are Ints on iOS; round a fraction from the API first, so
+  // the range check and the copy see the figures the member will read.
+  const low = wholeNumberOf(totals.kcalLow);
+  const high = wholeNumberOf(totals.kcalHigh);
+  const eatenMid = round10((low + high) / 2);
+  const isRange = low !== high;
   const eaten: CopyLine = isRange
-    ? { key: 'plan.nutrition.eaten_range', params: { low: String(totals.kcalLow), high: String(totals.kcalHigh) } }
+    ? { key: 'plan.nutrition.eaten_range', params: { low: String(low), high: String(high) } }
     : { key: 'plan.nutrition.eaten', params: { kcal: String(eatenMid) } };
 
   if (!target) {
@@ -643,17 +707,19 @@ export function dayEnergy(totals: DayTotals, target: DayTarget | null): DayEnerg
     };
   }
 
-  const targetMid = round10((target.kcalLow + target.kcalHigh) / 2);
+  const targetLow = wholeNumberOf(target.kcalLow);
+  const targetHigh = wholeNumberOf(target.kcalHigh);
+  const targetMid = round10((targetLow + targetHigh) / 2);
   const kcalFill = targetMid > 0 ? Math.min(eatenMid / targetMid, 1) : 0;
   const proteinFill = target.proteinG > 0 ? Math.min(totals.proteinG / target.proteinG, 1) : 0;
 
   let status: CopyLine;
-  if (eatenMid < target.kcalLow) {
+  if (eatenMid < targetLow) {
     status = { key: 'diary.left', params: { kcal: String(targetMid - eatenMid) } };
-  } else if (eatenMid <= target.kcalHigh) {
+  } else if (eatenMid <= targetHigh) {
     status = { key: 'diary.within', params: {} };
   } else {
-    status = { key: 'diary.over', params: { kcal: String(eatenMid - target.kcalHigh) } };
+    status = { key: 'diary.over', params: { kcal: String(eatenMid - targetHigh) } };
   }
 
   return { eatenMidKcal: eatenMid, targetMidKcal: targetMid, eaten, showsEstimateChip: isRange, kcalFill, proteinFill, status };

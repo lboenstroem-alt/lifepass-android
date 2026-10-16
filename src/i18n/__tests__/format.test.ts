@@ -38,9 +38,15 @@ import {
   shortDay,
   todayServerDay,
   VenueTimeFormat,
+  venueDate,
   venueDay,
+  venueDayTime,
+  venueTime,
+  venueWeekdayTime,
   weekdayAbbreviation,
   weight,
+  wholeNumberOf,
+  type DateTemplate,
   type DayTarget,
   type DayTotals,
 } from '../format';
@@ -167,6 +173,10 @@ describe('numbers in the account language (HealthFormatTests)', () => {
     expect(kcalRange(1800, 2000, 'is')).toBe('1.800 til 2.000 kcal');
     expect(kcalRange(1800, 2000, 'is')).not.toContain('–');
     expect(kcalRange(1900, 1900, 'en')).toBe('1,900 kcal');
+    // The ends are rounded before they are compared (iOS takes Ints).
+    expect(kcalRange(1800.4, 1800, 'en')).toBe('1,800 kcal');
+    expect(kcalRange(1799.5, 2000.4, 'is')).toBe('1.800 til 2.000 kcal');
+    expect(kcal(1899.5, 'en')).toBe('1,900 kcal');
   });
 
   it('shows grams to one decimal under 10 and whole above, ml for a liquid', () => {
@@ -182,6 +192,14 @@ describe('numbers in the account language (HealthFormatTests)', () => {
     expect(round10(0)).toBe(0);
     expect(round10(-15)).toBe(-20);
     expect(roundHalfAwayFromZero(-2.5)).toBe(-3);
+  });
+
+  it('reads a fraction where iOS takes an Int as the nearest whole number, never -0', () => {
+    expect(wholeNumberOf(80.5)).toBe(81);
+    expect(wholeNumberOf(80.4)).toBe(80);
+    expect(wholeNumberOf(-2.5)).toBe(-3);
+    expect(Object.is(wholeNumberOf(-0.4), 0)).toBe(true);
+    expect(wholeNumberOf(7)).toBe(7);
   });
 
   it('prices the web way in both languages', () => {
@@ -201,6 +219,12 @@ describe('durations (testDurationsReadNaturallyInBothLanguages)', () => {
     expect(duration(120, 'is')).toBe('2 klst');
     expect(duration(60, 'en')).toBe('1 h');
     expect(duration(0, 'en')).toBe('0 min');
+    // iOS takes whole minutes; a fraction (seconds / 60) is rounded first.
+    expect(duration(80.5, 'en')).toBe('1 h 21 min');
+    expect(duration(80.4, 'is')).toBe('1 klst 20 mín');
+    expect(duration(59.9, 'en')).toBe('1 h');
+    expect(duration(59.4, 'is')).toBe('59 mín');
+    expect(duration(0.4, 'en')).toBe('0 min');
   });
 });
 
@@ -360,7 +384,7 @@ describe('the class feed’s day words (ClassesViewModel)', () => {
 
 describe('the date tables', () => {
   it('match ICU’s names and patterns for every day of a year, in both languages', () => {
-    const cases: [string, Intl.DateTimeFormatOptions][] = [
+    const cases: [DateTemplate, Intl.DateTimeFormatOptions][] = [
       ['EEEdMMM', { weekday: 'short', day: 'numeric', month: 'short' }],
       ['dMMMMy', { day: 'numeric', month: 'long', year: 'numeric' }],
       ['dMMMy', { day: 'numeric', month: 'short', year: 'numeric' }],
@@ -389,7 +413,64 @@ describe('the date tables', () => {
     expect(formatDatePattern(date, "d. MMMM 'kl.' HH:mm", 'is')).toBe('4. mars kl. 05:06');
     expect(formatDatePattern(date, "HH 'o''clock', ''yy", 'en')).toBe("05 o'clock, '26");
     expect(() => formatDatePattern(date, 'h:mm a', 'en')).toThrow('unsupported field "h"');
-    expect(() => formatDateTemplate(date, 'yQQQ', 'en')).toThrow('no pattern');
+    expect(() => formatDateTemplate(date, 'yQQQ' as DateTemplate, 'en')).toThrow('no pattern');
+  });
+
+  it('finds no template on Object.prototype', () => {
+    const date = utc('2026-03-04T05:06:07Z');
+    for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(() => formatDateTemplate(date, name as DateTemplate, 'en')).toThrow('no pattern');
+    }
+  });
+
+  it('writes the staff proof’s English day in POSIX words, “Sep” not “Sept” (CheckInView dayEN)', () => {
+    const september = utc('2026-09-17T12:00:00Z');
+    expect(formatDatePattern(september, 'EEE d MMM', 'en-posix')).toBe('Thu 17 Sep');
+    expect(formatDatePattern(september, 'EEE d MMM', 'en')).toBe('Thu 17 Sept');
+    expect(formatDatePattern(september, 'EEEE d MMMM', 'en-posix')).toBe('Thursday 17 September');
+    // Every other month is the same word in both.
+    for (let month = 0; month < 12; month += 1) {
+      if (month === 8) continue;
+      const date = new Date(Date.UTC(2026, month, 17, 12));
+      expect(formatDatePattern(date, 'EEE d MMM', 'en-posix')).toBe(formatDatePattern(date, 'EEE d MMM', 'en'));
+    }
+    expect(calendarWords('en-posix').monthsShort[8]).toBe('Sep');
+    // And on the venue clock, whatever zone the phone is in.
+    expect(asIfThePhoneWereIn(NEW_YORK, () => formatDatePattern(utc('2026-09-17T01:30:00Z'), 'EEE d MMM', 'en-posix'))).toBe(
+      'Thu 17 Sep',
+    );
+  });
+});
+
+describe('a Date that holds no instant', () => {
+  const invalid = new Date('not a timestamp');
+
+  it('shows as nothing, never as NaN or undefined', () => {
+    expect(venueTime(invalid)).toBe('');
+    expect(VenueTimeFormat.time(invalid)).toBe('');
+    expect(venueDate(invalid, 'en')).toBe('');
+    expect(venueDate(invalid, 'is')).toBe('');
+    expect(venueDayTime(invalid, 'en')).toBe('');
+    expect(venueWeekdayTime(invalid, 'is')).toBe('');
+    expect(classShortDay(invalid, 'en')).toBe('');
+    expect(classLongDay(invalid, 'is')).toBe('');
+    expect(classLongDay(invalid, 'en')).toBe('');
+    expect(localTime(invalid)).toBe('');
+    expect(shortDay(invalid, 'is')).toBe('');
+    expect(formatDatePattern(invalid, 'yyyy-MM-dd', 'en')).toBe('');
+    expect(formatDateTemplate(invalid, 'dMMMMy', 'is')).toBe('');
+  });
+
+  it('is never sent to the server as a day', () => {
+    expect(() => serverDay(invalid)).toThrow(RangeError);
+    expect(() => venueDay(invalid)).toThrow(RangeError);
+    expect(() => VenueTimeFormat.day(invalid)).toThrow(RangeError);
+    expect(() => todayServerDay(invalid)).toThrow(RangeError);
+  });
+
+  it('has no weekday', () => {
+    expect(isoWeekday(invalid)).toBeNull();
+    expect(isoWeekday(utc('2026-10-19T12:00:00Z'))).toBe(1);
   });
 });
 
@@ -463,6 +544,21 @@ describe('day energy (MealItemMathTests)', () => {
     expect(energy.status?.key).toBe('diary.left');
     expect(energy.status?.params.kcal).toBe('200');
     expect(energy.showsEstimateChip).toBe(true);
+  });
+
+  it('rounds a fractional kcal from the API before it compares or prints it (iOS reads Ints)', () => {
+    const one = dayEnergy(totals(1800.4, 1800), null);
+    expect(one.showsEstimateChip).toBe(false);
+    expect(one.eaten).toEqual({ key: 'plan.nutrition.eaten', params: { kcal: '1800' } });
+
+    const range = dayEnergy(totals(1499.6, 1900.2, 90), target(1799.5, 2000.4));
+    expect(range.eaten).toEqual({ key: 'plan.nutrition.eaten_range', params: { low: '1500', high: '1900' } });
+    expect(range.eatenMidKcal).toBe(1700);
+    expect(range.targetMidKcal).toBe(1900);
+    expect(range.status).toEqual({ key: 'diary.left', params: { kcal: '200' } });
+
+    const over = dayEnergy(totals(2100.3, 2100.3), target(1800, 2000.4));
+    expect(over.status).toEqual({ key: 'diary.over', params: { kcal: '100' } });
   });
 
   it('cannot divide by a zero target (testAZeroTargetCannotDivideByZero)', () => {
