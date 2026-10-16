@@ -133,6 +133,12 @@ describe('eslint.config.js', () => {
     );
   });
 
+  it('spares the string tables, where copy belongs', async () => {
+    const pack = "export const en = { title: 'Plans', 'plans.title': 'Plans' };\n";
+    expect(await lint('src/i18n/android/PLANS-1.ts', pack)).not.toContain('lifepass/no-literal-copy');
+    expect(await lint('src/features/example/copy.ts', pack)).toContain('lifepass/no-literal-copy');
+  });
+
   it('spares legacy files until their owner rewrites them, and tests', async () => {
     expect(await lint('src/screens/home/HomeScreen.tsx', literal)).not.toContain('lifepass/no-literal-copy');
     expect(await lint('src/features/example/__tests__/Example.test.tsx', literal)).not.toContain('lifepass/no-literal-copy');

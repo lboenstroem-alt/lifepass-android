@@ -55,8 +55,12 @@ const LEGACY_COPY_FILES = [
   'src/services/notifications.ts',
 ];
 
-/** Where the copy rules never apply: tests, dev-only screens, tooling. */
+/**
+ * Where the copy rules never apply: the string tables themselves (generated
+ * iOS copy and the Android packs live in src/i18n), tests, dev-only screens.
+ */
 const NOT_MEMBER_FACING = [
+  'src/i18n/**',
   '**/__tests__/**',
   '**/*.test.{ts,tsx}',
   'test/**',
