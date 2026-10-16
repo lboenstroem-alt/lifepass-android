@@ -49,12 +49,12 @@
             {
               "scheme": "https",
               "host": "lifepass.is",
-              "pathPrefix": "/scan"
+              "path": "/scan"
             },
             {
               "scheme": "https",
               "host": "www.lifepass.is",
-              "pathPrefix": "/scan"
+              "path": "/scan"
             }
           ],
           "category": [
@@ -69,7 +69,7 @@
             {
               "scheme": "https",
               "host": "www.lifepass.is",
-              "pathPrefix": "/app/auth-callback"
+              "path": "/app/auth-callback"
             }
           ],
           "category": [

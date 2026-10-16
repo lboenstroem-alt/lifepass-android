@@ -131,28 +131,36 @@ describe('privacy (platform-privacy-local-data)', () => {
 describe('App Links (5.4, D19, D23)', () => {
   const filters = () => config.android.intentFilters as Json[];
 
-  it('claims /scan on both lifepass.is and www.lifepass.is, verified', () => {
-    const scan = filters().find((f) => f.data.some((d: Json) => d.pathPrefix === '/scan'));
+  // Exact paths, as the iOS association file hands over only `/scan` (with a
+  // `v` parameter) and every other path stays in the browser
+  // (docs/08_QR_CODE.md); a pathPrefix would also claim /scanner, /scan/x.
+  it('claims exactly /scan on both lifepass.is and www.lifepass.is, verified', () => {
+    const scan = filters().find((f) => f.data.some((d: Json) => d.path === '/scan'));
     expect(scan).toBeDefined();
     expect(scan!.autoVerify).toBe(true);
     expect(scan!.category).toEqual(expect.arrayContaining(['BROWSABLE', 'DEFAULT']));
     expect(scan!.data).toEqual([
-      { scheme: 'https', host: 'lifepass.is', pathPrefix: '/scan' },
-      { scheme: 'https', host: 'www.lifepass.is', pathPrefix: '/scan' },
+      { scheme: 'https', host: 'lifepass.is', path: '/scan' },
+      { scheme: 'https', host: 'www.lifepass.is', path: '/scan' },
     ]);
   });
 
-  it('claims the auth email return https://www.lifepass.is/app/auth-callback', () => {
-    const auth = filters().find((f) => f.data.some((d: Json) => d.pathPrefix === '/app/auth-callback'));
+  it('claims exactly the auth email return https://www.lifepass.is/app/auth-callback', () => {
+    const auth = filters().find((f) => f.data.some((d: Json) => d.path === '/app/auth-callback'));
     expect(auth).toMatchObject({
       action: 'VIEW',
       autoVerify: true,
-      data: [{ scheme: 'https', host: 'www.lifepass.is', pathPrefix: '/app/auth-callback' }],
+      data: [{ scheme: 'https', host: 'www.lifepass.is', path: '/app/auth-callback' }],
     });
   });
 
-  it('claims nothing else on the web', () => {
-    const hosts = filters().flatMap((f) => f.data.map((d: Json) => `${d.host}${d.pathPrefix}`));
+  it('claims nothing else on the web, and no path prefix or pattern', () => {
+    const data = filters().flatMap((f) => f.data as Json[]);
+    for (const d of data) {
+      expect(d).not.toHaveProperty('pathPrefix');
+      expect(d).not.toHaveProperty('pathPattern');
+    }
+    const hosts = data.map((d) => `${d.host}${d.path}`);
     expect(hosts.sort()).toEqual(['lifepass.is/scan', 'www.lifepass.is/app/auth-callback', 'www.lifepass.is/scan']);
   });
 });
