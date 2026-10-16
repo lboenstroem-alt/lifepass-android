@@ -66,12 +66,13 @@ export type SkeletonCardProps = {
 /** A card-shaped group of skeleton rows, in the card chrome so nothing jumps when content lands. */
 export function SkeletonCard({ rows = 3, showsHeader = true, testID }: SkeletonCardProps) {
   const count = Math.max(rows, 1);
+  const blockID = testID ? `${testID}.block` : undefined;
   return (
     <View testID={testID} {...hiddenFromAccessibility} style={styles.card}>
       {showsHeader ? (
         <View style={styles.header}>
-          <SkeletonBlock height={10} width={90} radius={3} />
-          <SkeletonBlock height={22} width={200} radius={5} />
+          <SkeletonBlock height={10} width={90} radius={3} testID={blockID} />
+          <SkeletonBlock height={22} width={200} radius={5} testID={blockID} />
         </View>
       ) : null}
       <Card>
@@ -79,10 +80,10 @@ export function SkeletonCard({ rows = 3, showsHeader = true, testID }: SkeletonC
           <View key={index}>
             {index > 0 ? <View style={styles.rule} /> : null}
             <View style={styles.row}>
-              <SkeletonBlock height={34} width={34} radius={10} />
+              <SkeletonBlock height={34} width={34} radius={10} testID={blockID} />
               <View style={styles.lines}>
-                <SkeletonBlock height={13} width={index === 0 ? 170 : 130} radius={4} />
-                <SkeletonBlock height={10} width={index === 0 ? 110 : 90} radius={4} />
+                <SkeletonBlock height={13} width={index === 0 ? 170 : 130} radius={4} testID={blockID} />
+                <SkeletonBlock height={10} width={index === 0 ? 110 : 90} radius={4} testID={blockID} />
               </View>
             </View>
           </View>

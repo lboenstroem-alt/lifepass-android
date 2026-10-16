@@ -58,8 +58,24 @@ it('is hidden from TalkBack, block and card alike', async () => {
   expect(screen.queryByTestId('block')).toBeNull();
 });
 
-it('a card draws the rows it is asked for, at least one', async () => {
-  await render(<SkeletonCard testID="card" rows={0} showsHeader={false} />);
-  const card = screen.getByTestId('card', { includeHiddenElements: true });
-  expect(card).toBeTruthy();
+describe('a card draws the rows it is asked for, at least one', () => {
+  /** Every block in the card: a row is an icon and two lines, the header two more. */
+  async function blocksIn(element: React.ReactElement): Promise<number> {
+    const view = await render(element);
+    const count = screen.getAllByTestId('card.block', { includeHiddenElements: true }).length;
+    await view.unmount();
+    return count;
+  }
+
+  it('rows 0 still draws one row', async () => {
+    expect(await blocksIn(<SkeletonCard testID="card" rows={0} showsHeader={false} />)).toBe(3);
+  });
+
+  it('rows 2 draws two', async () => {
+    expect(await blocksIn(<SkeletonCard testID="card" rows={2} showsHeader={false} />)).toBe(6);
+  });
+
+  it('the header adds its two lines', async () => {
+    expect(await blocksIn(<SkeletonCard testID="card" rows={2} />)).toBe(8);
+  });
 });
