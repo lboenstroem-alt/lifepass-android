@@ -100,7 +100,12 @@ export interface RequestOptions<T = unknown> {
   readonly query?: Query;
   /** Default `required`. */
   readonly auth?: AuthMode;
-  /** The call's ceiling in milliseconds (default 60 000). Ends in `TransportError('timeout')`. */
+  /**
+   * The call's ceiling in milliseconds (default 60 000), covering the answer's
+   * body too; `Infinity` for none. Ends in `TransportError('timeout')`. (iOS's
+   * per-request timeout is an idle timeout; a whole-call ceiling is what
+   * fetch can offer, and every iOS value is far above a normal answer.)
+   */
   readonly timeoutMs?: number;
   /** One key per user action, reused across retries (./idempotency). */
   readonly idempotencyKey?: string;
@@ -392,10 +397,15 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
     const controller = new AbortController();
     let timedOut = false;
     const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
+    // `Infinity` (or 0) means no ceiling; a timer that large would overflow
+    // and fire at once.
+    const timer =
+      Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+          }, timeoutMs)
+        : undefined;
     const callerSignal = options.signal;
     const onCallerAbort = () => controller.abort();
     callerSignal?.addEventListener('abort', onCallerAbort);
@@ -418,7 +428,7 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
       if (error instanceof Error && /timed out/i.test(error.message)) throw new TransportError('timeout', error);
       throw new TransportError((await isDeviceOffline()) ? 'offline' : 'network', error);
     } finally {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       callerSignal?.removeEventListener('abort', onCallerAbort);
     }
   }

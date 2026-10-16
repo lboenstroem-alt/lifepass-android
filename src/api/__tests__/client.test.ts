@@ -378,6 +378,12 @@ describe('transport', () => {
     expect(((await failure(session.client.get('/a'))) as TransportError).transport).toBe('timeout');
   });
 
+  it('Infinity is no ceiling at all', async () => {
+    api.on('GET', '/a', Reply.delayed(30, Reply.ok({ slow: true })));
+    const session = createStubApiClient({ defaultTimeoutMs: 5 });
+    await expect(session.client.get('/a', undefined, { timeoutMs: Infinity })).resolves.toEqual({ slow: true });
+  });
+
   it("the caller's abort is a cancellation, never offline", async () => {
     api.on('GET', '/a', Reply.hang());
     const controller = new AbortController();
