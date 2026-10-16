@@ -7,9 +7,11 @@
 // trap iOS's LPHealthStrings.merged springs in DEBUG.
 //
 // A package fills ITS OWN file (./<package-id>.ts); only F1 edits this list.
+// F1's own pack holds the few Android-only words two packages share.
 // Health Connect (HC-1, HC-2) is not built (owner decision), so it has no pack.
 import type { AndroidPack } from './pack';
 
+import F1 from './F1';
 import F2 from './F2';
 import F3 from './F3';
 import F4 from './F4';
@@ -76,6 +78,7 @@ export type RegisteredPack = {
 };
 
 export const androidPacks: readonly RegisteredPack[] = [
+  { id: 'F1', pack: F1 },
   { id: 'F2', pack: F2 },
   { id: 'F3', pack: F3 },
   { id: 'F4', pack: F4 },

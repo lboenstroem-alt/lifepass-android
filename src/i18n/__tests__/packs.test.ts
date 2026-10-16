@@ -10,12 +10,13 @@ import { generatedTables, IOS_SOURCE, mergeTables, tables } from '../tables';
 import { androidDictionaries, hasDash, hasEmoji, LANGS, placeholders } from './dictionaries';
 
 /**
- * Every package with copy of its own: the foundation after F1 (F2 to F8) and
- * every feature package in plan section 4. Health Connect (HC-1, HC-2) is not
+ * Every package with copy of its own: the foundation from F1 (whose pack holds
+ * the Android-only words two packages share) to F8, and every feature package
+ * in plan section 4. Health Connect (HC-1, HC-2) is not
  * built (owner decision), so it has no pack.
  */
 const PACKAGE_IDS = [
-  'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8',
+  'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8',
   'AUTH-1', 'AUTH-2', 'AUTH-3', 'HOME-1', 'EXPL-1', 'VENUE-1', 'VENUE-2', 'CHECKIN-1', 'CHECKIN-2',
   'BOOK-1', 'CLASS-1', 'PLANS-1', 'ACCT-1', 'ACCT-2', 'ACCT-3', 'ACCT-4', 'COACH-1', 'PLAN-1',
   'EXPL-2', 'BOOK-2', 'CLASS-2', 'LIB-1', 'PLANS-2', 'COACH-2', 'PLAN-2', 'PLAN-4', 'PLAN-5',

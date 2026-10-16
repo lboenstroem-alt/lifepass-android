@@ -78,6 +78,17 @@ describe('attractions (attraction.*)', () => {
     expect(Object.entries(is).filter(([k, v]) => k.startsWith('attraction.') && v.includes('Mælt með'))).toEqual([]);
   });
 
+  it('offers Android’s second maps choice where iOS offers Apple Maps', () => {
+    expect([lookup('venue.maps_google', 'en'), lookup('venue.maps_other', 'en')]).toEqual([
+      'Open in Google Maps',
+      'Open in another maps app',
+    ]);
+    expect([lookup('venue.maps_google', 'is'), lookup('venue.maps_other', 'is')]).toEqual([
+      'Opna í Google Maps',
+      'Opna í öðru kortaforriti',
+    ]);
+  });
+
   it('keeps {duration}, {km} and {distance} in Icelandic', () => {
     for (const [key, wanted] of [
       ['attraction.drive_from_reykjavik', ['{duration}', '{km}']],
