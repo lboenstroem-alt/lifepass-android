@@ -13,7 +13,18 @@
  * The client's token functions are fakes; requests still go through the real
  * client, fetch and msw, so headers, bodies, 401 recovery and timeouts are
  * the app's own. Never imported by app code.
+ *
+ * And the contract check every service test ends with (the iOS
+ * ContractFixtureTests idea: look at what the phone SENT):
+ *
+ *   api.on('POST', '/check-ins/walk-in', replyFromContract('POST', '/check-ins/walk-in', 201));
+ *   await confirmWalkIn(...);
+ *   const sent = expectSentToMatchContract('POST', '/check-ins/walk-in');
+ *   expect(Object.keys(sent.body as object).sort()).toEqual([...]);
  */
+import { expectRequestValid, sampleResponse, type SampleMode } from '@test/contract';
+import { api, Reply, type StubMethod, type StubReply, type StubRequest } from '@test/server';
+
 import { createApiClient, setSharedApiClient, type ApiClient } from './client';
 
 export const TEST_ACCESS_TOKEN = 'test-token';
@@ -104,4 +115,30 @@ export function stubApiClientPerTest(options: StubApiClientOptions = {}): StubAp
       return active().refreshes;
     },
   };
+}
+
+/**
+ * The last request sent to `method path`, checked against the contract: its
+ * JSON body (keys, types, enums, formats), path and query parameters, and the
+ * Idempotency-Key on every write the contract marks as retry-safe. Returns the
+ * request for the test's own assertions.
+ */
+export function expectSentToMatchContract(method: StubMethod, path: string): StubRequest {
+  const sent = api.sent(path, method);
+  expectRequestValid(sent);
+  return sent;
+}
+
+/**
+ * A success envelope around the contract's own sample of the answer (its
+ * example when it has one, else built from the schema: `minimal` has only
+ * the required keys, `full` every documented one).
+ */
+export function replyFromContract(
+  method: StubMethod,
+  path: string,
+  status = 200,
+  mode: SampleMode = 'minimal',
+): StubReply {
+  return Reply.ok(sampleResponse(method, path, status, mode), status);
 }

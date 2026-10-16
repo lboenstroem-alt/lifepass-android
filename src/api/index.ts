@@ -38,3 +38,4 @@ export * from './errorFormatter';
 export * from './idempotency';
 export * from './refusals';
 export * from './wire';
+export type * from './contract';
