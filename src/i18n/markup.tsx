@@ -9,12 +9,13 @@
 // "\n". The Terms lines ("I agree to the [Terms]({terms}) and [Privacy
 // Policy]({privacy}).") name their links the same way; iOS renders them with
 // SwiftUI's markdown, and the caller fills `{terms}` and `{privacy}` with the
-// URLs before the text gets here.
+// URLs before the text gets here. SwiftUI draws those links in the view's
+// tint with no underline; `linkColor` is that tint here.
 //
 // The copy-rule tests (__tests__/copyRules.test.ts) keep the marks paired, so
 // a stray mark fails a test rather than drawing an asterisk.
 import { useMemo } from 'react';
-import { Linking, StyleSheet, Text, type StyleProp, type TextProps, type TextStyle } from 'react-native';
+import { Linking, StyleSheet, Text, type ColorValue, type StyleProp, type TextProps, type TextStyle } from 'react-native';
 
 /** A piece of text that is roman or italic (iOS `OnboardingMarkup.Run`). */
 export type MarkupRun = { readonly text: string; readonly italic: boolean };
@@ -56,7 +57,8 @@ const LINK = /^\[([^\]]*)\]\(([^()\s]*)\)/;
 /**
  * Split a string into runs and links. Italic marks toggle across the whole
  * string (a link's label can be italic); a `[` that does not open a whole
- * `[label](url)` is plain text.
+ * `[label](url)` is plain text, and a link with no url (`[label]()`) is its
+ * label as plain text: there is nothing to open.
  */
 export function parseMarkup(markup: string): MarkupSegment[] {
   const segments: MarkupSegment[] = [];
@@ -81,7 +83,8 @@ export function parseMarkup(markup: string): MarkupSegment[] {
         flush();
         const [whole, label = '', href = ''] = match;
         for (const run of markupRuns(label)) {
-          segments.push({ text: run.text, italic: run.italic !== italic, href });
+          const segment = { text: run.text, italic: run.italic !== italic };
+          segments.push(href ? { ...segment, href } : segment);
         }
         // An odd number of marks inside the label carries over, as it would
         // in the plain toggle.
@@ -102,35 +105,71 @@ export type MarkupTextProps = Omit<TextProps, 'children'> & {
   readonly children: string;
   /** Added to italic runs (default: `fontStyle: 'italic'`; pass the italic face where the font has one). */
   readonly italicStyle?: StyleProp<TextStyle>;
-  /** Added to link runs (default: underlined). */
+  /**
+   * The links' colour. iOS draws the Terms and Privacy links in the view's
+   * tint with NO underline (`.tint(Color.lpRust2)` on sign-up,
+   * `.tint(Color.lpAccentText)` under the social buttons), so pass the
+   * theme's tint here; without it a link takes the text's own colour.
+   */
+  readonly linkColor?: ColorValue;
+  /** Added to links after `linkColor` (an underline, say, where a screen wants one iOS does not draw). */
   readonly linkStyle?: StyleProp<TextStyle>;
   /** What a link tap does (default: open the url with the system). */
   readonly onLinkPress?: (url: string) => void;
 };
+
+/** One link (its runs, roman and italic) or one plain run. */
+type Piece = { readonly href?: string; readonly runs: readonly MarkupRun[] };
+
+/**
+ * Gather the runs of each link: "[*Terms* of use](u)" is two runs but ONE
+ * link, so TalkBack lists one link and a press anywhere on it opens it.
+ * Consecutive runs with the same url are one link.
+ */
+function pieces(segments: readonly MarkupSegment[]): Piece[] {
+  const result: { href?: string; runs: MarkupRun[] }[] = [];
+  for (const segment of segments) {
+    const last = result[result.length - 1];
+    const run = { text: segment.text, italic: segment.italic };
+    if (segment.href !== undefined && last?.href === segment.href) last.runs.push(run);
+    else result.push(segment.href !== undefined ? { href: segment.href, runs: [run] } : { runs: [run] });
+  }
+  return result;
+}
 
 /**
  * A translated string with its italic runs and links drawn, the marks never
  * shown. One <Text>, so the style, font scaling and line breaks apply to every
  * run; each link is a nested pressable span TalkBack lists as a link.
  */
-export function MarkupText({ children, italicStyle, linkStyle, onLinkPress, ...textProps }: MarkupTextProps) {
-  const segments = useMemo(() => parseMarkup(children), [children]);
+export function MarkupText({ children, italicStyle, linkColor, linkStyle, onLinkPress, ...textProps }: MarkupTextProps) {
+  const parts = useMemo(() => pieces(parseMarkup(children)), [children]);
   const openLink = onLinkPress ?? ((url: string) => void Linking.openURL(url).catch(() => undefined));
+  const italic = [styles.italic, italicStyle];
   return (
     <Text {...textProps}>
-      {segments.map((segment, index) => {
-        const style = [segment.italic && [styles.italic, italicStyle], segment.href !== undefined && [styles.link, linkStyle]];
-        if (segment.href === undefined) {
+      {parts.map((piece, index) => {
+        const href = piece.href;
+        if (href === undefined) {
+          const run = piece.runs[0]!;
           return (
-            <Text key={index} style={style}>
-              {segment.text}
+            <Text key={index} style={run.italic ? italic : undefined}>
+              {run.text}
             </Text>
           );
         }
-        const href = segment.href;
         return (
-          <Text key={index} style={style} accessibilityRole="link" onPress={() => openLink(href)}>
-            {segment.text}
+          <Text
+            key={index}
+            style={[linkColor !== undefined && { color: linkColor }, linkStyle]}
+            accessibilityRole="link"
+            onPress={() => openLink(href)}
+          >
+            {piece.runs.map((run, runIndex) => (
+              <Text key={runIndex} style={run.italic ? italic : undefined}>
+                {run.text}
+              </Text>
+            ))}
           </Text>
         );
       })}
@@ -140,5 +179,4 @@ export function MarkupText({ children, italicStyle, linkStyle, onLinkPress, ...t
 
 const styles = StyleSheet.create({
   italic: { fontStyle: 'italic' },
-  link: { textDecorationLine: 'underline' },
 });

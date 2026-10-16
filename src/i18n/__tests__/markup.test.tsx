@@ -60,6 +60,14 @@ describe('parseMarkup', () => {
       { text: ' here', italic: true },
     ]);
   });
+
+  it('keeps a link with no url as its label, plain', () => {
+    expect(parseMarkup('Read [this]() first')).toEqual([
+      { text: 'Read ', italic: false },
+      { text: 'this', italic: false },
+      { text: ' first', italic: false },
+    ]);
+  });
 });
 
 describe('MarkupText', () => {
@@ -86,6 +94,33 @@ describe('MarkupText', () => {
     await fireEvent.press(screen.getByRole('link', { name: 'Privacy Policy' }));
     await fireEvent.press(screen.getByRole('link', { name: 'Terms' }));
     expect(opened).toEqual(['https://lifepass.is/privacy', 'https://lifepass.is/terms']);
+  });
+
+  it('lists a link with an italic word in its label as ONE link', async () => {
+    const opened: string[] = [];
+    await render(<MarkupText onLinkPress={(url) => opened.push(url)}>{'Read the [*Terms* of use](u).'}</MarkupText>);
+    expect(screen.getAllByRole('link')).toHaveLength(1);
+    const link = screen.getByRole('link', { name: 'Terms of use' });
+    expect(StyleSheet.flatten(screen.getByText('Terms').props.style)).toMatchObject({ fontStyle: 'italic' });
+    await fireEvent.press(link);
+    expect(opened).toEqual(['u']);
+  });
+
+  it('draws no link where there is no url', async () => {
+    await render(<MarkupText testID="line">{'Read [this]() first'}</MarkupText>);
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    expect(screen.getByTestId('line')).toHaveTextContent('Read this first');
+  });
+
+  it('colours a link with the tint and does not underline it, as SwiftUI draws the Terms line', async () => {
+    await render(
+      <MarkupText linkColor="#B5532E">
+        {translate('auth.terms_agree', 'en', { terms: 'https://lifepass.is/terms', privacy: 'https://lifepass.is/privacy' })}
+      </MarkupText>,
+    );
+    const style = StyleSheet.flatten(screen.getByRole('link', { name: 'Terms' }).props.style);
+    expect(style).toMatchObject({ color: '#B5532E' });
+    expect(style?.textDecorationLine).toBeUndefined();
   });
 
   it('opens a link with the system when no handler is given', async () => {
