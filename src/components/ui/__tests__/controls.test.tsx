@@ -9,6 +9,7 @@ import { Chip, ChipRow } from '../Chip';
 import CheckboxRow from '../CheckboxRow';
 import MenuPicker from '../MenuPicker';
 import NumberStepper from '../NumberStepper';
+import { parseDecimal } from '../numberInput';
 import SegmentedControl from '../SegmentedControl';
 import ToggleRow from '../ToggleRow';
 
@@ -211,12 +212,23 @@ describe('NumberStepper', () => {
     expect(screen.getByTestId('weight.input')).toHaveDisplayValue('72,5');
   });
 
-  it('accepts typing with either separator, and drops letters', async () => {
+  it('accepts typing with either separator', async () => {
     await render(<Weight initial="" />);
-    await fireEvent.changeText(screen.getByTestId('weight.input'), '81.3kg');
+    await fireEvent.changeText(screen.getByTestId('weight.input'), '81.3');
     expect(screen.getByTestId('weight.input')).toHaveDisplayValue('81.3');
     await fireEvent.press(screen.getByRole('button', { name: 'Increase by 0.1 kilograms' }));
     expect(screen.getByTestId('weight.input')).toHaveDisplayValue('81,4');
+  });
+
+  // iOS keeps the text as typed and shows parseDecimal's error; dropping the
+  // space or the unit would turn "7 2" into 72 and "1 900" into 1900.
+  it('keeps what the member typed exactly as typed, for the caller to refuse', async () => {
+    await render(<Weight initial="" />);
+    for (const typed of ['7 2', '1 900', '72,5 kg']) {
+      await fireEvent.changeText(screen.getByTestId('weight.input'), typed);
+      expect(screen.getByTestId('weight.input')).toHaveDisplayValue(typed);
+      expect(parseDecimal(typed)).toBeNull();
+    }
   });
 
   it('an empty field steps from the fallback', async () => {

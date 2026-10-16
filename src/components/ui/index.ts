@@ -48,7 +48,6 @@ export {
   formatDecimalInput,
   stepText,
   decimalsOf,
-  sanitiseDecimalTyping,
 } from './numberInput';
 export type { StepRule } from './numberInput';
 export { default as Callout, calloutPath, CALLOUT_ARROW } from './Callout';

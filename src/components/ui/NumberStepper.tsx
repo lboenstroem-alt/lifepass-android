@@ -2,8 +2,10 @@
 // weight field, the body sheet's weight and height, the runner's sets).
 //
 // The field holds TEXT, as on iOS, so what the member typed stays exactly as
-// typed ("72,5") until they step it; the caller parses it with
-// `parseDecimal` and shows its own error under the field. Stepping reads the
+// typed ("72,5", and "7 2" too) until they step it; nothing is filtered out,
+// because dropping a character would turn their input into another number.
+// The caller parses it with `parseDecimal` (or `parseWholeNumber`) and shows
+// its own error under the field. Stepping reads the
 // field (or `fallback` when empty), adds the step, rounds, and refuses to leave
 // [min, max] (numberInput.ts).
 //
@@ -20,7 +22,7 @@ import { Pressable, StyleSheet, View, type AccessibilityActionEvent, type TextIn
 import { useT } from '../../i18n';
 import { colors, hairline, radius, sans } from '../../theme';
 import LPText from './LPText';
-import { sanitiseDecimalTyping, stepText } from './numberInput';
+import { stepText } from './numberInput';
 import SheetTextInput from './SheetTextInput';
 
 export type NumberStepperProps = {
@@ -46,7 +48,7 @@ export type NumberStepperProps = {
   showButtons?: boolean;
   /** 'large': the check-in's 28 pt centred number; 'regular': a 17 pt field. */
   size?: 'large' | 'regular';
-  /** Whole numbers only (number pad, no separator). */
+  /** Whole numbers (the number pad, no separator); parse with `parseWholeNumber`. */
   integer?: boolean;
   invalid?: boolean;
   disabled?: boolean;
@@ -131,7 +133,7 @@ export default function NumberStepper({
         <SheetTextInput
           ref={input}
           value={text}
-          onChangeText={(next) => onChangeText(integer ? next.replace(/[^0-9]/g, '') : sanitiseDecimalTyping(next))}
+          onChangeText={onChangeText}
           editable={!disabled}
           keyboardType={integer ? 'number-pad' : 'decimal-pad'}
           onFocus={onFocus}

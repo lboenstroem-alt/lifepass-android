@@ -4,8 +4,10 @@
 //
 // WHY NOT Number() OR Intl. A member types "72,5" on an Icelandic keyboard and
 // "72.5" on an English one, whatever the phone's region; both mean the same.
-// Anything else (letters, two separators, a minus in the middle, grouping) is
-// refused rather than guessed, so "7.250" never silently becomes 7.25.
+// Anything else (letters, two separators, a minus in the middle, grouping, a
+// space between digits) is refused rather than guessed, so "7.250" never
+// silently becomes 7.25 and "7 2" never becomes 72. Nothing here rewrites
+// what the member typed: the field keeps it, and the caller shows its error.
 
 /** iOS HealthFormat.parseDecimal: "72,5", "72.5" and " 72,5 " are 72.5. */
 export function parseDecimal(raw: string): number | null {
@@ -91,9 +93,4 @@ export function decimalsOf(step: number): number {
   const text = String(step);
   const dot = text.indexOf('.');
   return dot < 0 ? 0 : text.length - dot - 1;
-}
-
-/** Characters a member may type into a decimal field (others are dropped as typed). */
-export function sanitiseDecimalTyping(text: string): string {
-  return text.replace(/[^0-9.,-]/g, '');
 }

@@ -9,7 +9,6 @@ import {
   formatDecimalInput,
   parseDecimal,
   parseWholeNumber,
-  sanitiseDecimalTyping,
   stepText,
 } from '../numberInput';
 
@@ -90,9 +89,4 @@ describe('stepText (WeeklyCheckInSheet.stepWeight)', () => {
     expect(decimalsOf(0.1)).toBe(1);
     expect(decimalsOf(2.5)).toBe(1);
   });
-});
-
-it('drops characters that cannot be part of a number as they are typed', () => {
-  expect(sanitiseDecimalTyping('72,5 kg')).toBe('72,5');
-  expect(sanitiseDecimalTyping('7a2.5')).toBe('72.5');
 });
