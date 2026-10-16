@@ -16,6 +16,11 @@
 //   1.5 → accessibility1, 1.8 → accessibility2, 2.0 → accessibility3
 // so 1.5, the first Android step past iOS's largest ordinary size, is where
 // the accessibility layouts begin.
+//
+// TESTS. React Native's own Jest setup reports a window font scale of 2, so a
+// component test sees `accessibility3` unless it mocks
+// `react-native/Libraries/Utilities/useWindowDimensions` (see
+// src/hooks/__tests__/useA11ySize.test.tsx) or the harness pins the scale.
 import { useWindowDimensions } from 'react-native';
 
 /** iOS DynamicTypeSize, smallest to largest. */
