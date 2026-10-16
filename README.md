@@ -20,8 +20,11 @@ background work need a development build (`eas build -p android --profile develo
 ## Environment
 
 Every build, local or EAS, talks to **production** (`www.lifepass.is` and the
-production Supabase project); there is no staging. `.env.example` lists the
-variables; each has a production default in `src/config/env.ts`. Never commit
+production Supabase project); there is no staging. For a local run, copy
+`.env.example` to `.env`: it sets the public production API and Supabase
+values, which the legacy API and Supabase clients still need (they stop the
+app at launch without them, until F2 and F3 move them onto
+`src/config/env.ts`, which falls back to production by itself). Never commit
 a secret: this repository is public.
 
 Because the app talks to production, nothing in development or testing may
@@ -46,6 +49,10 @@ npm run ci          # all of the above, Jest in three time zones, generated-file
   expo-notifications (local only; push-token calls throw).
 - `test/harness`: `setEnv` and `setDev` for one test. React Native Testing
   Library 14 is asynchronous: `await render(...)`, `await fireEvent.press(...)`.
+  After every test the tree is unmounted, then the fakes, AsyncStorage, the
+  stub server and the language are reset.
+- The test realm has no `crypto`, `Buffer`, `AbortSignal.timeout` or
+  `AbortSignal.any`, like the phone (Hermes); ESLint refuses them in app code.
 - Debug-only fixture switches (`EXPO_PUBLIC_FIXTURE`, `src/dev/fixtures.ts`)
   stand the app up in a known state for screenshots, like the iOS
   `-LPScreenshot*` launch arguments. Release bundles compile them out.

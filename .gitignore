@@ -34,9 +34,17 @@ yarn-error.*
 .idea/
 .vscode/
 
-# local env files
-.env*.local
+# local env files (only the documented example is committed)
 .env
+.env.*
+!.env.example
+
+# signing and service credentials: EAS local credentials (keystore
+# passwords), upload keystores, the Google Play service-account key
+credentials.json
+*.keystore
+*service-account*.json
+google-services.json
 
 # coach local rate-limit store
 .coach-usage.json

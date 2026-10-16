@@ -296,11 +296,55 @@ describe('repository hygiene', () => {
     for (const entry of ['/android', '/ios', '.env', '*.jks', 'node_modules/']) expect(ignore).toContain(entry);
   });
 
-  it('documents every EXPO_PUBLIC variable the app reads in .env.example, without values', () => {
+  // The repository is public: what git would ignore, asked of git itself.
+  const isIgnored = (file: string): boolean => {
+    try {
+      execFileSync('git', ['check-ignore', '--quiet', '--no-index', file], { cwd: ROOT, stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it.each([
+    '.env',
+    '.env.local',
+    '.env.production',
+    '.env.development.local',
+    'credentials.json',
+    'android-upload.keystore',
+    'release.jks',
+    'play-service-account.json',
+    'pc-api-1234-service-account-key.json',
+    'google-services.json',
+    'android/app/build.gradle',
+  ])('never commits %s', (file) => {
+    expect(isIgnored(file)).toBe(true);
+  });
+
+  it.each(['.env.example', 'eas.json', 'app.json', 'test/contract/openapi.json'])('commits %s', (file) => {
+    expect(isIgnored(file)).toBe(false);
+  });
+
+  it('documents every EXPO_PUBLIC variable the app reads in .env.example, and no secret', () => {
     const example = read('.env.example');
     const envSource = read('src/config/env.ts') + read('src/dev/fixtures.ts');
     const used = [...new Set(envSource.match(/EXPO_PUBLIC_[A-Z_]+/g) ?? [])];
     for (const name of used) expect(example).toMatch(new RegExp(`^#? ?${name}=`, 'm'));
     expect(example).not.toMatch(/=\s*(sk\.|pk\.)/);
+  });
+
+  it('sets only the public production server values in .env.example (the legacy clients need them)', () => {
+    const set = Object.fromEntries(
+      read('.env.example')
+        .split('\n')
+        .filter((line) => /^[A-Z_]+=/.test(line))
+        .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+    );
+    expect(set).toEqual({
+      EXPO_PUBLIC_LIFEPASS_API_URL: PRODUCTION.apiBaseUrl,
+      EXPO_PUBLIC_SUPABASE_URL: PRODUCTION.supabaseUrl,
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: PRODUCTION.supabaseAnonKey,
+    });
   });
 });
