@@ -8,10 +8,19 @@ packs (`static let en` / `static let \`is\``) in LocalizationHealth*.swift,
 merged base-first with the packs on top (LPHealthStrings.merged).
 
 Usage:
-  python3 scripts/import-ios-strings.py "<path to lifepass-ios>/LifePass 2/Services"
+  python3 scripts/import-ios-strings.py "<path to lifepass-ios>/LifePass 2/Services" [--out DIR]
 
-Re-run it whenever iOS adds or changes copy; never hand-edit the JSON. Strings
-Android needs that iOS does not have go in src/i18n/strings.android.{en,is}.json.
+Writes, into src/i18n (or DIR):
+  strings.en.json, strings.is.json   the merged tables the app reads
+  strings.manifest.json              which dictionary (base or pack) owns each
+                                     key, for the copy-rule tests that iOS runs
+                                     per pack (LocalizationKeyTests and friends)
+
+Exits non-zero, writing nothing, when two packs define one key or a pack
+redefines a base key other than the intentional override: the inputs the iOS
+DEBUG build traps on. Re-run it whenever iOS adds or changes copy; never
+hand-edit the JSON. Strings Android needs that iOS does not have go in the
+owning package's pack, src/i18n/android/<package-id>.ts.
 """
 import json
 import os
@@ -19,6 +28,10 @@ import re
 import sys
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "src", "i18n")
+
+# The one key a pack deliberately replaces in the base dictionary
+# (LPHealthStrings.intentionalOverrides). Any other collision is a mistake.
+INTENTIONAL_OVERRIDES = {"coach.greeting"}
 
 # Merge order matches LPHealthStrings.packsEN / packsIS.
 PACKS = [
@@ -135,29 +148,101 @@ def parse_dict(text: str, start_pattern: str) -> dict:
     return result
 
 
-def main():
-    services = sys.argv[1]
-    base = open(os.path.join(services, "Localization.swift"), encoding="utf-8").read()
-    en = parse_dict(base, r"private static let baseEN")
-    is_ = parse_dict(base, r"private static let baseIS")
-    overrides = {"coach.greeting"}
+class MergeError(ValueError):
+    """Two dictionaries define one key: the generator refuses, as the iOS
+    DEBUG build traps (LPHealthStrings.merged)."""
+
+
+def merge(base: dict, packs: list, lang: str) -> dict:
+    """LPHealthStrings.merged: the packs over the base, in order.
+
+    iOS traps in DEBUG when a key is defined by two packs, or when a pack
+    redefines a base key that is not an intentional override. The generator
+    refuses the same inputs, so a table it writes is one the DEBUG app would
+    have launched with.
+    """
+    result = dict(base)
+    owner = {}
+    for name, values in packs:
+        for key, value in values.items():
+            if key in owner:
+                raise MergeError("%s string %s is defined by both %s and %s" % (lang, key, owner[key], name))
+            if key in base and key not in INTENTIONAL_OVERRIDES:
+                raise MergeError("%s string %s (pack %s) already exists in the base dictionary" % (lang, key, name))
+            owner[key] = name
+            result[key] = value
+    return result
+
+
+def manifest_entry(name: str, en: dict, is_: dict) -> dict:
+    """One dictionary's keys: those in both languages, then any in one only."""
+    return {
+        "name": name,
+        "keys": sorted(set(en) & set(is_)),
+        "enOnly": sorted(set(en) - set(is_)),
+        "isOnly": sorted(set(is_) - set(en)),
+    }
+
+
+def write_json(path: str, value) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(value, f, ensure_ascii=False, indent=1)
+        f.write("\n")
+
+
+def main(argv):
+    args = list(argv)
+    out = SRC
+    if "--out" in args:
+        index = args.index("--out")
+        out = args[index + 1]
+        del args[index:index + 2]
+    if len(args) != 1:
+        print(__doc__, file=sys.stderr)
+        return 2
+    services = args[0]
+
+    base_text = open(os.path.join(services, "Localization.swift"), encoding="utf-8").read()
+    base = {
+        "en": parse_dict(base_text, r"private static let baseEN"),
+        "is": parse_dict(base_text, r"private static let baseIS"),
+    }
+    packs = {"en": [], "is": []}
     for name, filename in PACKS:
         text = open(os.path.join(services, filename), encoding="utf-8").read()
-        for lang, table, pattern in (("en", en, r"static let en"), ("is", is_, r"static let `is`")):
-            pack = parse_dict(text, pattern)
-            for key, value in pack.items():
-                if key in table and key not in overrides and lang == "en":
-                    print("warning: %s pack %s overrides base key %s" % (lang, name, key), file=sys.stderr)
-                table[key] = value
-    os.makedirs(SRC, exist_ok=True)
-    for lang, table in (("en", en), ("is", is_)):
-        path = os.path.join(SRC, "strings.%s.json" % lang)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(dict(sorted(table.items())), f, ensure_ascii=False, indent=1)
-            f.write("\n")
-    missing_is = sorted(set(en) - set(is_))
-    print("en: %d keys, is: %d keys, en-only: %d" % (len(en), len(is_), len(missing_is)))
+        packs["en"].append((name, parse_dict(text, r"static let en")))
+        packs["is"].append((name, parse_dict(text, r"static let `is`")))
+
+    try:
+        tables = {lang: merge(base[lang], packs[lang], lang) for lang in ("en", "is")}
+    except MergeError as error:
+        print("error: %s" % error, file=sys.stderr)
+        return 1
+
+    manifest = {
+        "about": "Generated by scripts/import-ios-strings.py from the iOS dictionaries. Do not edit.",
+        "intentionalOverrides": sorted(INTENTIONAL_OVERRIDES),
+        "dictionaries": [manifest_entry("base", base["en"], base["is"])]
+        + [
+            manifest_entry(name, en_values, is_values)
+            for (name, en_values), (_, is_values) in zip(packs["en"], packs["is"])
+        ],
+        "counts": {lang: len(tables[lang]) for lang in ("en", "is")},
+    }
+
+    os.makedirs(out, exist_ok=True)
+    for lang in ("en", "is"):
+        write_json(os.path.join(out, "strings.%s.json" % lang), dict(sorted(tables[lang].items())))
+    write_json(os.path.join(out, "strings.manifest.json"), manifest)
+
+    for entry in manifest["dictionaries"]:
+        print(
+            "%-12s %4d keys in both languages, %d English only, %d Icelandic only"
+            % (entry["name"], len(entry["keys"]), len(entry["enOnly"]), len(entry["isOnly"]))
+        )
+    print("merged: en %d keys, is %d keys" % (len(tables["en"]), len(tables["is"])))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main(sys.argv[1:]))
