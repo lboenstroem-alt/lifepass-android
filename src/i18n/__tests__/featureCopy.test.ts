@@ -262,6 +262,13 @@ describe('log a workout (LogWorkoutTests)', () => {
     expect(english.length).toBeGreaterThan(0);
     expect(keysWithPrefix('logworkout.', is).sort()).toEqual(english.sort());
     for (let weekday = 1; weekday <= 7; weekday += 1) expect(is[`logworkout.weekday_gen.${weekday}`]).toBeDefined();
+    // Every ExtraWorkoutKind but .unknown has a label, the kinds that are not
+    // chips (walk, mobility: a watch workout can be either) included.
+    const kinds = ['strength', 'cardio', 'walk', 'hike', 'swim', 'mobility', 'class', 'other'];
+    for (const kind of kinds) {
+      const key = `logworkout.kind.${kind}`;
+      expect([key, en[key] !== undefined, is[key] !== undefined]).toEqual([key, true, true]);
+    }
   });
 
   it('labels the six chips of the plan (testTheChipsAreTheSixOfThePlan)', () => {
@@ -291,8 +298,14 @@ describe('the class feed (ClassDistanceTests, ClassesNextMatchTests)', () => {
     const keys = keysWithPrefix('classes.next_');
     expect(keys).toHaveLength(24);
     for (const key of keys) {
-      expect([key, Boolean(is[key])]).toEqual([key, true]);
+      expect([key, is[key] !== undefined]).toEqual([key, true]);
+      expect([key, (is[key] ?? '').length > 0]).toEqual([key, true]);
       expect([key, hasDash(en[key]!) || hasDash(is[key]!)]).toEqual([key, false]);
+    }
+    // Every featured chip (ClassesViewModel.featuredCategories) has a noun in both languages.
+    for (const slug of ['yoga', 'pilates', 'hiit', 'strength', 'boxing', 'cycling', 'swimming', 'dance']) {
+      const key = `classes.next_what_${slug}`;
+      expect([key, en[key] !== undefined, is[key] !== undefined]).toEqual([key, true, true]);
     }
   });
 });

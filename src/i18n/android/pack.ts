@@ -14,7 +14,9 @@
 // - every key in BOTH languages, Icelandic written natively, not word for
 //   word from the English;
 // - no em dash and no en dash (ranges are written "to" / "til"), no emoji;
-// - the same {placeholders} in both languages;
+// - the same {placeholders} in both languages (an Icelandic `.one` keeps every
+//   placeholder of its `.many`, since Icelandic 21 is singular, and adds none
+//   that neither English form has);
 // - never a key the generated iOS tables already have (pick a new key; the
 //   iOS copy is changed in iOS and regenerated, not overridden here).
 

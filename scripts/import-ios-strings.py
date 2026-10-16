@@ -195,6 +195,10 @@ def main(argv):
     out = SRC
     if "--out" in args:
         index = args.index("--out")
+        if index + 1 >= len(args):
+            # "--out" with no directory after it: say how to call, no traceback.
+            print(__doc__, file=sys.stderr)
+            return 2
         out = args[index + 1]
         del args[index:index + 2]
     if len(args) != 1:

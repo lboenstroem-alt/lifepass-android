@@ -99,7 +99,9 @@ describe('merging the packs over the generated tables', () => {
  * dash or an emoji, or a placeholder lost between the languages. An
  * Icelandic `.one` may carry the count its English one leaves out ("1 visit
  * left", "{count} heimsókn eftir"): Icelandic takes the singular for 21, 31
- * and 101 too, so it MUST carry every placeholder of the `.many`.
+ * and 101 too, so it MUST carry every placeholder of the `.many`. It may not
+ * add one neither English form has: callers pass only the values the English
+ * copy names, so an Icelandic phone would show "{name}" as written.
  */
 function packProblems(pack: AndroidPack, name: string): string[] {
   const problems: string[] = [];
@@ -119,7 +121,9 @@ function packProblems(pack: AndroidPack, name: string): string[] {
     if (key.endsWith('.one')) {
       const many = pack.en[`${key.slice(0, -'.one'.length)}.many`];
       wanted.push(...placeholders(many ?? ''));
-      for (const p of new Set(wanted)) if (!icelandic.includes(p)) problems.push(`${name} ${key} (is) lost ${p}`);
+      const known = new Set(wanted);
+      for (const p of known) if (!icelandic.includes(p)) problems.push(`${name} ${key} (is) lost ${p}`);
+      for (const p of new Set(placeholders(icelandic))) if (!known.has(p)) problems.push(`${name} ${key} (is) adds ${p}`);
     } else if (placeholders(icelandic).join() !== wanted.join()) {
       problems.push(`${name} ${key}: ${wanted.join()} in English, ${placeholders(icelandic).join()} in Icelandic`);
     }
@@ -142,8 +146,21 @@ describe('every Android pack keeps the copy rules', () => {
 
   it('names every broken rule', () => {
     const pack: AndroidPack = {
-      en: { 'x.left.one': '1 visit left', 'x.left.many': '{count} visits left', 'x.dash': 'a \u2013 b', 'x.only': 'Only' },
-      is: { 'x.left.one': '1 heimsókn eftir', 'x.left.many': 'heimsóknir eftir', 'x.dash': ' ' },
+      en: {
+        'x.left.one': '1 visit left',
+        'x.left.many': '{count} visits left',
+        'x.dash': 'a \u2013 b',
+        'x.only': 'Only',
+        'x.with.one': 'One visit with a friend',
+        'x.with.many': '{count} visits with a friend',
+      },
+      is: {
+        'x.left.one': '1 heimsókn eftir',
+        'x.left.many': 'heimsóknir eftir',
+        'x.dash': ' ',
+        'x.with.one': '{count} heimsókn með {name}',
+        'x.with.many': '{count} heimsóknir með vini',
+      },
     };
     expect(packProblems(pack, 'X')).toEqual([
       'X x.only has no is',
@@ -151,6 +168,7 @@ describe('every Android pack keeps the copy rules', () => {
       'X x.dash (is) is blank',
       'X x.left.one (is) lost {count}',
       'X x.left.many: {count} in English,  in Icelandic',
+      'X x.with.one (is) adds {name}',
     ]);
   });
 });
