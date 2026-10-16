@@ -11,6 +11,7 @@ import { BackHandler, Text } from 'react-native';
 import type { ReactElement } from 'react';
 
 import Sheet, { SHEET_CLOSE_FALLBACK_MS } from '../Sheet';
+import { useInSheet } from '../SheetTextInput';
 
 type ModalProps = {
   enablePanDownToClose?: boolean;
@@ -219,4 +220,24 @@ it("never lets TalkBack read the library's English labels", async () => {
   await render(element);
   expect(lastModal().accessible).toBe(false);
   expect(lastModal().backdropComponent!({}).props.accessible).toBe(false);
+});
+
+describe('fields inside a sheet', () => {
+  function Where({ label }: { label: string }) {
+    return <Text>{`${label}: ${useInSheet() ? 'in sheet' : 'on page'}`}</Text>;
+  }
+
+  it('know they are in a sheet, in the body and the footer alike, so they use its keyboard-aware input', async () => {
+    await render(
+      <>
+        <Where label="page" />
+        <Sheet visible onClose={jest.fn()} footer={<Where label="footer" />}>
+          <Where label="body" />
+        </Sheet>
+      </>,
+    );
+    expect(screen.getByText('page: on page')).toBeOnTheScreen();
+    expect(screen.getByText('body: in sheet')).toBeOnTheScreen();
+    expect(screen.getByText('footer: in sheet')).toBeOnTheScreen();
+  });
 });

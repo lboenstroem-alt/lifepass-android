@@ -15,12 +15,13 @@
 // opens the keyboard to type a value.
 import { Ionicons } from '@expo/vector-icons';
 import { useRef } from 'react';
-import { Pressable, StyleSheet, TextInput, View, type AccessibilityActionEvent } from 'react-native';
+import { Pressable, StyleSheet, View, type AccessibilityActionEvent, type TextInput } from 'react-native';
 
 import { useT } from '../../i18n';
 import { colors, hairline, radius, sans } from '../../theme';
 import LPText from './LPText';
 import { sanitiseDecimalTyping, stepText } from './numberInput';
+import SheetTextInput from './SheetTextInput';
 
 export type NumberStepperProps = {
   text: string;
@@ -127,7 +128,7 @@ export default function NumberStepper({
         ]}
         testID={testID ? `${testID}.field` : undefined}
       >
-        <TextInput
+        <SheetTextInput
           ref={input}
           value={text}
           onChangeText={(next) => onChangeText(integer ? next.replace(/[^0-9]/g, '') : sanitiseDecimalTyping(next))}

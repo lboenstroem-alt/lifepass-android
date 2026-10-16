@@ -45,6 +45,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, hairline, radius } from '../../theme';
 import { hiddenFromAccessibility } from './a11y';
 import { createHostStore, type HostStore } from './hostStore';
+import { InSheetContext } from './SheetTextInput';
 
 export type SheetProps = {
   visible: boolean;
@@ -182,7 +183,9 @@ export default function Sheet({
   const renderFooter = useCallback(
     (props: BottomSheetFooterProps) => (
       <BottomSheetFooter {...props}>
-        <SheetFooter store={footerStore} bottomInset={insets.bottom} onHeight={setFooterHeight} />
+        <InSheetContext.Provider value>
+          <SheetFooter store={footerStore} bottomInset={insets.bottom} onHeight={setFooterHeight} />
+        </InSheetContext.Provider>
       </BottomSheetFooter>
     ),
     [footerStore, insets.bottom],
@@ -210,11 +213,13 @@ export default function Sheet({
   const usesFooterSlot = hasFooter && FOOTER_SLOT_AVAILABLE;
   const points = fullHeight ? FULL_HEIGHT : snapPoints;
   const bottomPadding = usesFooterSlot ? footerHeight + 8 : hasFooter ? 0 : insets.bottom + 24;
+  // The provider travels with the content into the sheet host, so fields
+  // inside know to use the sheet's own input (SheetTextInput).
   const body = (
-    <>
+    <InSheetContext.Provider value>
       {children}
       {hasFooter && !usesFooterSlot ? <View style={styles.inlineFooter}>{footer}</View> : null}
-    </>
+    </InSheetContext.Provider>
   );
   const padded = [styles.content, { paddingBottom: bottomPadding }, contentStyle];
 

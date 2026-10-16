@@ -20,6 +20,7 @@ export { default as Card } from './Card';
 export type { CardProps } from './Card';
 export { default as Sheet, SHEET_CLOSE_FALLBACK_MS } from './Sheet';
 export type { SheetProps } from './Sheet';
+export { default as SheetTextInput, useInSheet } from './SheetTextInput';
 export { Dialog, DialogHost, showDialog, dismissAllDialogs, orderButtons } from './Dialog';
 export type { DialogButton, DialogButtonRole, DialogOptions, DialogProps } from './Dialog';
 export { default as ConfirmSheet } from './ConfirmSheet';
