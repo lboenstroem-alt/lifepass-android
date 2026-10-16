@@ -9,7 +9,7 @@
     "test": "jest",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "ci": "sh scripts/ci.sh",
+    "ci": "bash scripts/ci.sh",
     "contract:vendor": "node scripts/vendor-openapi.mjs",
     "gen:api-types": "openapi-typescript test/contract/openapi.json -o src/api/openapi.d.ts",
     "ios": "echo 'This repository builds the LifePass Android app only.' && exit 1"
