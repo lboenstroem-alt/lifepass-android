@@ -121,65 +121,100 @@ describe('lifepass/feature-boundaries', () => {
 });
 
 describe('eslint.config.js', () => {
-  // The real CLI in its own process: ESLint loads its config with a dynamic
-  // import, which Jest's module system cannot run.
-  async function lint(file: string, code: string): Promise<(string | null)[]> {
-    let out: string;
-    try {
-      out = execFileSync(
-        path.join(ROOT, 'node_modules', '.bin', 'eslint'),
-        ['--format', 'json', '--stdin', '--stdin-filename', path.join(ROOT, file)],
-        { cwd: ROOT, input: code, encoding: 'utf8' },
-      );
-    } catch (error) {
-      // Exit code 1 means "problems found"; the JSON is still on stdout.
-      out = (error as { stdout: string }).stdout;
-    }
-    const [result] = JSON.parse(out) as { messages: { ruleId: string | null }[] }[];
-    return result!.messages.map((m) => m.ruleId);
+  const literal = "import { Text } from 'react-native';\nexport const A = () => <Text>Book now</Text>;\n";
+  const raw = "import { View } from 'react-native';\nexport const A = () => <View>Book now</View>;\n";
+  const pack = "export const en = { title: 'Plans', 'plans.title': 'Plans' };\n";
+  const optIn = `/* eslint lifepass/no-literal-copy: "error" */\n${literal}`;
+  const punctuation =
+    "import { Text } from 'react-native';\nexport const A = ({ n, m }: { n: string; m: string }) => <Text>{`${n} · ${m}`}</Text>;\n";
+  const nodeOnly = [
+    'export const a = crypto.randomUUID();',
+    "export const b = Buffer.from('x').toString('base64');",
+    'export const c = AbortSignal.timeout(5000);',
+    'export const d = AbortSignal.any([]);',
+    'export const e = globalThis.crypto;',
+    '',
+  ].join('\n');
+  const expoCrypto = "import * as Crypto from 'expo-crypto';\nexport const a = Crypto.randomUUID();\n";
+
+  /** Every (file, code) pair the tests below lint. */
+  const CASES: [string, string][] = [
+    ['src/features/example/Example.tsx', literal],
+    ['src/features/example/Example.tsx', raw],
+    ['src/i18n/android/PLANS-1.ts', pack],
+    ['src/features/example/copy.ts', pack],
+    ['src/screens/home/HomeScreen.tsx', literal],
+    ['src/features/example/__tests__/Example.test.tsx', literal],
+    ['src/screens/home/HomeScreen.tsx', optIn],
+    ['src/screens/home/HomeScreen.tsx', raw],
+    ['src/screens/checkin/CheckInScreen.tsx', raw],
+    ['src/features/example/Example.tsx', punctuation],
+    ['src/features/example/ids.ts', nodeOnly],
+    ['src/features/example/ids.ts', expoCrypto],
+  ];
+
+  // The real ESLint in its own process (it loads its config with a dynamic
+  // import, which Jest's module system cannot run), once for all the cases.
+  const LINT_ALL = `
+    const { ESLint } = require('eslint');
+    (async () => {
+      const cases = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+      const eslint = new ESLint({ cwd: process.cwd() });
+      const out = [];
+      for (const [filePath, code] of cases) {
+        const [result] = await eslint.lintText(code, { filePath });
+        out.push(result.messages.map((m) => m.ruleId));
+      }
+      process.stdout.write(JSON.stringify(out));
+    })().catch((error) => { console.error(error); process.exit(2); });
+  `;
+  const results = new Map<string, (string | null)[]>();
+  beforeAll(() => {
+    const input = JSON.stringify(CASES.map(([file, code]) => [path.join(ROOT, file), code]));
+    const out = execFileSync(process.execPath, ['-e', LINT_ALL], { cwd: ROOT, input, encoding: 'utf8' });
+    (JSON.parse(out) as (string | null)[][]).forEach((rules, i) => results.set(CASES[i]!.join('\0'), rules));
+  }, 60_000);
+
+  function lint(file: string, code: string): (string | null)[] {
+    const rules = results.get(`${file}\0${code}`);
+    if (!rules) throw new Error(`lint case not in CASES: ${file}`);
+    return rules;
   }
 
-  const literal = "import { Text } from 'react-native';\nexport const A = () => <Text>Book now</Text>;\n";
-
-  it('applies the copy rules to new code', async () => {
-    expect(await lint('src/features/example/Example.tsx', literal)).toContain('lifepass/no-literal-copy');
+  it('applies the copy rules to new code', () => {
+    expect(lint('src/features/example/Example.tsx', literal)).toContain('lifepass/no-literal-copy');
   });
 
-  it('applies the RN raw-text rule to new code', async () => {
-    const raw = "import { View } from 'react-native';\nexport const A = () => <View>Book now</View>;\n";
-    expect(await lint('src/features/example/Example.tsx', raw)).toEqual(
+  it('applies the RN raw-text rule to new code', () => {
+    expect(lint('src/features/example/Example.tsx', raw)).toEqual(
       expect.arrayContaining(['react-native/no-raw-text', 'lifepass/no-literal-copy']),
     );
   });
 
-  it('spares the string tables, where copy belongs', async () => {
-    const pack = "export const en = { title: 'Plans', 'plans.title': 'Plans' };\n";
-    expect(await lint('src/i18n/android/PLANS-1.ts', pack)).not.toContain('lifepass/no-literal-copy');
-    expect(await lint('src/features/example/copy.ts', pack)).toContain('lifepass/no-literal-copy');
+  it('spares the string tables, where copy belongs', () => {
+    expect(lint('src/i18n/android/PLANS-1.ts', pack)).not.toContain('lifepass/no-literal-copy');
+    expect(lint('src/features/example/copy.ts', pack)).toContain('lifepass/no-literal-copy');
   });
 
-  it('spares legacy files until their owner rewrites them, and tests', async () => {
-    expect(await lint('src/screens/home/HomeScreen.tsx', literal)).not.toContain('lifepass/no-literal-copy');
-    expect(await lint('src/features/example/__tests__/Example.test.tsx', literal)).not.toContain('lifepass/no-literal-copy');
+  it('spares legacy files until their owner rewrites them, and tests', () => {
+    expect(lint('src/screens/home/HomeScreen.tsx', literal)).not.toContain('lifepass/no-literal-copy');
+    expect(lint('src/features/example/__tests__/Example.test.tsx', literal)).not.toContain('lifepass/no-literal-copy');
   });
 
-  it('lets a rewritten legacy file opt back in with one comment', async () => {
-    const optIn = `/* eslint lifepass/no-literal-copy: "error" */\n${literal}`;
-    expect(await lint('src/screens/home/HomeScreen.tsx', optIn)).toContain('lifepass/no-literal-copy');
+  it('lets a rewritten legacy file opt back in with one comment', () => {
+    expect(lint('src/screens/home/HomeScreen.tsx', optIn)).toContain('lifepass/no-literal-copy');
   });
 
-  it('applies the raw-text rule to legacy files too (raw text crashes the app on Android)', async () => {
-    const raw = "import { View } from 'react-native';\nexport const A = () => <View>Book now</View>;\n";
+  it('applies the raw-text rule to legacy files too (raw text crashes the app on Android)', () => {
     for (const file of ['src/screens/home/HomeScreen.tsx', 'src/screens/checkin/CheckInScreen.tsx']) {
-      const rules = await lint(file, raw);
+      const rules = lint(file, raw);
       expect(rules).toContain('react-native/no-raw-text');
       expect(rules).not.toContain('lifepass/no-literal-copy');
     }
   });
 
-  it('allows punctuation-only text inside a <Text>', async () => {
-    const ok = "import { Text } from 'react-native';\nexport const A = ({ n, m }: { n: string; m: string }) => <Text>{`${n} · ${m}`}</Text>;\n";
-    expect(await lint('src/features/example/Example.tsx', ok)).toEqual([]);
+  it('allows punctuation-only text inside a <Text>', () => {
+    expect(lint('src/features/example/Example.tsx', punctuation)).toEqual([]);
   });
 
   it('names an owner for every legacy file (plan 3.0.1)', () => {
@@ -197,20 +232,11 @@ describe('eslint.config.js', () => {
     });
   });
 
-  it('refuses Node-only globals the phone does not have, in app code', async () => {
-    const code = [
-      'export const a = crypto.randomUUID();',
-      "export const b = Buffer.from('x').toString('base64');",
-      'export const c = AbortSignal.timeout(5000);',
-      'export const d = AbortSignal.any([]);',
-      'export const e = globalThis.crypto;',
-      '',
-    ].join('\n');
-    const rules = await lint('src/features/example/ids.ts', code);
+  it('refuses Node-only globals the phone does not have, in app code', () => {
+    const rules = lint('src/features/example/ids.ts', nodeOnly);
     expect(rules.filter((r) => r === 'no-restricted-globals')).toHaveLength(2);
     expect(rules.filter((r) => r === 'no-restricted-properties')).toHaveLength(3);
-    const ok = "import * as Crypto from 'expo-crypto';\nexport const a = Crypto.randomUUID();\n";
-    expect(await lint('src/features/example/ids.ts', ok)).toEqual([]);
+    expect(lint('src/features/example/ids.ts', expoCrypto)).toEqual([]);
   });
 });
 
