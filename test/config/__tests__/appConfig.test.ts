@@ -107,6 +107,10 @@ describe('privacy (platform-privacy-local-data)', () => {
     );
   });
 
+  it('blocks the push receiver permission expo-notifications brings (no push, as on iOS)', () => {
+    expect(config.android.blockedPermissions).toContain('com.google.android.c2dm.permission.RECEIVE');
+  });
+
   it('asks for precise and approximate location, and the microphone for dictation', () => {
     expect(config.android.permissions).toEqual(
       expect.arrayContaining([
