@@ -46,6 +46,35 @@ describe('recording', () => {
     expect(await (await call('/payments/status')).json()).toEqual({ ok: true, data: { seen: 2 } });
   });
 
+  it('records plain data, so a failing assertion prints a normal diff', async () => {
+    api.on('GET', '/venues/:venueId', Reply.ok({}));
+    await call('/venues/abc?lang=is');
+    const sent = api.sent('/venues/abc');
+    // The live signal is there for responders, but not part of the data.
+    expect(sent.signal).toBeInstanceOf(AbortSignal);
+    expect(Object.keys(sent)).not.toEqual(expect.arrayContaining(['signal']));
+    expect(sent).toEqual({
+      method: 'GET',
+      url: `${TEST_API_BASE}/venues/abc?lang=is`,
+      host: 'api.lifepass.test',
+      path: '/venues/abc',
+      query: { lang: 'is' },
+      headers: expect.any(Object),
+      body: undefined,
+      rawBody: null,
+      params: { venueId: 'abc' },
+    });
+    let message = '';
+    try {
+      expect(api.requests).toEqual([]);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('expect(received).toEqual(expected)');
+    expect(message).toContain('"path": "/venues/abc"');
+    expect(message).not.toMatch(/incompatible receiver/);
+  });
+
   it('starts every test empty', () => {
     expect(api.requests).toEqual([]);
   });

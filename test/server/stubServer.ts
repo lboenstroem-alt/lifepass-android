@@ -340,7 +340,7 @@ async function record(request: Request, pathPrefix: string): Promise<RecordedReq
       }
     }
   }
-  const base = {
+  const data = {
     method: request.method.toUpperCase(),
     url: request.url,
     host: url.host,
@@ -349,13 +349,19 @@ async function record(request: Request, pathPrefix: string): Promise<RecordedReq
     headers,
     body,
     rawBody,
-    signal: request.signal,
   };
-  const make = (params: Record<string, string>): RecordedRequest => ({
-    ...base,
-    params,
-    withParams: (next) => make(next),
-  });
+  // A recorded request is plain data to Jest: the live AbortSignal and the
+  // helper are not enumerable, so `toEqual` ignores them and a failing
+  // assertion prints a normal diff (a Node AbortSignal makes the printer
+  // throw "Method Map.prototype.entries called on incompatible receiver").
+  const make = (params: Record<string, string>): RecordedRequest =>
+    Object.defineProperties(
+      { ...data, params },
+      {
+        signal: { value: request.signal, enumerable: false },
+        withParams: { value: (next: Record<string, string>) => make(next), enumerable: false },
+      },
+    ) as RecordedRequest;
   return make({});
 }
 
