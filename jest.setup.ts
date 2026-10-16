@@ -6,10 +6,13 @@
 // 2. The network is the stub server (test/server): the LifePass API and
 //    Supabase are recorded and answered in-process, and any other host is
 //    refused and fails the test. No test can reach production.
-// 3. After every test the fakes and the stub server are reset, so a test
+// 3. After every test the rendered tree is unmounted, and only then are the
+//    fakes, AsyncStorage, the stub server and the language reset, so a test
 //    seeds what it needs in `beforeEach`, never `beforeAll`.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { cleanup } from '@testing-library/react-native/pure';
 
+import { setCurrentLanguage } from './src/i18n';
 import { restoreTestGlobals } from './test/harness';
 import { stubNetwork } from './test/server';
 import { fileSystemState } from './test/mocks/expoFileSystem';
@@ -60,11 +63,30 @@ jest.mock('react-native-safe-area-context', () => require('react-native-safe-are
 
 /* eslint-enable @typescript-eslint/no-require-imports */
 
+// The real setImmediate, taken before any test can install fake timers.
+const realSetImmediate = globalThis.setImmediate;
+
+/** Lets pending promise chains and msw's request handling run to the end. */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 10; turn += 1) {
+    await new Promise<void>((resolve) => realSetImmediate(resolve));
+  }
+}
+
 beforeAll(() => {
   stubNetwork.start();
 });
 
 afterEach(async () => {
+  // Unmount FIRST. RNTL's own cleanup registers when the test file imports
+  // it, after this file, so Jest would run it after the resets below: what a
+  // component does while unmounting (persist a draft, send a request, cancel
+  // a notification) would land in the next test and a stray request would be
+  // blamed on it. Unmount here, let that work land, then check and reset.
+  await settle();
+  await cleanup();
+  await settle();
+
   // Read before the reset: a stray request fails the test that made it.
   const strayError = (() => {
     try {
@@ -75,6 +97,9 @@ afterEach(async () => {
     }
   })();
   restoreTestGlobals();
+  // The language is module state (src/i18n); a test that switched to
+  // Icelandic and failed before switching back must not leak it.
+  setCurrentLanguage('en');
   stubNetwork.reset();
   notificationsState.reset();
   secureStoreState.reset();
