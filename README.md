@@ -42,7 +42,10 @@ npm run ci          # all of the above, Jest in three time zones, generated-file
 - `test/contract`: request and response checks against the vendored API
   contract (`test/contract/openapi.json`, refreshed with
   `npm run contract:vendor -- <monorepo>/apps/web/openapi.yaml`).
-- `test/mocks`: in-memory SecureStore and a stateful expo-notifications.
+- `test/mocks`: an in-memory SecureStore and file system, and a stateful
+  expo-notifications (local only; push-token calls throw).
+- `test/harness`: `setEnv` and `setDev` for one test. React Native Testing
+  Library 14 is asynchronous: `await render(...)`, `await fireEvent.press(...)`.
 - Debug-only fixture switches (`EXPO_PUBLIC_FIXTURE`, `src/dev/fixtures.ts`)
   stand the app up in a known state for screenshots, like the iOS
   `-LPScreenshot*` launch arguments. Release bundles compile them out.
