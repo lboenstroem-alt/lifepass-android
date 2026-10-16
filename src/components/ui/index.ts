@@ -25,8 +25,8 @@ export { Dialog, DialogHost, showDialog, dismissAllDialogs, orderButtons } from 
 export type { DialogButton, DialogButtonRole, DialogOptions, DialogProps } from './Dialog';
 export { default as ConfirmSheet } from './ConfirmSheet';
 export type { ConfirmSheetProps } from './ConfirmSheet';
-export { ToastHost, showToast, dismissToast, TOAST_MS, ACTION_TOAST_MS } from './Toast';
-export type { ToastAction, ToastOptions, ToastHostProps } from './Toast';
+export { ToastHost, showToast, dismissToast, TOAST_MS, MEAL_TOAST_MS, ACTION_TOAST_MS, TOAST_BOTTOM_OFFSET } from './Toast';
+export type { ToastAction, ToastKind, ToastOptions, ToastHostProps } from './Toast';
 export { default as StatusBanner } from './StatusBanner';
 export type { StatusBannerProps } from './StatusBanner';
 export { SkeletonBlock, SkeletonCard } from './Skeleton';

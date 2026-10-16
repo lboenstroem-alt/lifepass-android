@@ -1,17 +1,29 @@
-// A short message at the bottom of the screen, gone after a few seconds:
-// iOS HealthToast ("this was changed on another device", the local-wipe
-// notice) and MealToastCenter (a toast with one action: "Food diary",
-// "Undo", "Check").
+// A short message at the bottom of the screen, gone after a few seconds.
+// iOS has two, and they differ in look and time:
 //
-//   showToast(t('meal.saved'), { action: { label: t('meal.food_diary'), onPress: openDiary } });
+//   kind 'health'  iOS HealthToast (healthToast(key:)): "this was changed on
+//                  another device", the local-wipe notice. A centred message,
+//                  3.2 s, 110 pt up.
+//   kind 'meal'    iOS MealToastCenter.show: everything the food log says
+//                  ("Saved offline", "Changed elsewhere", "Food added" with
+//                  Undo, "Saved to lunch" with Food diary). A left-aligned row
+//                  at least 44 tall, 4 s WITH OR WITHOUT an action, 96 pt up
+//                  (the app-wide meal chrome; the capture page passes its own
+//                  `bottomOffset`, 40 or 100 by its tray).
+//
+// A toast with an action is always the meal kind (HealthToast has none); one
+// without is the health kind unless it says `kind: 'meal'`, which every port
+// of a MealToastCenter.show(message:) call must.
+//
+//   showToast(t('health.err.changed'));                                  // HealthToast
+//   showToast(t('health.saved_offline'), { kind: 'meal' });              // MealToastCenter
+//   showToast(t('food.added'), { action: { label: t('plan.undo'), onPress: undo } });
 //
 // One at a time: a new toast replaces the current one, as on iOS. TalkBack
-// hears every toast as it appears (iOS posts the same announcement).
-//
-// TIMING. 3.2 s without an action (HealthToast), 4 s with one
-// (MealToastCenter's default); `durationMs` overrides. A toast with an action
-// also honours Android's "Time to take action" setting, so a member who asked
-// for more time gets it before the Undo disappears.
+// hears every toast as it appears (iOS posts the same announcement). A toast
+// with an action also honours Android's "Time to take action" setting, so a
+// member who asked for more time gets it before the Undo disappears.
+// `durationMs` overrides the kind's time.
 //
 // The app shell mounts one ToastHost (in UiKitProvider) above the tab bar.
 import { useEffect, useRef, useState } from 'react';
@@ -26,17 +38,39 @@ import LPText from './LPText';
 
 export type ToastAction = { label: string; onPress: () => void };
 
+/** Which iOS toast this is (see the top of this file). */
+export type ToastKind = 'health' | 'meal';
+
 export type ToastOptions = {
   action?: ToastAction;
+  /** Default: 'meal' with an action, 'health' without. */
+  kind?: ToastKind;
+  /** Overrides the kind's time on screen. */
   durationMs?: number;
+  /** Distance above the bottom edge, for this toast (the meal capture page: 40 or 100). */
+  bottomOffset?: number;
 };
 
-type ToastItem = { id: number; message: string; action?: ToastAction; durationMs: number };
+type ToastItem = {
+  id: number;
+  message: string;
+  kind: ToastKind;
+  action?: ToastAction;
+  durationMs: number;
+  bottomOffset?: number;
+};
 
 /** HealthToast stays 3.2 s. */
 export const TOAST_MS = 3200;
-/** MealToastCenter's default, used for toasts with an action. */
-export const ACTION_TOAST_MS = 4000;
+/** MealToastCenter.show's default, with or without an action. */
+export const MEAL_TOAST_MS = 4000;
+/** @deprecated The same 4 s as MEAL_TOAST_MS, which applies with or without an action. */
+export const ACTION_TOAST_MS = MEAL_TOAST_MS;
+
+const KIND_MS: Record<ToastKind, number> = { health: TOAST_MS, meal: MEAL_TOAST_MS };
+
+/** How far up iOS draws each: HealthToast 110 pt, the app-wide meal toasts 96 pt. */
+export const TOAST_BOTTOM_OFFSET: Record<ToastKind, number> = { health: 110, meal: 96 };
 
 const current = createHostStore<ToastItem | null>(null);
 let nextId = 1;
@@ -47,8 +81,9 @@ export function showToast(message: string, options: ToastOptions = {}): void {
   if (__DEV__ && current.listenerCount() === 0) {
     console.warn('[ui] showToast() with no ToastHost mounted; mount UiKitProvider in the app shell.');
   }
-  const durationMs = options.durationMs ?? (options.action ? ACTION_TOAST_MS : TOAST_MS);
-  current.set({ id: nextId++, message, action: options.action, durationMs });
+  const kind: ToastKind = options.action ? 'meal' : (options.kind ?? 'health');
+  const durationMs = options.durationMs ?? KIND_MS[kind];
+  current.set({ id: nextId++, message, kind, action: options.action, durationMs, bottomOffset: options.bottomOffset });
   announce(message);
 }
 
@@ -59,14 +94,15 @@ export function dismissToast(): void {
 
 export type ToastHostProps = {
   /**
-   * Distance from the bottom of the screen, above the tab bar (iOS draws
-   * health toasts 110 pt up and meal toasts 96 pt up). The navigation bar
+   * Distance from the bottom of the screen for every toast that does not
+   * give its own. Omitted, each kind sits where iOS draws it
+   * (TOAST_BOTTOM_OFFSET: health 110 pt, meal 96 pt). The navigation bar
    * inset is added to it.
    */
   bottomOffset?: number;
 };
 
-export function ToastHost({ bottomOffset = 110 }: ToastHostProps) {
+export function ToastHost({ bottomOffset }: ToastHostProps) {
   const toast = current.use();
   const insets = useSafeAreaInsets();
   const reduceMotion = useReduceMotion();
@@ -109,15 +145,16 @@ export function ToastHost({ bottomOffset = 110 }: ToastHostProps) {
   if (!shown) return null;
 
   const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [reduceMotion ? 0 : 24, 0] });
-  const withAction = !!shown.action;
+  const row = shown.kind === 'meal';
+  const offset = shown.bottomOffset ?? bottomOffset ?? TOAST_BOTTOM_OFFSET[shown.kind];
 
   return (
     <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, styles.layer]}>
       <Animated.View
         style={[
           styles.toast,
-          withAction ? styles.withAction : styles.plain,
-          { marginBottom: bottomOffset + insets.bottom, opacity: progress, transform: [{ translateY }] },
+          row ? styles.row : styles.plain,
+          { marginBottom: offset + insets.bottom, opacity: progress, transform: [{ translateY }] },
         ]}
         testID="toast"
       >
@@ -125,8 +162,8 @@ export function ToastHost({ bottomOffset = 110 }: ToastHostProps) {
           size={13}
           weight="medium"
           color={colors.ink}
-          align={withAction ? 'left' : 'center'}
-          style={withAction ? styles.grow : undefined}
+          align={row ? 'left' : 'center'}
+          style={row ? styles.grow : undefined}
         >
           {shown.message}
         </LPText>
@@ -162,8 +199,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
+  // iOS HealthToast: centred, 16 x 11 padding, 24 pt from the sides.
   plain: { marginHorizontal: 24, paddingHorizontal: 16, paddingVertical: 11 },
-  withAction: {
+  // iOS MealToastOverlay: a row at least 44 tall, 16 x 4 padding, 20 pt from the sides.
+  row: {
     marginHorizontal: 20,
     paddingHorizontal: 16,
     paddingVertical: 4,

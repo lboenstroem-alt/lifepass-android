@@ -3,9 +3,9 @@
  * appear, gone after their time, with an optional action.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { AccessibilityInfo } from 'react-native';
+import { AccessibilityInfo, StyleSheet } from 'react-native';
 
-import { ACTION_TOAST_MS, TOAST_MS, ToastHost, dismissToast, showToast } from '../Toast';
+import { ACTION_TOAST_MS, MEAL_TOAST_MS, TOAST_MS, ToastHost, dismissToast, showToast } from '../Toast';
 
 const announce = AccessibilityInfo.announceForAccessibility as jest.Mock;
 const recommended = AccessibilityInfo.getRecommendedTimeoutMillis as jest.Mock;
@@ -79,4 +79,48 @@ it('ignores an empty message', async () => {
   await act(async () => showToast(''));
   expect(screen.queryByTestId('toast')).toBeNull();
   expect(announce).not.toHaveBeenCalled();
+});
+
+describe('the two iOS toasts', () => {
+  const toastStyle = () =>
+    StyleSheet.flatten(screen.getByTestId('toast').props.style) as { minHeight?: number; marginBottom: number; paddingVertical: number };
+
+  it('a MealToastCenter message without an action still stays 4 s, in the row layout', async () => {
+    await render(<ToastHost />);
+    await act(async () => showToast('Saved offline', { kind: 'meal' }));
+    expect(toastStyle()).toMatchObject({ minHeight: 44, paddingVertical: 4 });
+    await advance(MEAL_TOAST_MS - 100);
+    expect(screen.getByText('Saved offline')).toBeOnTheScreen();
+    await advance(600);
+    expect(screen.queryByText('Saved offline')).toBeNull();
+  });
+
+  it('a HealthToast is the centred message, 3.2 s', async () => {
+    await render(<ToastHost />);
+    await act(async () => showToast('Changed on another device'));
+    expect(toastStyle().minHeight).toBeUndefined();
+    expect(toastStyle().paddingVertical).toBe(11);
+    expect(TOAST_MS).toBe(3200);
+  });
+
+  it('each kind sits where iOS draws it, unless the toast or the host says otherwise', async () => {
+    const view = await render(<ToastHost />);
+    await act(async () => showToast('Changed on another device'));
+    expect(toastStyle().marginBottom).toBe(110);
+    await act(async () => showToast('Food added', { kind: 'meal' }));
+    expect(toastStyle().marginBottom).toBe(96);
+    // The capture page draws its toasts lower, by its tray.
+    await act(async () => showToast('Food added', { kind: 'meal', bottomOffset: 40 }));
+    expect(toastStyle().marginBottom).toBe(40);
+    await view.rerender(<ToastHost bottomOffset={120} />);
+    await act(async () => showToast('Changed on another device'));
+    expect(toastStyle().marginBottom).toBe(120);
+  });
+
+  it('a toast with an action is the meal kind', async () => {
+    await render(<ToastHost />);
+    await act(async () => showToast('Removed', { kind: 'health', action: { label: 'Undo', onPress: jest.fn() } }));
+    expect(toastStyle().minHeight).toBe(44);
+    expect(ACTION_TOAST_MS).toBe(MEAL_TOAST_MS);
+  });
 });

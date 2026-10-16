@@ -2,7 +2,7 @@
 // the NavigationContainer so sheet content can still use navigation:
 //
 //   <NavigationContainer>
-//     <UiKitProvider toastBottomOffset={110}>
+//     <UiKitProvider>
 //       <RootNavigator />
 //     </UiKitProvider>
 //   </NavigationContainer>
@@ -28,7 +28,7 @@ import { ToastHost } from './Toast';
 
 export type UiKitProviderProps = {
   children: ReactNode;
-  /** Where toasts sit above the bottom edge (over the tab bar). */
+  /** Where every toast sits above the bottom edge; omitted, each kind sits where iOS draws it. */
   toastBottomOffset?: number;
 };
 
