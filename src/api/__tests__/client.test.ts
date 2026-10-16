@@ -9,6 +9,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { api, Reply } from '@test/server';
 
 import {
+  API_TIMEOUTS,
   apiGet,
   apiPost,
   buildUrl,
@@ -419,9 +420,46 @@ describe('transport', () => {
 
   it("asks NetInfo by default", async () => {
     api.on('GET', '/a', Reply.fail());
-    jest.mocked(NetInfo.fetch).mockResolvedValueOnce({ isConnected: false, isInternetReachable: false } as never);
+    // Connected before the call; after it failed, the internet is out of reach.
+    jest
+      .mocked(NetInfo.fetch)
+      .mockResolvedValueOnce({ isConnected: true, isInternetReachable: true } as never)
+      .mockResolvedValueOnce({ isConnected: true, isInternetReachable: false } as never);
     const app = createApiClient({ accessToken: async () => 'test-token' });
     expect(((await failure(app.get('/a'))) as TransportError).transport).toBe('offline');
+    expect(api.requests).toHaveLength(1);
+  });
+});
+
+describe('ceilings by route', () => {
+  // A stub whose default ceiling is 20 ms, and answers that take 60 ms.
+  const slow = () => createStubApiClient({ defaultTimeoutMs: 20 }).client;
+
+  it.each(['/bookings', '/check-ins/walk-in', '/bookings/payment-sessions/confirm'])(
+    'POST %s waits as long as iOS (120 s) when its caller names no ceiling',
+    async (path) => {
+      api.on('POST', path, Reply.delayed(60, Reply.ok({ done: true })));
+      await expect(slow().post(path, {}, { idempotencyKey: 'key-1' })).resolves.toEqual({ done: true });
+    },
+  );
+
+  it('everything else keeps the default, the payment-session create included (as on iOS)', async () => {
+    api.on('POST', '/bookings/payment-sessions', Reply.delayed(60, Reply.ok({ hasCard: true })));
+    api.on('GET', '/bookings', Reply.delayed(60, Reply.ok([])));
+    const create = (await failure(slow().post('/bookings/payment-sessions', {}, { idempotencyKey: 'k' }))) as TransportError;
+    expect(create.transport).toBe('timeout');
+    expect(((await failure(slow().get('/bookings'))) as TransportError).transport).toBe('timeout');
+  });
+
+  it("the caller's own ceiling wins", async () => {
+    api.on('POST', '/bookings', Reply.delayed(60, Reply.ok({ done: true })));
+    const error = (await failure(slow().post('/bookings', {}, { idempotencyKey: 'k', timeoutMs: 10 }))) as TransportError;
+    expect(error.transport).toBe('timeout');
+  });
+
+  it('API_TIMEOUTS carries the iOS values', () => {
+    expect(API_TIMEOUTS.bookingCreate).toBe(120_000);
+    expect(API_TIMEOUTS.default).toBe(60_000);
   });
 });
 

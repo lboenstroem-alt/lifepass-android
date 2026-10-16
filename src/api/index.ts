@@ -24,6 +24,8 @@ export {
   supabaseAccessToken,
   supabaseEndRevokedSession,
   supabaseRefreshAccessToken,
+  supabaseSessionDeps,
+  LOGOUT_WAIT_MS,
   type ApiClient,
   type ApiClientDeps,
   type AuthMode,
@@ -33,6 +35,14 @@ export {
   type QueryValue,
   type RequestOptions,
 } from './client';
+export {
+  AUTH_REQUEST_TIMEOUT_MS,
+  createAuthFetch,
+  onRefreshTrouble,
+  type AuthFetchOptions,
+  type RefreshTrouble,
+} from './authFetch';
+export { deviceDisconnected, deviceOffline, knownDisconnected } from './connectivity';
 export * from './errors';
 export * from './errorFormatter';
 export * from './idempotency';

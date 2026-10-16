@@ -25,7 +25,7 @@
 import { expectRequestValid, sampleResponse, type SampleMode } from '@test/contract';
 import { api, Reply, type StubMethod, type StubReply, type StubRequest } from '@test/server';
 
-import { createApiClient, setSharedApiClient, type ApiClient } from './client';
+import { createApiClient, setSharedApiClient, type ApiClient, type ApiClientDeps } from './client';
 
 export const TEST_ACCESS_TOKEN = 'test-token';
 export const TEST_REFRESHED_TOKEN = 'refreshed-token';
@@ -39,6 +39,10 @@ export interface StubApiClientOptions {
   readonly onRevoked?: () => void;
   /** Whether the phone is offline when a request fails. Default online. */
   readonly isDeviceOffline?: () => Promise<boolean>;
+  /** Whether NetInfo says there is no connection at all before a call. Default connected. */
+  readonly isDeviceDisconnected?: () => Promise<boolean>;
+  /** Failed-refresh reports (./authFetch). Default none: the stub session never refreshes through Supabase. */
+  readonly onRefreshTrouble?: ApiClientDeps['onRefreshTrouble'];
   /** The default ceiling, for timeout tests. */
   readonly defaultTimeoutMs?: number;
 }
@@ -66,6 +70,8 @@ export function createStubApiClient(options: StubApiClientOptions = {}): StubApi
       options.onRevoked?.();
     },
     isDeviceOffline: options.isDeviceOffline ?? (async () => false),
+    isDeviceDisconnected: options.isDeviceDisconnected ?? (async () => false),
+    onRefreshTrouble: options.onRefreshTrouble ?? (() => () => undefined),
     defaultTimeoutMs: options.defaultTimeoutMs,
   });
   return {

@@ -15,16 +15,25 @@
  *     slug, a non-problem status, a body that did not decode, or no answer
  *     at all (offline, timeout, cancelled), so a screen can tell "you are
  *     offline" from "the server said no".
- *   - Gives every call a ceiling (60 s unless the caller says otherwise; React
- *     Native's fetch never times out on its own, and some routes can run for
- *     minutes server-side), and honours the caller's AbortSignal.
+ *   - Gives every step of a call a ceiling (60 s unless the caller says
+ *     otherwise; React Native's fetch never times out on its own, and some
+ *     routes can run for minutes server-side), and honours the caller's
+ *     AbortSignal. The steps are reading the session token, the request, a
+ *     refresh after a 401 and the resend, as iOS gives each its own timeout.
+ *   - Fails at once on a phone with no network, before the auth SDK is
+ *     touched: supabase-js would otherwise spend about 25 s retrying the
+ *     refresh of an expired token first (iOS fails at once with
+ *     `notConnectedToInternet`).
  *   - Recovers from one 401: refreshes the session once and resends a request
  *     that is safe to send twice (a GET, or a write carrying an
  *     Idempotency-Key). A refresh the auth server REFUSES, or a second 401,
  *     ends the session locally and the auth listener takes the app to
  *     sign-in. An unreachable auth server ends nothing: members are not signed
  *     out by an outage, and an offline phone reads as offline, never as
- *     "please sign in".
+ *     "please sign in". (Two parts of that live in ./authFetch, the fetch the
+ *     Supabase client must be given: supabase-js would sign a member out on
+ *     a 500 or 429 refresh by itself, and it retries a failing refresh for
+ *     up to 30 s where iOS gives up at once.)
  *
  * Apart from that one resend it never retries. Back-off on 429 (`Retry-After`,
  * surfaced as `error.retryAfterSeconds`) belongs to the caller, which knows
@@ -34,16 +43,18 @@
  * because the apex 308-redirects to www and the Authorization header is
  * dropped on that cross-host redirect.
  */
-import NetInfo from '@react-native-community/netinfo';
 import {
   isAuthApiError,
   isAuthRetryableFetchError,
   isAuthSessionMissingError,
+  type SupabaseClient,
 } from '@supabase/supabase-js';
 
 import { env } from '../config/env';
 import { supabase } from '../supabase/lib/client';
 
+import { onRefreshTrouble, type RefreshTrouble } from './authFetch';
+import { deviceDisconnected, deviceOffline } from './connectivity';
 import {
   ApiError,
   DecodingError,
@@ -95,16 +106,42 @@ export const API_TIMEOUTS = {
 
 export const DEFAULT_TIMEOUT_MS = API_TIMEOUTS.default;
 
+/**
+ * The writes iOS gives `BookingService.createTimeout` (120 s): the booking
+ * create, the walk-in and the payment-session confirm, where the venue's
+ * system is in the loop. A call to one of them that names no ceiling of its
+ * own gets `API_TIMEOUTS.bookingCreate`, so the legacy services
+ * (src/supabase/services/{bookings,checkin}.ts) do not tell a member a
+ * booking failed at 60 s while the server is still making it. BOOK-1,
+ * CHECKIN-2 and F8, which replace those call sites, pass the value
+ * themselves, as iOS does; this stays as the floor for anything that
+ * forgets. (The payment-session CREATE keeps the default, as on iOS.)
+ */
+const LONG_WRITES: ReadonlySet<string> = new Set([
+  'POST /bookings',
+  'POST /check-ins/walk-in',
+  'POST /bookings/payment-sessions/confirm',
+]);
+
+/** The ceiling a call gets when its caller names none. */
+function routeTimeoutMs(method: HttpMethod, path: string): number | undefined {
+  const route = `/${path.split(/[?#]/)[0].replace(/^\/+|\/+$/g, '')}`;
+  return LONG_WRITES.has(`${method} ${route}`) ? API_TIMEOUTS.bookingCreate : undefined;
+}
+
 export interface RequestOptions<T = unknown> {
   /** Query items; `undefined`, `null` and `''` are left out, an array repeats the key. */
   readonly query?: Query;
   /** Default `required`. */
   readonly auth?: AuthMode;
   /**
-   * The call's ceiling in milliseconds (default 60 000), covering the answer's
-   * body too; `Infinity` for none. Ends in `TransportError('timeout')`. (iOS's
-   * per-request timeout is an idle timeout; a whole-call ceiling is what
-   * fetch can offer, and every iOS value is far above a normal answer.)
+   * The ceiling in milliseconds for each step of the call (default 60 000;
+   * 120 000 for the long writes in `LONG_WRITES`); `Infinity` for none. The
+   * steps are reading the session token, the request with its answer's body,
+   * a refresh after a 401, and the resend. Ends in
+   * `TransportError('timeout')`, with the session kept. (iOS's per-request
+   * timeout is an idle timeout; a ceiling is what fetch can offer, and every
+   * iOS value is far above a normal answer.)
    */
   readonly timeoutMs?: number;
   /** One key per user action, reused across retries (./idempotency). */
@@ -176,8 +213,24 @@ export interface ApiClientDeps {
   /** Ends a session the server no longer accepts (Supabase `signOut({ scope: 'local' })`). */
   readonly endRevokedSession?: () => Promise<void>;
   readonly fetch?: typeof fetch;
-  /** True when the phone has no network (tells `offline` from `network`). */
+  /**
+   * After a call failed on the way: true when the phone has no network
+   * (tells `offline` from `network`).
+   */
   readonly isDeviceOffline?: () => Promise<boolean>;
+  /**
+   * Before a call: true only when the phone has no network connection at all
+   * (NetInfo `isConnected === false`). A required route then fails as
+   * offline at once, without asking the auth SDK for a token it would spend
+   * about 25 s failing to refresh.
+   */
+  readonly isDeviceDisconnected?: () => Promise<boolean>;
+  /**
+   * Subscribes to failed session refreshes (./authFetch). While a call waits
+   * on the session, the first failed refresh attempt ends the wait, as iOS
+   * fails at the first failure instead of riding out supabase-js's retries.
+   */
+  readonly onRefreshTrouble?: (listener: (trouble: RefreshTrouble) => void) => () => void;
   readonly defaultTimeoutMs?: number;
 }
 
@@ -219,48 +272,116 @@ export function refreshRefused(error: unknown): boolean {
 // ---------------------------------------------------------------------------
 // The Supabase side
 
-async function deviceOffline(): Promise<boolean> {
-  try {
-    const state = await NetInfo.fetch();
-    return state.isConnected === false || state.isInternetReachable === false;
-  } catch {
-    return false;
-  }
+/**
+ * How long ending a revoked session waits for the auth server to hear about
+ * it before ending it on the phone anyway.
+ */
+export const LOGOUT_WAIT_MS = 10_000;
+
+type SessionDeps = Required<Pick<ApiClientDeps, 'accessToken' | 'refreshAccessToken' | 'endRevokedSession'>>;
+
+/**
+ * The client's session functions on `client` (the app's Supabase client by
+ * default; a test passes its own). The iOS `APIClient.init` defaults.
+ */
+export function supabaseSessionDeps(client: SupabaseClient = supabase): SessionDeps {
+  return {
+    /**
+     * The live session's access token (supabase-js refreshes an expired one
+     * first). A refresh that failed because the auth server could not be
+     * reached is a transport failure, never "no session".
+     */
+    async accessToken() {
+      const { data, error } = await client.auth.getSession();
+      const token = data.session?.access_token;
+      if (token) return token;
+      if (error && isAuthRetryableFetchError(error)) {
+        const offline = !error.status && (await deviceOffline());
+        throw new TransportError(offline ? 'offline' : 'network', error);
+      }
+      return null;
+    },
+
+    /** Refreshes the session; a refused refresh throws `RefreshRefusedError`. */
+    async refreshAccessToken() {
+      const { data, error } = await client.auth.refreshSession();
+      if (error) {
+        if (refreshRefused(error)) throw new RefreshRefusedError(error);
+        throw error;
+      }
+      return data.session?.access_token ?? null;
+    },
+
+    /**
+     * Ends the session on this phone, whatever the auth server says. The
+     * SIGNED_OUT event takes the app to sign-in.
+     *
+     * supabase-js's `signOut({ scope: 'local' })` asks the auth server first
+     * and KEEPS the session when that request fails on the way or with a
+     * 5xx (it returns `{ error }`, it does not throw). supabase-swift removes
+     * the session before it asks, so on iOS a failed logout still ends it.
+     * Here a logout that failed, threw, or did not answer within
+     * `LOGOUT_WAIT_MS` is followed by the SDK's own local removal, which
+     * clears the stored session and emits SIGNED_OUT.
+     */
+    async endRevokedSession() {
+      let ended = false;
+      try {
+        const result = await settleWithin(client.auth.signOut({ scope: 'local' }), LOGOUT_WAIT_MS);
+        ended = result !== undefined && !result.error;
+      } catch {
+        ended = false;
+      }
+      if (!ended) await removeSessionLocally(client);
+    },
+  };
 }
 
 /**
- * The live session's access token (supabase-js refreshes an expired one
- * first). A refresh that failed because the auth server could not be reached
- * is a transport failure, never "no session".
+ * supabase-js's own local removal (`_removeSession`: clears the stored
+ * session and notifies SIGNED_OUT). Not public API, so it is feature-checked,
+ * and src/api/__tests__/auth.test.ts fails on an SDK upgrade that drops it.
  */
-export async function supabaseAccessToken(): Promise<string | null> {
-  const { data, error } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (token) return token;
-  if (error && isAuthRetryableFetchError(error)) {
-    const offline = !error.status && (await deviceOffline());
-    throw new TransportError(offline ? 'offline' : 'network', error);
-  }
-  return null;
-}
-
-/** Refreshes the session; a refused refresh throws `RefreshRefusedError`. */
-export async function supabaseRefreshAccessToken(): Promise<string | null> {
-  const { data, error } = await supabase.auth.refreshSession();
-  if (error) {
-    if (refreshRefused(error)) throw new RefreshRefusedError(error);
-    throw error;
-  }
-  return data.session?.access_token ?? null;
-}
-
-/** Ends the session on this phone only. The `SIGNED_OUT` event takes the app to sign-in. */
-export async function supabaseEndRevokedSession(): Promise<void> {
+async function removeSessionLocally(client: SupabaseClient): Promise<void> {
+  const auth = client.auth as unknown as { _removeSession?: () => Promise<void> };
+  if (typeof auth._removeSession !== 'function') return;
   try {
-    await supabase.auth.signOut({ scope: 'local' });
+    await auth._removeSession.call(client.auth);
   } catch {
-    // Nothing more to do: the session is already unusable.
+    // Nothing more can be done from here.
   }
+}
+
+/** `work`'s value, or `undefined` when it has not settled within `ms`. */
+function settleWithin<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(undefined), ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** The app session's access token (see `supabaseSessionDeps`). */
+export function supabaseAccessToken(): Promise<string | null> {
+  return supabaseSessionDeps().accessToken();
+}
+
+/** Refreshes the app session; a refused refresh throws `RefreshRefusedError`. */
+export function supabaseRefreshAccessToken(): Promise<string | null> {
+  return supabaseSessionDeps().refreshAccessToken();
+}
+
+/** Ends the app session on this phone only. The SIGNED_OUT event takes the app to sign-in. */
+export function supabaseEndRevokedSession(): Promise<void> {
+  return supabaseSessionDeps().endRevokedSession();
 }
 
 // ---------------------------------------------------------------------------
@@ -279,26 +400,62 @@ interface Answer {
   readonly meta: ResponseMeta;
 }
 
+/** Options with the ceiling settled (the caller's, the route's, or the default). */
+type CallOptions<T> = DeleteOptions<T> & { readonly timeoutMs: number };
+
+/**
+ * How a wait on the auth SDK ended: its answer, a failed refresh reported
+ * while waiting (./authFetch), or the call's own limits.
+ */
+type AuthWait<T> =
+  | { readonly value: T }
+  | { readonly trouble: RefreshTrouble }
+  | { readonly stopped: 'timeout' | 'cancelled' };
+
+/** Several calls that hit the same 401 share one refresh. */
+interface SharedRefresh {
+  readonly result: Promise<string | null>;
+  /** The first failed attempt reported while it ran, if any. */
+  trouble: RefreshTrouble | null;
+}
+
 export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
   const baseUrl = deps.baseUrl ?? (() => env.apiBaseUrl);
   const accessToken = deps.accessToken ?? supabaseAccessToken;
   const refreshAccessToken = deps.refreshAccessToken ?? supabaseRefreshAccessToken;
   const endRevokedSession = deps.endRevokedSession ?? supabaseEndRevokedSession;
   const isDeviceOffline = deps.isDeviceOffline ?? deviceOffline;
+  const isDeviceDisconnected = deps.isDeviceDisconnected ?? deviceDisconnected;
+  const subscribeTrouble = deps.onRefreshTrouble ?? onRefreshTrouble;
   const defaultTimeoutMs = deps.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   // Read per call so a test that installs its own fetch reaches the client.
   const fetchImpl = (...args: Parameters<typeof fetch>) => (deps.fetch ?? fetch)(...args);
 
   // Several calls can hit the same 401 at once (a screen loading three
   // things): they share one refresh rather than rotating the token N times.
-  let refreshing: Promise<string | null> | null = null;
-  function refreshOnce(): Promise<string | null> {
-    if (!refreshing) {
-      refreshing = refreshAccessToken().finally(() => {
-        refreshing = null;
+  let refreshing: SharedRefresh | null = null;
+  function refreshOnce(): SharedRefresh {
+    if (refreshing) return refreshing;
+    const entry: { result: Promise<string | null>; trouble: RefreshTrouble | null } = {
+      result: Promise.resolve(null),
+      trouble: null,
+    };
+    // A call that joins a refresh already known to be failing fails at once
+    // too, rather than waiting for the SDK's next attempt.
+    const unsubscribe = subscribeTrouble((trouble) => {
+      entry.trouble ??= trouble;
+    });
+    entry.result = Promise.resolve()
+      .then(() => refreshAccessToken())
+      .finally(() => {
+        unsubscribe();
+        if (refreshing === entry) refreshing = null;
       });
-    }
-    return refreshing;
+    // Every caller may have stopped waiting (a failed attempt, a cancel):
+    // the refresh's own failure must not surface as an unhandled rejection.
+    entry.result.catch(() => undefined);
+    refreshing = entry;
+    return entry;
   }
 
   async function endSession(): Promise<void> {
@@ -309,22 +466,73 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
     }
   }
 
-  async function send<T>(method: HttpMethod, path: string, options: DeleteOptions<T>): Promise<T> {
+  /**
+   * Waits on the auth SDK (a token read, a refresh) within the step's
+   * ceiling and the caller's signal, and stops at the first failed refresh
+   * attempt reported meanwhile. Giving up never touches the session: the
+   * SDK's own work carries on and settles in the background.
+   *
+   * supabase-js serialises every session read behind one lock, and retries a
+   * failing refresh with back-off for up to 30 s while holding it; its
+   * auto-refresh ticker can queue the next 30 s right behind. Without this
+   * bound a call could wait on that queue indefinitely.
+   */
+  function waitForAuth<T>(
+    work: () => Promise<T>,
+    ceilingMs: number,
+    signal: AbortSignal | undefined,
+    knownTrouble: RefreshTrouble | null = null,
+  ): Promise<AuthWait<T>> {
+    return new Promise<AuthWait<T>>((resolve, reject) => {
+      let done = false;
+      const cleanups: (() => void)[] = [];
+      const finish = (settle: () => void) => {
+        if (done) return;
+        done = true;
+        for (const cleanup of cleanups) {
+          try {
+            cleanup();
+          } catch {
+            // A failing unsubscribe must not change the answer.
+          }
+        }
+        settle();
+      };
+      if (signal?.aborted) return finish(() => resolve({ stopped: 'cancelled' }));
+      if (knownTrouble) return finish(() => resolve({ trouble: knownTrouble }));
+      cleanups.push(subscribeTrouble((trouble) => finish(() => resolve({ trouble }))));
+      // `Infinity` (or 0) means no ceiling; a timer that large would overflow.
+      if (Number.isFinite(ceilingMs) && ceilingMs > 0) {
+        const timer = setTimeout(() => finish(() => resolve({ stopped: 'timeout' })), ceilingMs);
+        cleanups.push(() => clearTimeout(timer));
+      }
+      if (signal) {
+        const onAbort = () => finish(() => resolve({ stopped: 'cancelled' }));
+        signal.addEventListener('abort', onAbort);
+        cleanups.push(() => signal.removeEventListener('abort', onAbort));
+      }
+      let pending: Promise<T>;
+      try {
+        pending = work();
+      } catch (error) {
+        return finish(() => reject(error));
+      }
+      pending.then(
+        (value) => finish(() => resolve({ value })),
+        (error: unknown) => finish(() => reject(error)),
+      );
+    });
+  }
+
+  async function send<T>(method: HttpMethod, path: string, callerOptions: DeleteOptions<T>): Promise<T> {
+    const options: CallOptions<T> = {
+      ...callerOptions,
+      timeoutMs: callerOptions.timeoutMs ?? routeTimeoutMs(method, path) ?? defaultTimeoutMs,
+    };
     const auth = options.auth ?? 'required';
     if (options.signal?.aborted) throw new TransportError('cancelled');
 
-    // For `required` routes a missing session fails fast. For `optional` ones
-    // whatever we have is sent, and the route decides.
-    let token: string | null;
-    try {
-      token = await accessToken();
-    } catch (error) {
-      // An expired token that could not be refreshed because the phone is
-      // offline: that member is offline, not signed out, and "Please sign
-      // in" would send them to a sign-in that cannot work either.
-      if (auth === 'required' && error instanceof TransportError) throw error;
-      token = null;
-    }
+    const token = await readToken(auth, options);
     if (!token && auth === 'required') throw new NotAuthenticatedError();
 
     const prepared = prepare(method, path, options, token);
@@ -333,6 +541,42 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
       return recoverFromUnauthorized(prepared, answer, options);
     }
     return decodeAnswer(answer, options.decode);
+  }
+
+  /**
+   * The bearer token. For `required` routes a missing session fails fast
+   * (the caller throws `NotAuthenticatedError`); for `optional` ones whatever
+   * we have is sent, and the route decides.
+   */
+  async function readToken(auth: AuthMode, options: CallOptions<unknown>): Promise<string | null> {
+    // No network at all: offline, before the auth SDK is asked. An expired
+    // token would otherwise be refreshed first, and supabase-js retries that
+    // refresh for about 25 s before it gives up; iOS fails at once. An
+    // optional route goes out without a token and fails (or not) by itself.
+    if (await isDeviceDisconnected()) {
+      if (auth === 'required') throw new TransportError('offline');
+      return null;
+    }
+    let waited: AuthWait<string | null>;
+    try {
+      waited = await waitForAuth(accessToken, options.timeoutMs, options.signal);
+    } catch (error) {
+      // An expired token that could not be refreshed because the phone is
+      // offline: that member is offline, not signed out, and "Please sign
+      // in" would send them to a sign-in that cannot work either.
+      if (auth === 'required' && error instanceof TransportError) throw error;
+      return null;
+    }
+    if ('value' in waited) return waited.value;
+    if ('stopped' in waited) {
+      if (auth === 'required' || waited.stopped === 'cancelled') throw new TransportError(waited.stopped);
+      return null;
+    }
+    // The expired token's refresh failed while we waited: the auth server
+    // could not be reached, or is failing.
+    if (auth === 'optional') return null;
+    const offline = waited.trouble === 'unreachable' && (await isDeviceOffline());
+    throw new TransportError(offline ? 'offline' : 'network');
   }
 
   /**
@@ -346,12 +590,13 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
   async function recoverFromUnauthorized<T>(
     prepared: Prepared,
     first: Answer,
-    options: DeleteOptions<T>,
+    options: CallOptions<T>,
   ): Promise<T> {
     const refusal = errorFor(first);
-    let fresh: string | null;
+    let waited: AuthWait<string | null>;
     try {
-      fresh = await refreshOnce();
+      const shared = refreshOnce();
+      waited = await waitForAuth(() => shared.result, options.timeoutMs, options.signal, shared.trouble);
     } catch (error) {
       if (error instanceof RefreshRefusedError) {
         await endSession();
@@ -361,6 +606,13 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
       // session, so it is kept and this request fails as it came.
       throw refusal;
     }
+    // The caller's cancel or the step's ceiling: the session is kept.
+    if ('stopped' in waited) throw new TransportError(waited.stopped);
+    // A refresh attempt failed (unreachable, 5xx, 429): as on iOS, this
+    // request fails as it came at once, the session kept, while the SDK's
+    // own retries carry on in the background.
+    if ('trouble' in waited) throw refusal;
+    const fresh = waited.value;
     if (!fresh) {
       await endSession();
       throw new NotAuthenticatedError();
