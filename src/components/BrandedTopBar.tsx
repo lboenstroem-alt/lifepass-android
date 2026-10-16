@@ -1,83 +1,73 @@
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
-import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme';
-import Kicker from './Kicker';
-import Wordmark from './Wordmark';
+// The legacy screens' top bar, now drawn by the UI kit's TopBar (with the
+// 36 pt buttons and TalkBack labels iOS has). New screens use `TopBar` from
+// src/components/ui with their own destination (plan 3.0.2); this wrapper
+// goes when the last legacy screen does.
+//
+// THE PERSON BUTTON opens Account by default, and says so ("Open account"),
+// so the label never promises a place it does not go. It finds Account from
+// wherever it is drawn: a stack that registers Account pushes it there; a
+// screen that sits directly in the tab bar (the legacy Check-in tab) goes to
+// the Account of a tab that hosts one, above that tab's own first screen. A
+// caller that wants iOS's Scan behaviour passes `onPersonPress` (open
+// Profile), `personLabelKey: 'a11y.open_profile'` and `personDisabled` while
+// the camera is live (iOS BrandedTopBar `personLabelKey`, `isPersonDisabled`).
+import { useNavigation, type NavigationProp, type ParamListBase } from '@react-navigation/native';
+
+import TopBar from './ui/TopBar';
 
 type Props = {
   title: string;
   subtitle?: string;
-  /**
-   * Trailing button: a person icon everywhere (one-tap path into Account),
-   * or a settings gear on the Library/profile screen — mirrors the iOS
-   * BrandedTopBar. (v1 removed the credit balance, so the old credit pill
-   * is gone.)
-   */
+  /** A person button everywhere, or a settings gear on the Library screen (iOS BrandedTopBar). */
   trailing?: 'person' | 'settings';
+  /** Where the person button goes; default Account. */
+  onPersonPress?: () => void;
+  /** The person button's label; `a11y.open_profile` where it opens Profile. Default `a11y.open_account`. */
+  personLabelKey?: string;
+  /** Disabled without being removed (Scan while the camera is live). */
+  personDisabled?: boolean;
 };
 
-export default function BrandedTopBar({ title, subtitle, trailing = 'person' }: Props) {
-  const insets = useSafeAreaInsets();
-  const navigation = useNavigation<any>();
+/**
+ * Tabs whose stack registers Account, tried in order when no navigator above
+ * the calling screen does: the legacy Library tab, then Home (which every
+ * tab layout has).
+ */
+export const ACCOUNT_HOST_TABS = ['Bookings', 'Home'] as const;
 
-  return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.row}>
-        <View style={styles.wordmarkContainer}>
-          <Wordmark height={18} />
-        </View>
-
-        <View style={styles.center}>
-          <Kicker text={title} color={colors.paper2} />
-          {subtitle ? <Kicker text={subtitle} color={colors.paper3} /> : null}
-        </View>
-
-        <View style={styles.right}>
-          <TouchableOpacity
-            style={styles.trailingBtn}
-            onPress={() => navigation.navigate('Account')}
-            activeOpacity={0.7}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons
-              name={trailing === 'settings' ? 'settings-outline' : 'person-circle-outline'}
-              size={trailing === 'settings' ? 18 : 22}
-              color={colors.paper2}
-            />
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  );
+/** Opens Account from any screen, whichever navigator it sits in. */
+export function openAccount(navigation: NavigationProp<ParamListBase>): void {
+  // A navigator above this screen registers Account: navigate bubbles up to it.
+  for (let nav: NavigationProp<ParamListBase> | undefined = navigation; nav; nav = nav.getParent()) {
+    if (nav.getState()?.routeNames.includes('Account')) {
+      navigation.navigate('Account');
+      return;
+    }
+  }
+  // None does (a screen directly in the tab bar): through a tab that hosts it,
+  // keeping that tab's first screen underneath so back has somewhere to go.
+  for (let nav: NavigationProp<ParamListBase> | undefined = navigation; nav; nav = nav.getParent()) {
+    const names = nav.getState()?.routeNames ?? [];
+    const host = ACCOUNT_HOST_TABS.find((name) => names.includes(name));
+    if (host) {
+      nav.navigate(host, { screen: 'Account', initial: false });
+      return;
+    }
+  }
 }
 
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: colors.ink,
-    borderBottomWidth: 0.5,
-    borderBottomColor: colors.line,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 16,
-    gap: 12,
-  },
-  wordmarkContainer: { width: 80, alignItems: 'flex-start', paddingTop: 3 },
-  center: { flex: 1, alignItems: 'center', gap: 3, paddingTop: 2 },
-  right: { width: 80, alignItems: 'flex-end' },
-  trailingBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.ink2,
-    borderWidth: 0.5,
-    borderColor: colors.line,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+export default function BrandedTopBar({ title, subtitle, trailing = 'person', onPersonPress, personLabelKey, personDisabled }: Props) {
+  const navigation = useNavigation<NavigationProp<ParamListBase>>();
+  const toAccount = () => openAccount(navigation);
+  return (
+    <TopBar
+      title={title}
+      subtitle={subtitle}
+      trailing={
+        trailing === 'settings'
+          ? { kind: 'gear', onPress: toAccount }
+          : { kind: 'person', onPress: onPersonPress ?? toAccount, labelKey: personLabelKey, disabled: personDisabled }
+      }
+    />
+  );
+}

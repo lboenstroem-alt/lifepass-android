@@ -20,10 +20,10 @@ export const onImage = {
   paper3: 'rgba(241,245,249,0.48)',
   paper4: 'rgba(241,245,249,0.28)',
 
-  // Accents
-  blue:        '#3F79BA',
-  blueMid:     '#6295CE',
-  blueWash:    'rgba(63,121,186,0.18)',
+  // Accents (the glacier blue is the iOS lpRust / lpRust2, as on paper)
+  blue:        '#4785C2',
+  blueMid:     '#699ED4',
+  blueWash:    'rgba(71,133,194,0.18)',
   skyBlue:     '#A8D8F0',
   moss:        '#5EB3A5',
   destructive: '#D36363',
