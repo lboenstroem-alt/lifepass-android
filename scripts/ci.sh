@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The checks every pull request must pass (parity plan 8.1). Run with
-# `npm run ci`. Exits non-zero on the first failing step.
+# `npm run ci`; GitHub runs it on every pull request and push to main
+# (.github/workflows/ci.yml). Exits non-zero on the first failing step.
 #
 # Always:
 #   1. TypeScript, strict, zero errors.

@@ -1,0 +1,30 @@
+# The checks every pull request must pass (parity plan 8.1): scripts/ci.sh,
+# via `npm run ci`. No secrets: the tests never touch the network (the stub
+# server refuses every real host), and nothing here builds or signs the app.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: tsc, eslint, jest (three time zones)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run ci

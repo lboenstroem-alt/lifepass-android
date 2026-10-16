@@ -290,6 +290,37 @@ describe('push-setup: local notifications only', () => {
   });
 });
 
+describe('CI (plan 8.1)', () => {
+  // Parsed in plain Node: under the Android preset `yaml` resolves to its ESM
+  // browser build, which Jest does not load.
+  const workflow = JSON.parse(
+    execFileSync(
+      process.execPath,
+      ['-e', "process.stdout.write(JSON.stringify(require('yaml').parse(require('fs').readFileSync(process.argv[1], 'utf8'))))", path.join(ROOT, '.github/workflows/ci.yml')],
+      { cwd: ROOT, encoding: 'utf8' },
+    ),
+  ) as Json;
+
+  it('runs scripts/ci.sh on every pull request and on main', () => {
+    expect(workflow.on).toHaveProperty('pull_request');
+    expect(workflow.on.push.branches).toEqual(['main']);
+    const runs = (workflow.jobs.checks.steps as Json[]).map((step) => step.run).filter(Boolean);
+    expect(runs).toEqual(['npm ci', 'npm run ci']);
+    expect(readJson<Json>('package.json').scripts.ci).toBe('bash scripts/ci.sh');
+  });
+
+  it('needs no secrets and only reads the repository', () => {
+    expect(read('.github/workflows/ci.yml')).not.toMatch(/secrets\./);
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+  });
+
+  it('uses a Node LTS the package accepts (Expo SDK 54 needs 20.19.4 or later)', () => {
+    const setupNode = (workflow.jobs.checks.steps as Json[]).find((step) => String(step.uses).startsWith('actions/setup-node'));
+    expect(setupNode!.with['node-version']).toBe(22);
+    expect(readJson<Json>('package.json').engines).toEqual({ node: '>=20.19.4' });
+  });
+});
+
 describe('repository hygiene', () => {
   it('ignores native folders, env files and keys', () => {
     const ignore = read('.gitignore');
