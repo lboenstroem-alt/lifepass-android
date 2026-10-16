@@ -44,3 +44,31 @@ it('a failed read keeps the last known value', async () => {
   isEnabled.mockImplementation(() => Promise.reject(new Error('no module')));
   await expect(readReduceMotion()).resolves.toBe(false);
 });
+
+it('every hook shares one subscription and one read, however many are mounted', async () => {
+  isEnabled.mockClear();
+  addListener.mockClear();
+  await render(
+    <>
+      {Array.from({ length: 12 }, (_, index) => (
+        <Probe key={index} />
+      ))}
+    </>,
+  );
+  expect(addListener.mock.calls.filter(([event]) => event === 'reduceMotionChanged')).toHaveLength(1);
+  expect(isEnabled).toHaveBeenCalledTimes(1);
+});
+
+it('a read that answers after a change event never undoes the newer value', async () => {
+  let answer: (value: boolean) => void = () => undefined;
+  isEnabled.mockImplementation(() => new Promise<boolean>((resolve) => (answer = resolve)));
+  await render(<Probe />);
+  const call = addListener.mock.calls.find(([event]) => event === 'reduceMotionChanged');
+  await act(async () => call![1](true));
+  expect(screen.getByTestId('motion')).toHaveTextContent('reduced');
+  // The mount-time read started before the change and answers the old value.
+  await act(async () => answer(false));
+  expect(screen.getByTestId('motion')).toHaveTextContent('reduced');
+  await act(async () => call![1](false));
+  expect(screen.getByTestId('motion')).toHaveTextContent('full');
+});
