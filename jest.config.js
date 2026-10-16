@@ -44,7 +44,13 @@ module.exports = {
     '@rnmapbox/maps/setup-jest',
   ],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
-  testPathIgnorePatterns: ['/node_modules/', '/android/', '/ios/', '/e2e/', '/supabase/'],
+  // Anchored to the repo root: these are regexes over the ABSOLUTE test path,
+  // so a bare '/supabase/' would also drop src/supabase/**/__tests__ (the
+  // legacy money and session services) and '/android/' src/i18n/android/**
+  // (every package's copy pack), or every test in a checkout under a folder
+  // named `android`. test/config/__tests__/jestConfig.test.ts holds the line.
+  // The top-level `supabase/` is the old Edge Function QA-1 deletes.
+  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/android/', '<rootDir>/ios/', '<rootDir>/e2e/', '<rootDir>/supabase/'],
   // Every `.mjs` file is transformed too (the preset's rule covers `.js`).
   transformIgnorePatterns: [`node_modules/(?!(${transpiledPackages.join('|')})).*(?<!\\.mjs)$`],
   transform: {
