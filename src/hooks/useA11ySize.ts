@@ -18,9 +18,8 @@
 // the accessibility layouts begin.
 //
 // TESTS. React Native's own Jest setup reports a window font scale of 2, so a
-// component test sees `accessibility3` unless it mocks
-// `react-native/Libraries/Utilities/useWindowDimensions` (see
-// src/hooks/__tests__/useA11ySize.test.tsx) or the harness pins the scale.
+// component test sees `accessibility3` (the accessibility layouts) unless it
+// pins the scale with `setTestFontScale(1)` from src/hooks/testing.ts.
 import { useWindowDimensions } from 'react-native';
 
 /** iOS DynamicTypeSize, smallest to largest. */
