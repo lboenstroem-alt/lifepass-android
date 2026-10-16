@@ -30,18 +30,47 @@ const COPY_PROPS = new Set([
   'headerBackTitle',
 ]);
 
-/** Object keys that are navigation copy (`options={{ title: ... }}`). */
+/**
+ * Object keys whose string value a member reads or hears, wherever the object
+ * goes: navigation options (`{ title }`), notification content
+ * (`{ content: { title, body, subtitle } }`), `Share.share({ message })`, tab
+ * and menu tables (`{ label: 'Home' }`), banners and empty states
+ * (`{ text, hint, cta }`). A key that is not copy in some file (an internal
+ * error `message`, say) takes an inline disable with the reason.
+ */
 const COPY_OBJECT_KEYS = new Set([
   'title',
+  'subtitle',
+  'body',
+  'message',
+  'text',
+  'label',
+  'hint',
+  'placeholder',
+  'cta',
   'headerTitle',
   'tabBarLabel',
   'tabBarAccessibilityLabel',
   'headerBackTitle',
   'accessibilityLabel',
+  'accessibilityHint',
 ]);
 
+/**
+ * State setters whose string argument ends up on screen (`setError('Could not
+ * update favourites')`, `setErrorMessage(...)`, `setToastText(...)`).
+ */
+const COPY_SETTER = /^set(?:[A-Z]\w*)?(?:Error|Message|Notice|Toast|Banner|Hint)(?:Text)?$/;
+
 /** Calls whose string arguments are shown to the member. */
-const COPY_CALLS = new Set(['Alert.alert', 'Alert.prompt', 'ToastAndroid.show', 'ToastAndroid.showWithGravity']);
+const COPY_CALLS = new Set([
+  'Alert.alert',
+  'Alert.prompt',
+  'ToastAndroid.show',
+  'ToastAndroid.showWithGravity',
+  'ToastAndroid.showWithGravityAndOffset',
+  'Share.share',
+]);
 
 function isCopy(value, allowed) {
   if (typeof value !== 'string') return false;
@@ -114,7 +143,7 @@ const noLiteralCopy = {
       },
       CallExpression(node) {
         const name = calleeName(node.callee);
-        if (!name || !COPY_CALLS.has(name)) return;
+        if (!name || !(COPY_CALLS.has(name) || COPY_SETTER.test(name))) return;
         node.arguments.forEach(checkExpression);
       },
     };

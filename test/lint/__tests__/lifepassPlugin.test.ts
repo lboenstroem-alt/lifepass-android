@@ -35,6 +35,12 @@ describe('lifepass/no-literal-copy', () => {
       { code: "const route = { name: 'Home' };" },
       { code: "Alert.alert(t('x.title'), t('x.body'))" },
       { code: "<Text>Kenni</Text>", options: [{ allow: ['Kenni'] }] },
+      { code: "scheduleNotificationAsync({ content: { title: t('rest.title'), body: t('rest.body') }, trigger })" },
+      { code: "const tabs = [{ routeName: 'Home', label: t('tab.home'), icon: 'home-outline' }];" },
+      { code: "Share.share({ message: t('referral.share', { code }) })" },
+      { code: 'setError(e instanceof Error ? e.message : null)' },
+      { code: "settings({ mode: 'dark' })" },
+      { code: "fetch(url, { method: 'POST', body: JSON.stringify(payload) })" },
     ],
     invalid: [
       { code: '<Text>Book now</Text>', errors: [{ messageId: 'literal' }] },
@@ -47,6 +53,19 @@ describe('lifepass/no-literal-copy', () => {
       { code: "<Stack.Screen options={{ title: 'Plans' }} />", errors: [{ messageId: 'literal' }] },
       { code: "Alert.alert('Error', 'Something went wrong')", errors: [{ messageId: 'literal' }, { messageId: 'literal' }] },
       { code: "ToastAndroid.show('Saved', ToastAndroid.SHORT)", errors: [{ messageId: 'literal' }] },
+      // Notification content: the rest timer, reminders.
+      {
+        code: "scheduleNotificationAsync({ content: { body: 'Time for your next set', subtitle: 'Workout' }, trigger: null })",
+        errors: [{ messageId: 'literal' }, { messageId: 'literal' }],
+      },
+      // Tab and menu tables (the legacy CustomTabBar shape).
+      { code: "const tabs = [{ routeName: 'Home', label: 'Home', icon: 'home-outline' }];", errors: [{ messageId: 'literal' }] },
+      { code: "Share.share({ message: 'Join me on LifePass', title: 'Invite' })", errors: [{ messageId: 'literal' }, { messageId: 'literal' }] },
+      { code: "const empty = { text: 'No bookings yet', cta: 'Explore' };", errors: [{ messageId: 'literal' }, { messageId: 'literal' }] },
+      { code: "<Stack.Screen options={{ tabBarAccessibilityLabel: 'Profile' }} />", errors: [{ messageId: 'literal' }] },
+      // A state setter whose text ends up on screen.
+      { code: "setError(e instanceof Error ? e.message : 'Weather unavailable')", errors: [{ messageId: 'literal' }] },
+      { code: "setErrorMessage('Could not update favourites')", errors: [{ messageId: 'literal' }] },
     ],
   });
 });
@@ -145,7 +164,78 @@ describe('eslint.config.js', () => {
   });
 
   it('lets a rewritten legacy file opt back in with one comment', async () => {
-    const optIn = `/* eslint lifepass/no-literal-copy: "error", react-native/no-raw-text: "error" */\n${literal}`;
+    const optIn = `/* eslint lifepass/no-literal-copy: "error" */\n${literal}`;
     expect(await lint('src/screens/home/HomeScreen.tsx', optIn)).toContain('lifepass/no-literal-copy');
+  });
+
+  it('applies the raw-text rule to legacy files too (raw text crashes the app on Android)', async () => {
+    const raw = "import { View } from 'react-native';\nexport const A = () => <View>Book now</View>;\n";
+    for (const file of ['src/screens/home/HomeScreen.tsx', 'src/screens/checkin/CheckInScreen.tsx']) {
+      const rules = await lint(file, raw);
+      expect(rules).toContain('react-native/no-raw-text');
+      expect(rules).not.toContain('lifepass/no-literal-copy');
+    }
+  });
+
+  it('allows punctuation-only text inside a <Text>', async () => {
+    const ok = "import { Text } from 'react-native';\nexport const A = ({ n, m }: { n: string; m: string }) => <Text>{`${n} · ${m}`}</Text>;\n";
+    expect(await lint('src/features/example/Example.tsx', ok)).toEqual([]);
+  });
+
+  it('names an owner for every legacy file (plan 3.0.1)', () => {
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    const { LEGACY_COPY_OWNERS, LEGACY_COPY_FILES } = require('../../../eslint.config.js');
+    /* eslint-enable @typescript-eslint/no-require-imports */
+    expect(LEGACY_COPY_FILES).toEqual(Object.keys(LEGACY_COPY_OWNERS));
+    for (const owner of Object.values(LEGACY_COPY_OWNERS)) expect(owner).toMatch(/^[A-Z]+\d*(-\d+)?$/);
+    expect(LEGACY_COPY_OWNERS).toMatchObject({
+      'src/navigation/CustomTabBar.tsx': 'F4',
+      'src/hooks/useWeather.ts': 'HOME-1',
+      'src/supabase/hooks/useFavourites.ts': 'VENUE-2',
+      'src/utils/nationality.ts': 'AUTH-1',
+      'src/data/coachQuestions.ts': 'COACH-2',
+    });
+  });
+
+  it('refuses Node-only globals the phone does not have, in app code', async () => {
+    const code = [
+      'export const a = crypto.randomUUID();',
+      "export const b = Buffer.from('x').toString('base64');",
+      'export const c = AbortSignal.timeout(5000);',
+      'export const d = AbortSignal.any([]);',
+      'export const e = globalThis.crypto;',
+      '',
+    ].join('\n');
+    const rules = await lint('src/features/example/ids.ts', code);
+    expect(rules.filter((r) => r === 'no-restricted-globals')).toHaveLength(2);
+    expect(rules.filter((r) => r === 'no-restricted-properties')).toHaveLength(3);
+    const ok = "import * as Crypto from 'expo-crypto';\nexport const a = Crypto.randomUUID();\n";
+    expect(await lint('src/features/example/ids.ts', ok)).toEqual([]);
+  });
+});
+
+describe('text components for the raw-text rule (F5 manifest)', () => {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { readTextComponents, TEXT_COMPONENTS_FILE } = require('../../../eslint.config.js');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const root = mkdtempSync(path.join(tmpdir(), 'lp-text-components-'));
+  const manifest = path.join(root, TEXT_COMPONENTS_FILE);
+  mkdirSync(path.dirname(manifest), { recursive: true });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('is empty until F5 publishes the file', () => {
+    expect(readTextComponents(path.join(root, 'nowhere'))).toEqual([]);
+  });
+
+  it('reads the names F5 lists', () => {
+    writeFileSync(manifest, '["LPText", "Kicker", "Animated.Text"]');
+    expect(readTextComponents(root)).toEqual(['LPText', 'Kicker', 'Animated.Text']);
+  });
+
+  it('fails loudly on a malformed file instead of allowing nothing', () => {
+    writeFileSync(manifest, '{"LPText": true}');
+    expect(() => readTextComponents(root)).toThrow(/JSON array of component names/);
+    writeFileSync(manifest, '["<Text>"]');
+    expect(() => readTextComponents(root)).toThrow(/JSON array/);
   });
 });
