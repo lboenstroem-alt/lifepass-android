@@ -16,6 +16,7 @@
 //   tp('account.pass_visits_left', 21)    // Icelandic singular for 21
 //
 // Numbers, dates and durations in the account language: ./format.ts.
+// `*italic*` runs and `[label](url)` links in a string: ./markup.tsx.
 import { getLocales } from 'expo-localization';
 import { useMemo } from 'react';
 import { create } from 'zustand';
@@ -153,3 +154,4 @@ export function useT(): Translator {
 }
 
 export { HealthFormat, VenueTimeFormat, formatDistance, iskPrefix } from './format';
+export { MarkupText, markupPlain, markupRuns, parseMarkup } from './markup';
