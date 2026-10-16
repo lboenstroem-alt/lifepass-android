@@ -134,6 +134,9 @@ export default function UiKitScreen() {
             }
           />
           <PrimaryButton title="Toast" onPress={() => showToast('Saved to lunch', { action: { label: 'Food diary', onPress: () => undefined } })} />
+          <PrimaryButton title="Meal toast, no action (4 s)" onPress={() => showToast('Saved offline', { kind: 'meal' })} />
+          <PrimaryButton title="Health toast (3.2 s)" onPress={() => showToast('Changed on another device')} />
+          <PrimaryButton title="Confirm" tone="action" shape="booking" disabled onPress={() => undefined} />
           {callout ? (
             <View style={styles.callout}>
               <Callout text={t('home.profile_moved')} onDismiss={() => setCallout(false)} />
@@ -166,12 +169,27 @@ export default function UiKitScreen() {
         onClose={() => setSheetOpen(false)}
         busy={sheetBusy}
         fullHeight={size.isAccessibilitySize}
-        footer={<PrimaryButton title={sheetBusy ? 'Busy (locked)' : 'Lock for 3 s'} loading={sheetBusy} onPress={() => {
+        footer={<PrimaryButton title={sheetBusy ? 'Busy (locked)' : 'Lock for 3 s'} tone="action" shape="booking" loading={sheetBusy} onPress={() => {
           setSheetBusy(true);
           setTimeout(() => setSheetBusy(false), 3000);
         }} />}
       >
         <LPText serif size={24}>A sheet</LPText>
+        {/* Focus it: the field and the footer must both stay above the keyboard. */}
+        <NumberStepper
+          text={weight}
+          onChangeText={setWeight}
+          step={0.1}
+          min={20}
+          max={400}
+          fallback={70}
+          unit="kg"
+          size="regular"
+          label={t('body.weight')}
+          spokenUnit={t('a11y.unit.kg')}
+          decreaseLabel={t('a11y.decrease_weight')}
+          increaseLabel={t('a11y.increase_weight')}
+        />
         <LPText size={14} color={colors.paper2}>
           Pan down, tap outside or press back to close. While locked, none of them work.
         </LPText>
