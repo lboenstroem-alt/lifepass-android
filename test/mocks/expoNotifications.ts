@@ -104,13 +104,23 @@ export const requestPermissionsAsync = jest.fn(async () => {
   return permissionResponse();
 });
 
+/**
+ * Keeps the request as the app passed it (the trigger is the INPUT shape, not
+ * the native one). A `null` trigger shows the notification at once, as on a
+ * phone: it goes straight to the presented list.
+ */
 export const scheduleNotificationAsync = jest.fn(async (input: NotificationRequestInput) => {
   const identifier = input.identifier ?? `fake-notification-${state.nextId++}`;
-  state.scheduled.set(identifier, {
+  const request: FakeNotificationRequest = {
     identifier,
     content: input.content as FakeNotificationRequest['content'],
     trigger: input.trigger ?? null,
-  });
+  };
+  if (request.trigger === null) {
+    state.presented.set(identifier, { date: Date.now(), request });
+  } else {
+    state.scheduled.set(identifier, request);
+  }
   return identifier;
 });
 

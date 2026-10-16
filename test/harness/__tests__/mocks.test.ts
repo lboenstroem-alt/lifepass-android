@@ -81,14 +81,22 @@ describe('expo-notifications (local only)', () => {
       content: { title: 'Yoga', body: 'In 10 minutes', data: { route: 'library' } },
       trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: at, channelId: 'bookings' },
     });
-    const id = await Notifications.scheduleNotificationAsync({ content: { title: 'x' }, trigger: null });
-    expect(notificationsState.scheduled().map((n) => n.identifier)).toEqual(['booking.reminder.abc.t10', id]);
-    await Notifications.cancelScheduledNotificationAsync(id);
+    const later = await Notifications.scheduleNotificationAsync({
+      content: { title: 'x' },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 90 },
+    });
+    expect(notificationsState.scheduled().map((n) => n.identifier)).toEqual(['booking.reminder.abc.t10', later]);
+    await Notifications.cancelScheduledNotificationAsync(later);
     expect(await Notifications.getAllScheduledNotificationsAsync()).toHaveLength(1);
 
     const behaviour = await notificationsState.fire('booking.reminder.abc.t10');
     expect(behaviour).toEqual({ shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false });
     expect(await Notifications.getPresentedNotificationsAsync()).toHaveLength(1);
+
+    // A null trigger shows at once.
+    await Notifications.scheduleNotificationAsync({ identifier: 'now', content: { title: 'y' }, trigger: null });
+    expect(notificationsState.scheduled().map((n) => n.identifier)).toEqual([]);
+    expect(notificationsState.presented().map((n) => n.request.identifier)).toEqual(['booking.reminder.abc.t10', 'now']);
   });
 
   it('delivers a tap to listeners and to a cold start', async () => {
