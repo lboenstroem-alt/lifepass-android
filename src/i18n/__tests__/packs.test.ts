@@ -5,7 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { androidPacks, definePack } from '../android';
+import { androidPacks, definePack, type AndroidPack } from '../android';
 import { generatedTables, IOS_SOURCE, mergeTables, tables } from '../tables';
 import { androidDictionaries, hasDash, hasEmoji, LANGS, placeholders } from './dictionaries';
 
@@ -93,20 +93,63 @@ describe('merging the packs over the generated tables', () => {
   });
 });
 
+/**
+ * What is wrong with a pack: a key in one language only, a blank value, a
+ * dash or an emoji, or a placeholder lost between the languages. An
+ * Icelandic `.one` may carry the count its English one leaves out ("1 visit
+ * left", "{count} heimsókn eftir"): Icelandic takes the singular for 21, 31
+ * and 101 too, so it MUST carry every placeholder of the `.many`.
+ */
+function packProblems(pack: AndroidPack, name: string): string[] {
+  const problems: string[] = [];
+  for (const [a, b] of [['en', 'is'], ['is', 'en']] as const) {
+    for (const key of Object.keys(pack[a])) if (!(key in pack[b])) problems.push(`${name} ${key} has no ${b}`);
+  }
+  for (const lang of LANGS) {
+    for (const [key, value] of Object.entries(pack[lang])) {
+      if (!value.trim()) problems.push(`${name} ${key} (${lang}) is blank`);
+      if (hasDash(value)) problems.push(`${name} ${key} (${lang}) has a dash: ${value}`);
+      if (hasEmoji(value)) problems.push(`${name} ${key} (${lang}) has an emoji`);
+    }
+  }
+  for (const [key, english] of Object.entries(pack.en)) {
+    const icelandic = pack.is[key] ?? '';
+    const wanted = placeholders(english);
+    if (key.endsWith('.one')) {
+      const many = pack.en[`${key.slice(0, -'.one'.length)}.many`];
+      wanted.push(...placeholders(many ?? ''));
+      for (const p of new Set(wanted)) if (!icelandic.includes(p)) problems.push(`${name} ${key} (is) lost ${p}`);
+    } else if (placeholders(icelandic).join() !== wanted.join()) {
+      problems.push(`${name} ${key}: ${wanted.join()} in English, ${placeholders(icelandic).join()} in Icelandic`);
+    }
+  }
+  return problems;
+}
+
 describe('every Android pack keeps the copy rules', () => {
-  it.each(androidDictionaries.map((d) => [d.name, d] as const))('%s', (_name, pack) => {
-    // Every key in both languages (definePack also refuses this at compile time).
-    expect(Object.keys(pack.is).sort()).toEqual(Object.keys(pack.en).sort());
-    for (const lang of LANGS) {
-      for (const [key, value] of Object.entries(pack[lang])) {
-        const label = `${pack.name} ${key} (${lang}): ${value}`;
-        expect([label, value.trim().length > 0]).toEqual([label, true]);
-        expect([label, hasDash(value)]).toEqual([label, false]);
-        expect([label, hasEmoji(value)]).toEqual([label, false]);
-      }
-    }
-    for (const key of Object.keys(pack.en)) {
-      expect([key, placeholders(pack.is[key] ?? '')]).toEqual([key, placeholders(pack.en[key]!)]);
-    }
+  it.each(androidDictionaries.map((d) => [d.name, d] as const))('%s', (name, pack) => {
+    expect(packProblems(pack, name)).toEqual([]);
+  });
+
+  it('accepts an Icelandic singular that carries the count', () => {
+    const pack = definePack({
+      en: { 'x.left.one': '1 visit left', 'x.left.many': '{count} visits left' },
+      is: { 'x.left.one': '{count} heimsókn eftir', 'x.left.many': '{count} heimsóknir eftir' },
+    });
+    expect(packProblems(pack, 'X')).toEqual([]);
+  });
+
+  it('names every broken rule', () => {
+    const pack: AndroidPack = {
+      en: { 'x.left.one': '1 visit left', 'x.left.many': '{count} visits left', 'x.dash': 'a \u2013 b', 'x.only': 'Only' },
+      is: { 'x.left.one': '1 heimsókn eftir', 'x.left.many': 'heimsóknir eftir', 'x.dash': ' ' },
+    };
+    expect(packProblems(pack, 'X')).toEqual([
+      'X x.only has no is',
+      'X x.dash (en) has a dash: a \u2013 b',
+      'X x.dash (is) is blank',
+      'X x.left.one (is) lost {count}',
+      'X x.left.many: {count} in English,  in Icelandic',
+    ]);
   });
 });
