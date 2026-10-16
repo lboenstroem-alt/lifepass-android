@@ -384,9 +384,18 @@ export function parseInteger(raw: string): number | null {
 
 // MARK: - Numbers
 
-/** Grouped integer: "1,900" (en) / "1.900" (is). */
+/**
+ * Grouped integer: "1,900" (en) / "1.900" (is). A fraction is rounded half to
+ * even, and a zero is never "-0" (the iOS value is an Int, which has no
+ * negative zero).
+ */
 export function integer(value: number, lang: Lang): string {
-  return formatNumber(value, SEPARATORS[lang === 'is' ? 'is' : 'en'], 0);
+  return wholeNumber(value, SEPARATORS[lang === 'is' ? 'is' : 'en']);
+}
+
+function wholeNumber(value: number, separators: { group: string; decimal: string }): string {
+  const text = formatNumber(value, separators, 0);
+  return text === '-0' ? '0' : text;
 }
 
 /** One decimal by default, trailing zero dropped: "72.5" / "72,5", and "72" for 72.0. */
@@ -425,7 +434,7 @@ export function grams(value: number, lang: Lang, liquid = false): string {
  * read as fourteen point nine on an English phone.
  */
 export function iskPrefix(value: number): string {
-  return `ISK ${formatNumber(value, SEPARATORS.en, 0)}`;
+  return `ISK ${wholeNumber(value, SEPARATORS.en)}`;
 }
 
 /**
@@ -503,9 +512,9 @@ export function isoWeekday(day: string | Date): number | null {
  * itself when it is not one) or an instant read on Iceland's calendar.
  */
 export function shortDay(day: string | Date, lang: Lang): string {
-  const date = typeof day === 'string' ? dateFromServerDay(day) : day;
-  if (!date) return day as string;
-  return formatDateTemplate(date, 'EEEdMMM', lang);
+  if (typeof day !== 'string') return Number.isNaN(day.getTime()) ? '' : formatDateTemplate(day, 'EEEdMMM', lang);
+  const date = dateFromServerDay(day);
+  return date ? formatDateTemplate(date, 'EEEdMMM', lang) : day;
 }
 
 /** "17 September" / "17. september" for a header line. */

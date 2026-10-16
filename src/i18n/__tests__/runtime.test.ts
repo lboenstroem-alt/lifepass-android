@@ -42,6 +42,9 @@ describe('lookup (LPStrings.lookup)', () => {
   it('knows which keys exist', () => {
     expect(hasKey('tab.home')).toBe(true);
     expect(hasKey('no.such.key')).toBe(false);
+    // Nothing on Object.prototype is a key.
+    expect(hasKey('toString')).toBe(false);
+    expect(lookup('constructor', 'is')).toBe('constructor');
   });
 });
 

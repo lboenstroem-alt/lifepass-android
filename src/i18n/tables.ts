@@ -46,7 +46,9 @@ export function mergeTables(
 ): MergedTables {
   const conflicts: Conflict[] = [];
   const merge = (lang: Lang): Table => {
-    const result: Record<string, string> = { ...generated[lang] };
+    // No prototype: a key like "toString" must read as missing, not as
+    // Object.prototype's function.
+    const result: Record<string, string> = Object.assign(Object.create(null) as Record<string, string>, generated[lang]);
     const owner = new Map<string, string>(Object.keys(generated[lang]).map((key) => [key, IOS_SOURCE]));
     for (const { id, pack } of packs) {
       for (const [key, value] of Object.entries(pack[lang])) {

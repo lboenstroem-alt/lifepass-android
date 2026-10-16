@@ -117,6 +117,10 @@ describe('numbers in the account language (HealthFormatTests)', () => {
     expect(integer(999, 'is')).toBe('999');
     expect(integer(1234567, 'is')).toBe('1.234.567');
     expect(integer(-1234, 'en')).toBe('-1,234');
+    expect(integer(-0, 'en')).toBe('0');
+    expect(integer(-0.4, 'is')).toBe('0');
+    expect(integer(2.5, 'en')).toBe('2');
+    expect(iskPrefix(-0)).toBe('ISK 0');
   });
 
   it('shows one decimal with the trailing zero dropped, rounding half to even as NumberFormatter does', () => {
@@ -244,6 +248,7 @@ describe('server calendar days (HealthFormatTests)', () => {
 
   it('shows a malformed day as itself (testMalformedServerDayIsShownAsItself)', () => {
     expect(shortDay('not-a-day', 'en')).toBe('not-a-day');
+    expect(shortDay(new Date(Number.NaN), 'en')).toBe('');
     expect(longDay('2026-09', 'is')).toBe('2026-09');
     expect(dateFromServerDay('2026-ab-01')).toBeNull();
     expect(dateFromServerDay('')).toBeNull();
