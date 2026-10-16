@@ -18,7 +18,7 @@ export { default as PrimaryButton, READABLE_DISABLED } from './PrimaryButton';
 export type { PrimaryButtonProps, PrimaryButtonShape, PrimaryButtonTone } from './PrimaryButton';
 export { default as Card } from './Card';
 export type { CardProps } from './Card';
-export { default as Sheet, SHEET_CLOSE_FALLBACK_MS } from './Sheet';
+export { default as Sheet, SHEET_CLOSE_FALLBACK_MS, useSheetOpen } from './Sheet';
 export type { SheetProps } from './Sheet';
 export { default as SheetTextInput, useInSheet } from './SheetTextInput';
 export { Dialog, DialogHost, showDialog, dismissAllDialogs, orderButtons } from './Dialog';

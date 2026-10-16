@@ -8,16 +8,22 @@
 //   </NavigationContainer>
 //
 // - GestureHandlerRootView: bottom sheets are gesture-driven.
-// - BottomSheetModalProvider: the host every <Sheet> renders into.
+// - BottomSheetModalProvider: the host every <Sheet> renders into. Its portal
+//   host is drawn AFTER the app's screens, as their sibling.
+// - The screens' layer: while a sheet is up it is hidden from TalkBack, so the
+//   sheet is modal as an iOS sheet is to VoiceOver (the tab bar and the Book
+//   or Pay button behind it cannot be reached by swiping). The sheet itself,
+//   the toast and the dialog are outside this layer and stay reachable.
 // - ToastHost: draws showToast() over the screens (under any open sheet, as
 //   iOS draws its toasts over the tab view, not over sheets).
 // - DialogHost: draws showDialog(), above everything (its own window).
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import type { ReactNode } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { DialogHost } from './Dialog';
+import { useSheetOpen } from './Sheet';
 import { ToastHost } from './Toast';
 
 export type UiKitProviderProps = {
@@ -30,11 +36,28 @@ export default function UiKitProvider({ children, toastBottomOffset }: UiKitProv
   return (
     <GestureHandlerRootView style={styles.root}>
       <BottomSheetModalProvider>
-        {children}
+        <ScreensLayer>{children}</ScreensLayer>
         <ToastHost bottomOffset={toastBottomOffset} />
         <DialogHost />
       </BottomSheetModalProvider>
     </GestureHandlerRootView>
+  );
+}
+
+/** The app's screens, hidden from TalkBack while a sheet is up. */
+function ScreensLayer({ children }: { children: ReactNode }) {
+  const sheetOpen = useSheetOpen();
+  return (
+    <View
+      style={styles.root}
+      // Always a real view, so the switch never re-parents the screens.
+      collapsable={false}
+      importantForAccessibility={sheetOpen ? 'no-hide-descendants' : 'auto'}
+      accessibilityElementsHidden={sheetOpen}
+      testID="uikit.screens"
+    >
+      {children}
+    </View>
   );
 }
 

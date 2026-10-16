@@ -4,7 +4,8 @@
 //
 // Serif title, body, a full-width confirm (red when destructive) and a quiet
 // Cancel. Confirm closes the sheet and then runs the action, as on iOS.
-import { Pressable, StyleSheet, View } from 'react-native';
+import { useRef } from 'react';
+import { Pressable, StyleSheet, View, type Text } from 'react-native';
 
 import { useT } from '../../i18n';
 import { colors } from '../../theme';
@@ -36,10 +37,12 @@ export default function ConfirmSheet({
 }: ConfirmSheetProps) {
   const { t } = useT();
   const cancel = t('common.cancel');
+  // TalkBack starts at the title, as VoiceOver starts a sheet at its top.
+  const titleRef = useRef<Text>(null);
   return (
-    <Sheet visible={visible} onClose={onClose} scrollable={false} testID={testID}>
+    <Sheet visible={visible} onClose={onClose} scrollable={false} initialFocusRef={titleRef} testID={testID}>
       <View style={styles.texts}>
-        <LPText serif size={24} color={colors.paper} accessibilityRole="header">
+        <LPText ref={titleRef} serif size={24} color={colors.paper} accessibilityRole="header">
           {title}
         </LPText>
         <LPText size={14} color={colors.paper2}>

@@ -27,6 +27,20 @@
 // stay in view while the content scrolls (iOS keeps "the money line directly
 // above Confirm").
 //
+// MODAL TO TALKBACK. An iOS sheet is modal to VoiceOver; this one renders
+// into the provider's portal in the same window as the screens, so it makes
+// itself modal: while any sheet is up, UiKitProvider hides the screens (and
+// the tab bar) from TalkBack, which also clears focus from the button that
+// opened it. Once the sheet has settled, TalkBack focus moves into it: to
+// `initialFocusRef` (pass the sheet's title, as VoiceOver starts at the top)
+// or else to the sheet's scroll view, from which TalkBack takes the first
+// element. `returnFocusRef` gets focus back once the sheet has gone.
+//
+// KEYBOARD. The library lifts the sheet over the keyboard itself (its default
+// Android input mode). Its "adjustResize" mode instead waits for the OS to
+// shrink the window, which never happens with edge to edge on, so a field or
+// the pinned footer would end up under the keyboard.
+//
 // The app shell mounts one `UiKitProvider` (BottomSheetModalProvider inside
 // the NavigationContainer), which hosts every sheet.
 import {
@@ -37,9 +51,19 @@ import {
   BottomSheetView,
   type BottomSheetBackdropProps,
   type BottomSheetFooterProps,
+  type BottomSheetScrollViewMethods,
 } from '@gorhom/bottom-sheet';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { BackHandler, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { AccessibilityInfo, BackHandler, findNodeHandle, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, hairline, radius } from '../../theme';
@@ -67,6 +91,10 @@ export type SheetProps = {
   /** Called once the sheet has fully left the screen. */
   onClosed?: () => void;
   contentStyle?: StyleProp<ViewStyle>;
+  /** Where TalkBack focus goes once the sheet is up (its title); default: the sheet's first element. */
+  initialFocusRef?: RefObject<unknown>;
+  /** Where TalkBack focus goes back to once the sheet has gone (the button that opened it). */
+  returnFocusRef?: RefObject<unknown>;
   testID?: string;
 };
 
@@ -87,6 +115,27 @@ const FOOTER_SLOT_AVAILABLE = BottomSheetFooter != null;
 
 const FULL_HEIGHT = ['100%'];
 
+// ─── Sheets open, for the provider's TalkBack lock ──────────────────
+
+const openSheets = createHostStore<number>(0);
+
+/** True while any Sheet is up: UiKitProvider hides the screens from TalkBack. */
+export function useSheetOpen(): boolean {
+  return openSheets.use() > 0;
+}
+
+/** Moves TalkBack focus to a view (a no-op without a screen reader). */
+function focusForAccessibility(target: unknown): void {
+  if (!target) return;
+  try {
+    const tag = findNodeHandle(target as Parameters<typeof findNodeHandle>[0]);
+    if (typeof tag === 'number') AccessibilityInfo.setAccessibilityFocus(tag);
+  } catch {
+    // The view has gone (or never had a native view): nothing to focus.
+  }
+}
+
+
 export default function Sheet({
   visible,
   onClose,
@@ -99,9 +148,13 @@ export default function Sheet({
   scrollable = true,
   onClosed,
   contentStyle,
+  initialFocusRef,
+  returnFocusRef,
   testID,
 }: SheetProps) {
   const ref = useRef<BottomSheetModal>(null);
+  // At run time the library hands back the native scroll view (findNodeHandle reads it).
+  const scrollRef = useRef<BottomSheetScrollViewMethods>(null);
   const insets = useSafeAreaInsets();
   const [mounted, setMounted] = useState(visible);
   const [footerHeight, setFooterHeight] = useState(0);
@@ -112,19 +165,58 @@ export default function Sheet({
   const onCloseRef = useRef(onClose);
   const onClosedRef = useRef(onClosed);
   const lockedRef = useRef(locked);
+  const initialFocusRefRef = useRef(initialFocusRef);
+  const returnFocusRefRef = useRef(returnFocusRef);
   useLayoutEffect(() => {
     onCloseRef.current = onClose;
     onClosedRef.current = onClosed;
     lockedRef.current = locked;
+    initialFocusRefRef.current = initialFocusRef;
+    returnFocusRefRef.current = returnFocusRef;
   });
 
   /** True while the parent, not the member, is taking the sheet down. */
   const closingByParent = useRef(false);
+  /** TalkBack focus has moved into this presentation already. */
+  const focusedIn = useRef(false);
 
   const finish = useCallback(() => {
     closingByParent.current = false;
+    focusedIn.current = false;
     setMounted(false);
     onClosedRef.current?.();
+  }, []);
+
+  // Gone: focus goes back to `returnFocusRef`, a turn later, once the
+  // provider has made the screens underneath reachable again.
+  const wasMounted = useRef(false);
+  useEffect(() => {
+    if (mounted) {
+      wasMounted.current = true;
+      return;
+    }
+    if (!wasMounted.current) return;
+    wasMounted.current = false;
+    const target = returnFocusRefRef.current?.current;
+    if (!target) return;
+    const timer = setTimeout(() => focusForAccessibility(target), 0);
+    return () => clearTimeout(timer);
+  }, [mounted]);
+
+  // While up, the sheet counts as open, so the provider hides the screens
+  // underneath from TalkBack (the sheet is modal, as on iOS).
+  const presented = visible && mounted;
+  useEffect(() => {
+    if (!presented) return;
+    openSheets.set((count) => count + 1);
+    return () => openSheets.set((count) => Math.max(0, count - 1));
+  }, [presented]);
+
+  // Once the library says the sheet has settled on screen, focus moves in.
+  const handleChange = useCallback((index: number) => {
+    if (index < 0 || focusedIn.current) return;
+    focusedIn.current = true;
+    focusForAccessibility(initialFocusRefRef.current?.current ?? scrollRef.current);
   }, []);
 
   // Shown: mount, then present once mounted.
@@ -184,11 +276,16 @@ export default function Sheet({
     (props: BottomSheetFooterProps) => (
       <BottomSheetFooter {...props}>
         <InSheetContext.Provider value>
-          <SheetFooter store={footerStore} bottomInset={insets.bottom} onHeight={setFooterHeight} />
+          <SheetFooter
+            store={footerStore}
+            bottomInset={insets.bottom}
+            onHeight={setFooterHeight}
+            testID={`${testID ?? 'sheet'}.footer`}
+          />
         </InSheetContext.Provider>
       </BottomSheetFooter>
     ),
-    [footerStore, insets.bottom],
+    [footerStore, insets.bottom, testID],
   );
 
   const renderBackdrop = useCallback(
@@ -227,6 +324,7 @@ export default function Sheet({
     <BottomSheetModal
       ref={ref}
       onDismiss={handleDismiss}
+      onChange={handleChange}
       snapPoints={points}
       enableDynamicSizing={!points}
       enablePanDownToClose={!locked}
@@ -234,7 +332,6 @@ export default function Sheet({
       stackBehavior="push"
       keyboardBehavior="interactive"
       keyboardBlurBehavior="restore"
-      android_keyboardInputMode="adjustResize"
       backdropComponent={renderBackdrop}
       footerComponent={usesFooterSlot ? renderFooter : undefined}
       handleComponent={SheetHandle}
@@ -244,7 +341,7 @@ export default function Sheet({
       accessible={false}
     >
       {scrollable ? (
-        <BottomSheetScrollView testID={testID} contentContainerStyle={padded} keyboardShouldPersistTaps="handled">
+        <BottomSheetScrollView ref={scrollRef} testID={testID} contentContainerStyle={padded} keyboardShouldPersistTaps="handled">
           {body}
         </BottomSheetScrollView>
       ) : (
@@ -269,14 +366,20 @@ function SheetFooter({
   store,
   bottomInset,
   onHeight,
+  testID,
 }: {
   store: HostStore<ReactNode>;
   bottomInset: number;
   onHeight: (height: number) => void;
+  testID: string;
 }) {
   const footer = store.use();
   return (
-    <View style={[styles.footer, { paddingBottom: bottomInset + 16 }]} onLayout={(event) => onHeight(event.nativeEvent.layout.height)}>
+    <View
+      testID={testID}
+      style={[styles.footer, { paddingBottom: bottomInset + 16 }]}
+      onLayout={(event) => onHeight(event.nativeEvent.layout.height)}
+    >
       {footer}
     </View>
   );

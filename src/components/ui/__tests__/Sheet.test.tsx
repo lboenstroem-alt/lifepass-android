@@ -1,14 +1,18 @@
 /**
  * The sheet's busy lock (plan F5: "The Sheet refuses dismissal while busy,
- * swipe and back"), hardware back, and the controlled open/close cycle.
+ * swipe and back"), hardware back, the controlled open/close cycle, the
+ * pinned footer, and TalkBack focus.
  *
- * The library's own test stand-in renders a sheet's children inline; this
- * file wraps it to record the props the sheet hands the library, and to play
- * the library's part (`onDismiss` once the slide-out ends).
+ * The library's own test stand-in renders a sheet's children inline and has
+ * no footer slot; this file wraps it to record the props the sheet hands the
+ * library, to draw the footer slot as the library does (below the content),
+ * and to play the library's part (`onDismiss` once the slide-out ends,
+ * `onChange` once it has settled).
  */
-import { act, render, screen } from '@testing-library/react-native';
-import { BackHandler, Text } from 'react-native';
-import type { ReactElement } from 'react';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import * as ReactNative from 'react-native';
+import { AccessibilityInfo, BackHandler, StyleSheet, Text, type View } from 'react-native';
+import { createRef, type ReactElement, type ReactNode } from 'react';
 
 import Sheet, { SHEET_CLOSE_FALLBACK_MS } from '../Sheet';
 import { useInSheet } from '../SheetTextInput';
@@ -18,21 +22,31 @@ type ModalProps = {
   enableDynamicSizing?: boolean;
   snapPoints?: (string | number)[];
   onDismiss?: () => void;
+  onChange?: (index: number) => void;
   accessible?: boolean;
+  android_keyboardInputMode?: string;
+  keyboardBehavior?: string;
+  footerComponent?: (props: object) => ReactElement;
   backdropComponent?: (props: object) => ReactElement<{ pressBehavior?: string; accessible?: boolean }>;
 };
 
 const mockModals: ModalProps[] = [];
 
 jest.mock('@gorhom/bottom-sheet', () => {
+  /* eslint-disable @typescript-eslint/no-require-imports */
   const library = jest.requireActual('@gorhom/bottom-sheet/mock');
+  const React = require('react');
+  /* eslint-enable @typescript-eslint/no-require-imports */
   class RecordingModal extends library.BottomSheetModal {
     render() {
       mockModals.push(this.props as ModalProps);
-      return super.render();
+      const { footerComponent } = this.props as ModalProps;
+      return React.createElement(React.Fragment, null, super.render(), footerComponent ? footerComponent({}) : null);
     }
   }
-  return { ...library, __esModule: true, BottomSheetModal: RecordingModal };
+  // The footer slot: the library positions it; here it just draws its children.
+  const BottomSheetFooter = ({ children }: { children: ReactNode }) => children;
+  return { ...library, __esModule: true, BottomSheetModal: RecordingModal, BottomSheetFooter };
 });
 
 const lastModal = () => mockModals[mockModals.length - 1];
@@ -239,5 +253,95 @@ describe('fields inside a sheet', () => {
     expect(screen.getByText('page: on page')).toBeOnTheScreen();
     expect(screen.getByText('body: in sheet')).toBeOnTheScreen();
     expect(screen.getByText('footer: in sheet')).toBeOnTheScreen();
+  });
+});
+
+describe('keyboard', () => {
+  // With edge to edge on, the OS never shrinks the window for the keyboard,
+  // so the library's "adjustResize" mode would leave fields under it.
+  it('lets the library lift the sheet over the keyboard itself', async () => {
+    const { element } = renderSheet();
+    await render(element);
+    expect(lastModal().android_keyboardInputMode).toBeUndefined();
+    expect(lastModal().keyboardBehavior).toBe('interactive');
+  });
+});
+
+describe('pinned footer', () => {
+  it('draws the footer in the slot, in the sheet, and pads the content by its measured height', async () => {
+    const { element } = renderSheet({ testID: 'sheet' });
+    await render(element);
+    expect(lastModal().footerComponent).toBeDefined();
+    const footer = screen.getByTestId('sheet.footer');
+    expect(screen.getByText('Confirm')).toBeOnTheScreen();
+    const padding = () =>
+      (StyleSheet.flatten(screen.getByTestId('sheet').props.contentContainerStyle) as { paddingBottom: number }).paddingBottom;
+    expect(padding()).toBe(8);
+    await fireEvent(footer, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 120 } } });
+    expect(padding()).toBe(128);
+  });
+
+  it('a sheet without a footer has no slot and pads for the navigation bar instead', async () => {
+    await render(
+      <Sheet visible onClose={jest.fn()} testID="sheet">
+        <Text>Sheet body</Text>
+      </Sheet>,
+    );
+    expect(lastModal().footerComponent).toBeUndefined();
+    expect(screen.queryByTestId('sheet.footer')).toBeNull();
+  });
+});
+
+describe('TalkBack focus', () => {
+  const setFocus = AccessibilityInfo.setAccessibilityFocus as jest.Mock;
+
+  /** The test renderer has no native views; give the target a tag. */
+  function tagFor(target: { current: unknown }, tag: number) {
+    // The module itself (an `import * as` namespace is a copy of it).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const reactNative: typeof ReactNative = require('react-native');
+    jest
+      .spyOn(reactNative, 'findNodeHandle')
+      .mockImplementation(((instance: unknown) => (instance != null && instance === target.current ? tag : null)) as typeof ReactNative.findNodeHandle);
+  }
+
+  it('moves into the sheet, to its title, once the sheet has settled, and only once', async () => {
+    const title = createRef<Text>();
+    tagFor(title, 41);
+    await render(
+      <Sheet visible onClose={jest.fn()} initialFocusRef={title}>
+        <Text ref={title}>Book this class?</Text>
+      </Sheet>,
+    );
+    expect(setFocus).not.toHaveBeenCalled();
+    await act(async () => lastModal().onChange!(0));
+    expect(setFocus).toHaveBeenCalledWith(41);
+    await act(async () => lastModal().onChange!(1));
+    expect(setFocus).toHaveBeenCalledTimes(1);
+  });
+
+  it('goes back to the opener once the sheet has gone', async () => {
+    jest.useFakeTimers();
+    try {
+      const opener = createRef<View>();
+      tagFor(opener, 7);
+      const onClose = jest.fn();
+      const view = await render(
+        <>
+          <ReactNative.View ref={opener} />
+          <Sheet visible onClose={onClose} returnFocusRef={opener}>
+            <Text>Sheet body</Text>
+          </Sheet>
+        </>,
+      );
+      await act(async () => lastModal().onDismiss!());
+      await act(async () => {
+        jest.runOnlyPendingTimers();
+      });
+      expect(setFocus).toHaveBeenCalledWith(7);
+      view.unmount();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
