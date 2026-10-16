@@ -159,10 +159,6 @@ function contentUri(k: string): string {
   return `content://is.lifepass.android.FileSystemFileProvider/root${k.split('://')[1]}`;
 }
 
-function uriOf(target: { uri: string } | string): string {
-  return typeof target === 'string' ? target : target.uri;
-}
-
 function noNetwork(): never {
   throw new Error('expo-file-system downloads and uploads are not available in tests (no network)');
 }
