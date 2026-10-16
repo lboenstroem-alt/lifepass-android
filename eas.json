@@ -5,9 +5,12 @@
   },
   "build": {
     "base": {
+      "environment": "production",
       "env": {
+        "EXPO_PUBLIC_LIFEPASS_API_URL": "https://www.lifepass.is/api/v1",
         "EXPO_PUBLIC_SUPABASE_URL": "https://katielfjlyidadfftsnz.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_QmVpB8ckWzz6NCZpKzqGWg_Ngev7KM3"
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_QmVpB8ckWzz6NCZpKzqGWg_Ngev7KM3",
+        "EXPO_PUBLIC_SOCIAL_SIGN_IN": "YES"
       }
     },
     "development": {
@@ -27,7 +30,6 @@
     },
     "production": {
       "extends": "base",
-      "environment": "production",
       "autoIncrement": true,
       "android": {
         "buildType": "app-bundle"
@@ -35,6 +37,11 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "track": "production",
+        "releaseStatus": "draft"
+      }
+    }
   }
 }
