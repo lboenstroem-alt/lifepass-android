@@ -2,12 +2,15 @@
  * The dialog that carries more buttons than Android's Alert (plan 5.6): the
  * runner's Leave dialog has five.
  */
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
+import { Dimensions, StyleSheet } from 'react-native';
 
+import { restoreTestFontScale, setTestFontScale } from '../../../hooks/testing';
 import { Dialog, DialogHost, dismissAllDialogs, orderButtons, showDialog, type DialogButton } from '../Dialog';
 
 afterEach(async () => {
   await act(async () => dismissAllDialogs());
+  restoreTestFontScale();
 });
 
 const leaveButtons = (spy: jest.Mock): DialogButton[] => [
@@ -71,11 +74,62 @@ it('hardware back presses the cancel button', async () => {
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
-it('a question with no way out ignores back until it is answered', async () => {
+it('a question with two answers and no way out ignores back until it is answered', async () => {
   const onClose = jest.fn();
-  await render(<Dialog visible onClose={onClose} title="Changed elsewhere" buttons={[{ label: 'Reload' }]} testID="dialog" />);
+  await render(
+    <Dialog
+      visible
+      onClose={onClose}
+      title="Changed elsewhere"
+      buttons={[{ label: 'Reload' }, { label: 'Keep mine' }]}
+      testID="dialog"
+    />,
+  );
   await fireEvent(screen.getByTestId('dialog'), 'requestClose');
   expect(onClose).not.toHaveBeenCalled();
+});
+
+it('a one-button notice is acknowledged by back, which presses its button (iOS "Email sent", OK)', async () => {
+  const onClose = jest.fn();
+  const ok = jest.fn();
+  await render(
+    <Dialog visible onClose={onClose} title="Email sent" message="Check your inbox." buttons={[{ label: 'OK', onPress: ok }]} testID="dialog" />,
+  );
+  await fireEvent(screen.getByTestId('dialog'), 'requestClose');
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(ok).toHaveBeenCalledTimes(1);
+});
+
+it('a one-button notice that must not be closed by hand keeps ignoring back', async () => {
+  const onClose = jest.fn();
+  await render(<Dialog visible cancelable={false} onClose={onClose} title="Update" buttons={[{ label: 'OK' }]} testID="dialog" />);
+  await fireEvent(screen.getByTestId('dialog'), 'requestClose');
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+describe('large text', () => {
+  it('at a font scale of 2, every button of the five-button dialog sits in a scroll view the card bounds', async () => {
+    setTestFontScale(2);
+    await render(
+      <Dialog
+        visible
+        onClose={jest.fn()}
+        title="Leave the workout?"
+        message="Your sets so far are saved on this phone until you choose what to do with them."
+        buttons={leaveButtons(jest.fn())}
+        testID="dialog"
+      />,
+    );
+    const scroll = screen.getByTestId('dialog.scroll');
+    for (const label of ['Save and finish', 'Save as done so far', 'Keep for later', 'Discard workout', 'Keep going']) {
+      expect(within(scroll).getByRole('button', { name: label })).toBeOnTheScreen();
+    }
+    expect(within(scroll).getByRole('header', { name: 'Leave the workout?' })).toBeOnTheScreen();
+    // The card never grows past the window, less a margin (zero system bars here).
+    const card = scroll.parent!;
+    const { maxHeight } = StyleSheet.flatten(card.props.style) as { maxHeight: number };
+    expect(maxHeight).toBe(Dimensions.get('window').height - 48);
+  });
 });
 
 it('a cancelable dialog without a cancel button closes on back and reports it', async () => {
