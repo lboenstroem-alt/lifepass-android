@@ -50,8 +50,8 @@ export function markupPlain(markup: string): string {
     .join('');
 }
 
-/** `[label](url)`: a label without brackets, a url without spaces or parentheses. */
-const LINK = /\[([^\]]*)\]\(([^()\s]*)\)/y;
+/** `[label](url)` at the start: a label without brackets, a url without spaces or parentheses. */
+const LINK = /^\[([^\]]*)\]\(([^()\s]*)\)/;
 
 /**
  * Split a string into runs and links. Italic marks toggle across the whole
@@ -76,8 +76,7 @@ export function parseMarkup(markup: string): MarkupSegment[] {
       continue;
     }
     if (character === '[') {
-      LINK.lastIndex = index;
-      const match = LINK.exec(markup);
+      const match = LINK.exec(markup.slice(index));
       if (match) {
         flush();
         const [whole, label = '', href = ''] = match;

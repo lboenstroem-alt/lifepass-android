@@ -655,6 +655,68 @@ describe('LocalizationClaimsTests', () => {
   });
 });
 
+// MARK: - The website's words
+
+describe('the website’s words, word for word', () => {
+  it('refuses a discount code as the owner wrote it (PlansDiscountCodeTests.testTheRefusalCopyInBothLanguages)', () => {
+    const copy: [string, string, string][] = [
+      [
+        'plans.promo.err.invalid',
+        "We don't recognise this code. Check it, or clear it to pay the full price.",
+        'Við þekkjum ekki þennan kóða. Athugaðu hann eða hreinsaðu hann til að greiða fullt verð.',
+      ],
+      [
+        'plans.promo.err.expired',
+        'This code has expired. Clear it to pay the full price.',
+        'Þessi kóði er útrunninn. Hreinsaðu hann til að greiða fullt verð.',
+      ],
+      ['plans.promo.err.product', "This code can't be used for this pass.", 'Ekki er hægt að nota þennan kóða fyrir þennan passa.'],
+      [
+        'plans.promo.err.memberships',
+        'This code is for passes only, not memberships.',
+        'Þessi kóði gildir aðeins fyrir passa, ekki áskriftir.',
+      ],
+      ['plans.promo.err.format', 'Codes use letters, numbers, - and _ only.', 'Kóðar innihalda aðeins bókstafi, tölustafi, - og _.'],
+    ];
+    for (const [key, english, icelandic] of copy) {
+      expect([key, lookup(key, 'en'), lookup(key, 'is')]).toEqual([key, english, icelandic]);
+    }
+  });
+
+  it('says the eID step’s sentences (KenniVerificationTests.testTheSentencesAreTheWebsWords)', () => {
+    const copy: [string, string, string][] = [
+      [
+        'kenni.err.linked',
+        'You already have a LifePass account. Sign in with the email you used before. If you chose Hide My Email with Apple, use your original email instead. Need help? Contact support@lifepass.is.',
+        'Þú ert nú þegar með LifePass-aðgang. Skráðu þig inn með netfanginu sem þú notaðir áður. Ef þú valdir „Fela netfang“ hjá Apple skaltu nota upprunalega netfangið. Þarftu aðstoð? Hafðu samband við support@lifepass.is.',
+      ],
+      [
+        'kenni.err.cancelled',
+        'You cancelled the eID check, so nothing was verified. A membership needs a verified kennitala.',
+        'Þú hættir við auðkenninguna og því var ekkert staðfest. Áskrift krefst staðfestrar kennitölu.',
+      ],
+      [
+        'kenni.err.expired',
+        'The eID check took too long and expired. Try again; it takes about a minute.',
+        'Auðkenningin tók of langan tíma og rann út. Reyndu aftur; það tekur um mínútu.',
+      ],
+      [
+        'kenni.err.failed',
+        "We couldn't finish the eID check, and nothing was charged. Try again, or choose a visitor pass, which doesn't need eID.",
+        'Ekki tókst að ljúka auðkenningunni og ekkert var gjaldfært. Reyndu aftur eða veldu gestapassa, sem þarf ekki rafræn skilríki.',
+      ],
+    ];
+    for (const [key, english, icelandic] of copy) {
+      expect([key, lookup(key, 'en'), lookup(key, 'is')]).toEqual([key, english, icelandic]);
+    }
+    // Every failure has its own sentence (testEveryFailureHasASentenceInBothLanguages).
+    expectCleanAndTranslated([
+      'kenni.err.cancelled', 'kenni.err.expired', 'kenni.err.linked', 'kenni.err.server',
+      'kenni.err.offline', 'kenni.err.start', 'kenni.err.failed',
+    ]);
+  });
+});
+
 // MARK: - The base dictionary and the whole table
 
 describe('the whole table', () => {
