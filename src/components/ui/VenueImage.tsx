@@ -39,6 +39,18 @@ export type VenueImageProps = {
 
 type Phase = 'loading' | 'loaded' | 'failed';
 
+type LoadState = {
+  source: string | null;
+  attempt: number;
+  phase: Phase;
+  /** The attempt waiting out its back-off, if any. */
+  retryDue: number | null;
+};
+
+function freshState(source: string | null): LoadState {
+  return { source, attempt: 0, phase: source ? 'loading' : 'failed', retryDue: null };
+}
+
 export default function VenueImage({
   uri,
   height,
@@ -50,31 +62,30 @@ export default function VenueImage({
 }: VenueImageProps) {
   const source = normaliseImageUrl(uri);
   const reduceMotion = useReduceMotion();
-  const [attempt, setAttempt] = useState(0);
-  const [phase, setPhase] = useState<Phase>(source ? 'loading' : 'failed');
 
-  // A new URL starts again from the first attempt.
-  const [retryDue, setRetryDue] = useState<number | null>(null);
-  useEffect(() => {
-    setAttempt(0);
-    setRetryDue(null);
-    setPhase(source ? 'loading' : 'failed');
-  }, [source]);
+  // One record per URL: a new URL starts again from the first attempt, reset
+  // during render so the old photo's state never shows for a frame.
+  const [state, setState] = useState(() => freshState(source));
+  if (state.source !== source) setState(freshState(source));
+  const { attempt, phase, retryDue } = state.source === source ? state : freshState(source);
 
   // After a failure, wait and try again (a new key remounts the image).
   useEffect(() => {
     if (retryDue === null) return;
     const timer = setTimeout(() => {
-      setRetryDue(null);
-      setAttempt(retryDue);
+      setState((current) => (current.retryDue === retryDue ? { ...current, retryDue: null, attempt: retryDue } : current));
     }, imageRetryDelayMs(retryDue - 1));
     return () => clearTimeout(timer);
   }, [retryDue]);
 
   const onError = () => {
-    if (attempt + 1 < IMAGE_ATTEMPTS) setRetryDue(attempt + 1);
-    else setPhase('failed');
+    setState((current) =>
+      current.attempt + 1 < IMAGE_ATTEMPTS
+        ? { ...current, retryDue: current.attempt + 1 }
+        : { ...current, phase: 'failed' },
+    );
   };
+  const onLoad = () => setState((current) => ({ ...current, phase: 'loaded' }));
 
   const showImage = source !== null && phase !== 'failed' && retryDue === null;
   const decorative = !accessibilityLabel;
@@ -98,7 +109,7 @@ export default function VenueImage({
           recyclingKey={recyclingKey}
           contentFit={contentFit}
           transition={reduceMotion ? 0 : 150}
-          onLoad={() => setPhase('loaded')}
+          onLoad={onLoad}
           onError={onError}
           style={StyleSheet.absoluteFill}
           accessible={false}
