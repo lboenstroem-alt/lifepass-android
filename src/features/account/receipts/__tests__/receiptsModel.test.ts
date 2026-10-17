@@ -214,4 +214,13 @@ describe('beyond the iOS cases', () => {
     await loading;
     expect(viewModel.state).toEqual({ kind: 'loading' });
   });
+
+  it('a screen React remounts reads afresh after its first life ended', async () => {
+    api.on('GET', '/purchases', Reply.ok(firstPage));
+    const detach = viewModel.attach();
+    detach();
+    viewModel.attach();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(rows(viewModel.state)).toHaveLength(2);
+  });
 });

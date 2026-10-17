@@ -70,7 +70,8 @@ export class ReceiptsViewModel {
   private snapshot: ReceiptsSnapshot = { state: { kind: 'loading' }, hasMore: false, isLoadingMore: false };
   private nextCursor: string | null = null;
   private readonly listeners = new Set<() => void>();
-  private readonly controller = new AbortController();
+  /** Aborted when the screen goes; replaced when it comes back (`attach`). */
+  private controller = new AbortController();
   /**
    * Bumped by every `load`: a page that answers after a newer load started
    * (a pull to refresh during "Show more") is dropped, so an old list never
@@ -101,10 +102,20 @@ export class ReceiptsViewModel {
     return this.snapshot.isLoadingMore;
   }
 
+  /**
+   * The screen is on: reads the first page (iOS `.task`) and returns what
+   * to run when the screen goes (`dispose`). Attaching again after that, as
+   * React may do to a screen it remounts, starts afresh.
+   */
+  attach(): () => void {
+    if (this.controller.signal.aborted) this.controller = new AbortController();
+    void this.load();
+    return () => this.dispose();
+  }
+
   /** The screen went away: in-flight reads are cancelled and their answers ignored. */
   dispose(): void {
     this.controller.abort();
-    this.listeners.clear();
   }
 
   private update(next: Partial<ReceiptsSnapshot>): void {
@@ -126,13 +137,14 @@ export class ReceiptsViewModel {
    */
   async load(): Promise<void> {
     const generation = ++this.generation;
+    const { signal } = this.controller;
     if (this.snapshot.state.kind !== 'loaded') this.update({ state: { kind: 'loading' } });
     try {
-      const page = await this.fetchPage({ signal: this.controller.signal });
-      if (generation !== this.generation || this.controller.signal.aborted) return;
+      const page = await this.fetchPage({ signal });
+      if (generation !== this.generation || signal.aborted) return;
       this.applyPage(page, page.data);
     } catch (error) {
-      if (generation !== this.generation || this.controller.signal.aborted || isCancellation(error)) return;
+      if (generation !== this.generation || signal.aborted || isCancellation(error)) return;
       const unavailable = isApiError(error) && error.status === 404;
       this.update({ state: { kind: unavailable ? 'unavailable' : 'failed' }, hasMore: false });
     }
@@ -144,14 +156,15 @@ export class ReceiptsViewModel {
     const shown = this.snapshot.state;
     if (!this.snapshot.hasMore || this.snapshot.isLoadingMore || cursor === null || shown.kind !== 'loaded') return;
     const generation = this.generation;
+    const { signal } = this.controller;
     this.update({ isLoadingMore: true });
     try {
-      const page = await this.fetchPage({ cursor, signal: this.controller.signal });
-      if (generation !== this.generation || this.controller.signal.aborted) return;
+      const page = await this.fetchPage({ cursor, signal });
+      if (generation !== this.generation || signal.aborted) return;
       const known = new Set(shown.purchases.map((purchase) => purchase.id));
       this.applyPage(page, [...shown.purchases, ...page.data.filter((purchase) => !known.has(purchase.id))]);
     } catch (error) {
-      if (generation !== this.generation || this.controller.signal.aborted) return;
+      if (generation !== this.generation || signal.aborted) return;
       // The cursor is no longer one the server issued: start over. Any other
       // failure keeps the page already shown, and the button for a retry.
       if (isProblem(error, 'invalid-cursor')) {
@@ -159,7 +172,7 @@ export class ReceiptsViewModel {
         await this.load();
       }
     } finally {
-      if (!this.controller.signal.aborted) this.update({ isLoadingMore: false });
+      if (!signal.aborted) this.update({ isLoadingMore: false });
     }
   }
 }

@@ -51,10 +51,7 @@ export default function ReceiptsScreen({ navigation }: SharedRouteProps<'Receipt
   const { state, hasMore, isLoadingMore } = useSyncExternalStore(model.subscribe, model.getSnapshot);
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    void model.load();
-    return () => model.dispose();
-  }, [model]);
+  useEffect(() => model.attach(), [model]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
