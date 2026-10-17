@@ -85,6 +85,23 @@ describe('ExploreLaunchTests', () => {
     expect(useIntentStore.getState().exploreLaunchPresentation).toBe(true);
   });
 
+  it('a check-in link that arrives while launch is still deciding keeps the filters closed', async () => {
+    // iOS decides the tab in App.init, before any link is delivered; here
+    // the link that opened the app can answer first.
+    await storeSession(MEMBER_A);
+    const launch = prepareLaunchTab();
+    useIntentStore.getState().parkScanVenue('3f2b8c1e-7d4a-4b6e-9c2f-1a2b3c4d5e6f');
+    expect(await launch).toBe('Explore');
+    expect(useIntentStore.getState().exploreLaunchPresentation).toBe(false);
+  });
+
+  it('so does a payment return that arrives first', async () => {
+    const launch = prepareLaunchTab();
+    useIntentStore.getState().cancelExploreLaunchPresentation();
+    await launch;
+    expect(useIntentStore.getState().takeExploreLaunchPresentation()).toBe(false);
+  });
+
   it('a resumable workout of the stored member keeps Plan, and Explore opens no filters', async () => {
     await AsyncStorage.setItem(SELECTED_TAB_KEY, 'Plan');
     await storeSession(MEMBER_A);

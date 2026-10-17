@@ -57,6 +57,21 @@ describe('a check-in link', () => {
     expect(intents().exploreLaunchPresentation).toBe(false);
   });
 
+  it('cancels it for good: launch deciding Explore after the link opens no filters', () => {
+    intents().parkScanVenue(VENUE);
+    intents().setExploreLaunchPresentation(true);
+    expect(intents().exploreLaunchPresentation).toBe(false);
+  });
+
+  it('counts every arrival, the same venue again included', () => {
+    expect(intents().scanLinkCount).toBe(0);
+    intents().parkScanVenue(VENUE);
+    intents().parkScanVenue(VENUE);
+    expect(intents().scanLinkCount).toBe(2);
+    intents().parkScanVenue('not a venue');
+    expect(intents().scanLinkCount).toBe(2);
+  });
+
   it('retracts a Kenni nudge on screen without counting it as dismissed', async () => {
     useAppStore.setState({ pendingKennitalaPrompt: true });
     intents().parkScanVenue(VENUE);
@@ -105,6 +120,8 @@ describe('a parked tab', () => {
     expect(intents().pendingTab).toBe('Plan');
     intents().clearPendingTab();
     expect(intents().pendingTab).toBeNull();
+    intents().setExploreLaunchPresentation(true);
+    expect(intents().exploreLaunchPresentation).toBe(false);
   });
 });
 

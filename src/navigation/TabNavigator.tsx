@@ -11,8 +11,9 @@
  *   2. a parked tab (`requestTab`): asking for Plan while on Plan pops Plan
  *      back to its first screen, which is how a notification tap gets a
  *      member back to Plan's root when they left it three screens deep;
- *   3. a check-in link (`pendingScanVenueId`): the Scan tab. A member walking
- *      up to a door outranks everything, so this comes last and wins.
+ *   3. a check-in link (each arrival, `scanLinkCount`; at first appearance a
+ *      venue still parked, `pendingScanVenueId`): the Scan tab. A member
+ *      walking up to a door outranks everything, so this comes last and wins.
  *
  * It remembers the tab on screen (the launch rule reads it), retires the Plan
  * tab's dot at the first visit, and draws the app-wide sheets over every tab:
@@ -86,7 +87,9 @@ function TabsLayout({
   latest.current = { state, navigation };
 
   const pendingTab = useIntentStore((s) => s.pendingTab);
-  const pendingScanVenueId = useIntentStore((s) => s.pendingScanVenueId);
+  // Every arrival, not the id: a second link to a venue still parked is the
+  // same id, and must still bring Scan forward.
+  const scanLinkCount = useIntentStore((s) => s.scanLinkCount);
   const pendingRoute = useNotificationRouter((s) => s.pending);
   const isAuthenticated = useAppStore((s) => s.isAuthenticated);
 
@@ -117,9 +120,9 @@ function TabsLayout({
   // 3. A check-in link: Scan, over everything (the intent store has already
   // retracted the Kenni nudge, without counting it as dismissed).
   useEffect(() => {
-    if (!appeared.current || pendingScanVenueId === null) return;
+    if (!appeared.current || scanLinkCount === 0) return;
     selectTab('Scan', latest.current.state, latest.current.navigation);
-  }, [pendingScanVenueId]);
+  }, [scanLinkCount]);
 
   // At first appearance, in iOS onAppear's order: a cold launch from a
   // notification or a link delivered it before this shell existed.

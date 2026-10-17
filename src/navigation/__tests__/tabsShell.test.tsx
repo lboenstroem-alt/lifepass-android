@@ -178,6 +178,21 @@ describe('a check-in link', () => {
     expect(await AsyncStorage.getItem('kennitalaPromptDismissed')).toBeNull();
   });
 
+  it('a second link to a venue still parked brings Scan forward again', async () => {
+    signedIn();
+    await renderShell();
+    await act(async () => {
+      useIntentStore.getState().parkScanVenue(VENUE);
+    });
+    expect(currentTab()).toBe('Scan');
+    await fireEvent.press(screen.getByRole('tab', { name: 'Explore' }));
+    expect(currentTab()).toBe('Explore');
+    await act(async () => {
+      useIntentStore.getState().parkScanVenue(VENUE);
+    });
+    expect(currentTab()).toBe('Scan');
+  });
+
   it('outranks everything at a cold launch, a notification included', async () => {
     signedIn();
     tapNotification('plan');
@@ -329,6 +344,32 @@ describe('every route of plan 3.0.2', () => {
       });
       expect(currentTab()).toBe('Explore');
     }
+  });
+
+  it('a shared route asked for over a root modal opens in the shared sheet, and closing it lands back on the modal', async () => {
+    signedIn();
+    await renderShell();
+    await act(async () => {
+      openRootModal('WorkoutRunner', { sessionId: 's-1', entry: 'today' });
+    });
+    await act(async () => {
+      navigateInCurrentTab('Profile', { initialTab: 'bookings' });
+    });
+    expect(currentRouteName()).toBe('Profile');
+    const rootRoutes = () => navigationRef.getRootState().routes.map((route) => route.name);
+    // Over the runner, which stays as it was; never a second copy of the tabs.
+    expect(rootRoutes()).toEqual(['Main', 'WorkoutRunner', 'SharedSheet']);
+    // The page goes on inside the sheet.
+    await act(async () => {
+      navigateInCurrentTab('Account');
+    });
+    expect(currentRouteName()).toBe('Account');
+    expect(rootRoutes()).toEqual(['Main', 'WorkoutRunner', 'SharedSheet']);
+    await act(async () => navigationRef.goBack());
+    expect(currentRouteName()).toBe('Profile');
+    await act(async () => navigationRef.goBack());
+    expect(currentRouteName()).toBe('WorkoutRunner');
+    expect(rootRoutes()).toEqual(['Main', 'WorkoutRunner']);
   });
 
   it('a stub shows a development placeholder', async () => {

@@ -23,7 +23,15 @@
  * - Anything that takes the member to another tab first (a scan link, a
  *   notification, a parked tab other than Explore, a payment or card return)
  *   cancels the launch-time "Explore with its filters open", so it can never
- *   fire later when they switch to Explore themselves.
+ *   fire later when they switch to Explore themselves. iOS decides the
+ *   launch tab synchronously in `App.init`, before any link is delivered;
+ *   here launch decides it after async reads, and the link that opened the
+ *   app can arrive first. So a cancel is remembered for the app session
+ *   (`launchPresentationCancelled`), and launch turning the presentation on
+ *   afterwards is ignored.
+ * - Each check-in link brings the Scan tab forward, even a second link to the
+ *   same venue that is still parked (`scanLinkCount` counts arrivals; the
+ *   shell watches the count, not the id).
  * - A parked Plan action is worth performing for 5 minutes: long enough for
  *   a cold launch to sign in and read the day on a bad connection, short
  *   enough that it is still the tap the member made.
@@ -101,8 +109,22 @@ export interface IntentState {
   readonly pendingScanVenueId: string | null;
   /** A check-in link arrived at some point this app session (never reset by consuming the venue). */
   readonly scanArrivedThisSession: boolean;
+  /**
+   * How many check-in links have arrived this app session. The tabs shell
+   * switches to Scan whenever it grows, so a second link to a venue still
+   * parked (the same id, so no change in `pendingScanVenueId`) brings Scan
+   * forward again.
+   */
+  readonly scanLinkCount: number;
   /** The cold launch opened on Explore: Explore shows the venues with the filters open, once. */
   readonly exploreLaunchPresentation: boolean;
+  /**
+   * Something took the member elsewhere this app session (a check-in link, a
+   * tab other than Explore, a payment or card return). From then on launch
+   * can no longer turn the Explore presentation on: the link that opened the
+   * app may be delivered before launch has decided its tab.
+   */
+  readonly launchPresentationCancelled: boolean;
   /** The Scan tab is showing a live camera: the tab bar turns dark over it. */
   readonly scanCameraLive: boolean;
 }
@@ -139,7 +161,10 @@ export interface IntentActions {
   parkScanVenue(venueId: string): boolean;
   /** The Scan tab takes the parked venue (cleared). */
   takeScanVenue(): string | null;
-  /** Launch only: whether Explore opens with its filters (the cold launch landed on Explore). */
+  /**
+   * Launch only: whether Explore opens with its filters (the cold launch
+   * landed on Explore). Ignored once something has cancelled it this session.
+   */
   setExploreLaunchPresentation(on: boolean): void;
   /** Something took the member elsewhere first (a payment or card return, say). */
   cancelExploreLaunchPresentation(): void;
@@ -161,9 +186,14 @@ const initialState: IntentState = {
   pendingExploreSights: false,
   pendingScanVenueId: null,
   scanArrivedThisSession: false,
+  scanLinkCount: 0,
   exploreLaunchPresentation: false,
+  launchPresentationCancelled: false,
   scanCameraLive: false,
 };
+
+/** What every "the member went elsewhere first" writes (iOS clears the flag; see `launchPresentationCancelled`). */
+const CANCEL_LAUNCH_PRESENTATION = { exploreLaunchPresentation: false, launchPresentationCancelled: true } as const;
 
 /**
  * Holds the post-sign-up Kenni nudge back once a check-in link has arrived
@@ -179,7 +209,7 @@ export const useIntentStore = create<IntentStore>()((set, get) => ({
   ...initialState,
 
   requestTab(tab) {
-    set(tab === 'Explore' ? { pendingTab: tab } : { pendingTab: tab, exploreLaunchPresentation: false });
+    set(tab === 'Explore' ? { pendingTab: tab } : { pendingTab: tab, ...CANCEL_LAUNCH_PRESENTATION });
   },
 
   clearPendingTab() {
@@ -237,7 +267,8 @@ export const useIntentStore = create<IntentStore>()((set, get) => ({
     set({
       pendingScanVenueId: id.toLowerCase(),
       scanArrivedThisSession: true,
-      exploreLaunchPresentation: false,
+      scanLinkCount: get().scanLinkCount + 1,
+      ...CANCEL_LAUNCH_PRESENTATION,
     });
     // A check-in outranks the Kenni nudge: retract a sheet on screen, without
     // counting it as dismissed, so it can come back at the next launch.
@@ -252,11 +283,11 @@ export const useIntentStore = create<IntentStore>()((set, get) => ({
   },
 
   setExploreLaunchPresentation(on) {
-    set({ exploreLaunchPresentation: on });
+    set({ exploreLaunchPresentation: on && !get().launchPresentationCancelled });
   },
 
   cancelExploreLaunchPresentation() {
-    if (get().exploreLaunchPresentation) set({ exploreLaunchPresentation: false });
+    if (get().exploreLaunchPresentation || !get().launchPresentationCancelled) set(CANCEL_LAUNCH_PRESENTATION);
   },
 
   takeExploreLaunchPresentation() {
@@ -270,8 +301,9 @@ export const useIntentStore = create<IntentStore>()((set, get) => ({
   },
 
   resetForSignOut() {
-    // `scanArrivedThisSession` stays: it describes this app session, not the
-    // member (iOS keeps it too).
+    // `scanArrivedThisSession`, `scanLinkCount` and
+    // `launchPresentationCancelled` stay: they describe this app session, not
+    // the member (iOS keeps `scanArrivedThisSession` too).
     set({
       pendingTab: null,
       pendingPlanAction: null,
