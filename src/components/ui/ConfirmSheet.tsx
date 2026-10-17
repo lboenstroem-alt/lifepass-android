@@ -3,7 +3,9 @@
 // "End plan" alone does not say that the history stays.
 //
 // Serif title, body, a full-width confirm (red when destructive) and a quiet
-// Cancel. Confirm closes the sheet and then runs the action, as on iOS.
+// Cancel. Confirm closes the sheet and then runs the action, as on iOS. The
+// confirm is a FLAT fill, 52 tall with radius 14 and no shadow: iOS draws its
+// own RoundedRectangle here, not LPPrimaryButton (which has one).
 //
 // ONE ANSWER. The first Confirm or Cancel answers the sheet; any further
 // press before it is shown again does nothing, so a double tap can never end
@@ -73,6 +75,7 @@ export default function ConfirmSheet({
           <PrimaryButton
             title={confirmLabel}
             tone={destructive ? 'destructive' : 'accent'}
+            shape="flat"
             onPress={() => answer(true)}
           />
           <Pressable

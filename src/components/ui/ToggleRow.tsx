@@ -1,6 +1,11 @@
-// A labelled switch row (iOS `Toggle` in the reminder, feedback and plan
-// settings): title, optional note under it, a switch in the accent colour.
-// The whole row is one switch to TalkBack and toggles on a tap anywhere.
+// A labelled switch row (iOS BodyAndGoalsView.toggleRow, used by the
+// reminder, feedback and plan settings): a 14 pt medium title over an 11 pt
+// lpPaper3 note, 2 apart, 16 x 14 padding, a switch in the accent colour, and
+// the whole row at 45 % while disabled.
+//
+// The whole row is one switch to TalkBack and toggles on a tap anywhere (on
+// iOS only the switch takes the tap; a larger target is kinder to touch
+// exploration and changes nothing else).
 import { Pressable, StyleSheet, Switch, View } from 'react-native';
 
 import { colors } from '../../theme';
@@ -28,11 +33,11 @@ export default function ToggleRow({ title, subtitle, value, onValueChange, disab
       style={({ pressed }) => [styles.row, disabled && styles.disabled, pressed && styles.pressed]}
     >
       <View style={styles.texts}>
-        <LPText size={15} weight="medium" color={colors.paper}>
+        <LPText size={14} weight="medium" color={colors.paper}>
           {title}
         </LPText>
         {subtitle ? (
-          <LPText size={13} color={colors.mutedTextStrong}>
+          <LPText size={11} color={colors.paper3}>
             {subtitle}
           </LPText>
         ) : null}
@@ -52,8 +57,8 @@ export default function ToggleRow({ title, subtitle, value, onValueChange, disab
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 52, paddingVertical: 8 },
-  texts: { flex: 1, gap: 3 },
-  disabled: { opacity: 0.4 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14 },
+  texts: { flex: 1, gap: 2 },
+  disabled: { opacity: 0.45 },
   pressed: { opacity: 0.85 },
 });
