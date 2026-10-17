@@ -9,6 +9,7 @@
  * signed out.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { AppState } from 'react-native';
 
 import { api, Reply, supabase as authHost, type StubReply } from '@test/server';
@@ -49,12 +50,12 @@ afterEach(() => {
 });
 
 // supabase-js logs every auth request that fails on the way (a refresh or a
-// logout with no network): those are the cases under test here. Anything
-// else still reaches the console.
+// logout with no network) and a refused refresh: those are the cases under
+// test here. Anything else still reaches the console.
 const consoleError = console.error;
 beforeEach(() => {
   jest.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
-    if (args.some((arg) => arg instanceof Error && /Failed to fetch/.test(arg.message))) return;
+    if (args.some((arg) => arg instanceof Error && /Failed to fetch|Invalid Refresh Token/.test(arg.message))) return;
     consoleError(...args);
   });
 });
@@ -231,6 +232,30 @@ describe('sign-in', () => {
     expect(store().profile?.id).toBe(MEMBER_A);
     // A fresh sign-in never inherits chats nobody owned.
     expect(await AsyncStorage.getItem(COACH_SESSIONS_KEY)).toBeNull();
+  });
+
+  it('a sign-in that lands while launch is still deciding (an auth link that opened the app) is not lost', async () => {
+    serveMember();
+    authHost.on('GET', '/auth/v1/user', Reply.json(200, sessionJSON(MEMBER_A, 3600).user));
+    // Launch waits on the network check while the link's session arrives.
+    let connected!: () => void;
+    jest.mocked(NetInfo.fetch).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          connected = () => resolve({ type: 'wifi', isConnected: true, isInternetReachable: true, details: null } as never);
+        }),
+    );
+    const launch = store().bootstrap();
+    await settle();
+    const session = sessionJSON(MEMBER_A, 3600);
+    await supabase.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
+    await settle();
+    connected();
+    await launch;
+    await settle(10);
+    expect(store().isAuthenticated).toBe(true);
+    expect(store().userId).toBe(MEMBER_A);
+    expect(api.sentAll('/profile', 'GET')).toHaveLength(1);
   });
 
   it('an announced sign-in and its SIGNED_IN are one sign-in', async () => {

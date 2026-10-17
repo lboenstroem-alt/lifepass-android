@@ -157,6 +157,11 @@ export interface SignInOptions {
   readonly suppressKennitalaPrompt?: boolean;
   /** The session the sign-in produced, when the caller has it. */
   readonly session?: Session | null;
+  /**
+   * A session restored rather than just made (launch does this itself): the
+   * cached language is kept and chats saved before chats had owners stay.
+   */
+  readonly restoredSession?: boolean;
 }
 
 export interface AppStoreActions {
@@ -285,6 +290,11 @@ export const selectPurchaseStateKnown = (s: AppStoreState): boolean =>
 let generation = 0;
 let bootstrapPromise: Promise<void> | null = null;
 let bootstrapping = false;
+/**
+ * A SIGNED_IN that arrived while launch was still deciding (an auth link that
+ * cold-started the app, the SDK's own restore): settled once launch is done.
+ */
+let signInDuringLaunch: Session | null = null;
 
 interface SignInFlight {
   readonly userId: string;
@@ -491,7 +501,11 @@ export const useAppStore = create<AppStore>()((set, get) => {
         if (session && state.userId === wireId(session.user.id)) set({ session });
         return;
       case 'SIGNED_IN': {
-        if (!session || bootstrapping || state.isLoading) return;
+        if (!session) return;
+        if (bootstrapping) {
+          signInDuringLaunch = session;
+          return;
+        }
         const userId = wireId(session.user.id);
         if (state.isAuthenticated && state.userId === userId) {
           set({ session });
@@ -594,6 +608,14 @@ export const useAppStore = create<AppStore>()((set, get) => {
           bootstrapping = false;
           set({ isLoading: false });
         }
+        // Launch decided without it (the link's session was stored after the
+        // read, say): it is a sign-in like any other.
+        const late = signInDuringLaunch;
+        signInDuringLaunch = null;
+        const state = get();
+        if (late && !(state.isAuthenticated && state.userId === wireId(late.user.id))) {
+          await state.handleSignIn(late.user.id, { session: late });
+        }
       })();
       return bootstrapPromise;
     },
@@ -616,7 +638,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
         promise: Promise.resolve(),
       };
       signInFlight = flight;
-      flight.promise = signedIn(options.session ?? null, userId, false, flight).catch((error: unknown) => {
+      flight.promise = signedIn(options.session ?? null, userId, options.restoredSession === true, flight).catch((error: unknown) => {
         track('service_error', { op: 'handleSignIn', error: errorDescription(error) });
       });
       return flight.promise;
@@ -797,6 +819,7 @@ export function resetAppStoreForTests(): void {
   generation += 1;
   bootstrapPromise = null;
   bootstrapping = false;
+  signInDuringLaunch = null;
   signInFlight = null;
   activatedFor = null;
   kennitalaPromptBlockers.clear();
