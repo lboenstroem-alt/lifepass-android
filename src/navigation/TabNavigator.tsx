@@ -17,7 +17,9 @@
  *
  * It remembers the tab on screen (the launch rule reads it), retires the Plan
  * tab's dot at the first visit, and draws the app-wide sheets over every tab:
- * the Kenni nudge and the sheets packages open imperatively.
+ * the Kenni nudge and the sheets packages open imperatively. Those hosts sit
+ * outside any screen (their `useNavigation()` is the root's `Main` route), so
+ * a page they open goes through `openSharedRoute` (./sharedSheet.ts).
  *
  * Back: `backBehavior: 'history'`. Back on a tab's first screen returns to
  * the tab the member came from, and back on the first tab of the session
