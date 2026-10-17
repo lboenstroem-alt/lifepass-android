@@ -21,6 +21,14 @@
  * again. A step neither the screen nor this file can take is never offered as
  * a button (`presentsRefusalStep`), so a refusal with nowhere to go is an
  * OK-only dialog. A refusal never opens the pay rail.
+ *
+ * WHERE A PAGE OPENS. iOS presents every destination as a sheet over the
+ * refusing screen. Here a screen in a tab pushes the page onto its tab (the
+ * tab bar stays; back returns to the refusal), and a root modal (Plans, the
+ * classes sheet) gets it in the shared sheet over itself, so closing it
+ * lands back on the modal as on iOS (./sharedSheet.ts). A refusal shown in a
+ * UI-kit sheet closes that sheet first (`beforeOpen`): sheets are drawn over
+ * every page, and the page would open under it.
  */
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useRef } from 'react';
@@ -30,7 +38,7 @@ import { REFUSAL_SUPPORT_URL, REFUSAL_WEB_PROFILE_URL, type RefusalCta } from '.
 import { openAccountDeletion } from '../features/account/deletion';
 import { openKenniSheet } from '../features/kenni';
 import { useAppNavigation } from './hooks';
-import type { AppNavigation } from './types';
+import { openSharedRoute, type SharedRouteNavigation } from './sharedSheet';
 
 /** Where a step goes when the screen does not take it (iOS `RefusalStepPresenter.Destination`). */
 export type RefusalDestination =
@@ -92,11 +100,19 @@ export interface RefusalStepOptions {
    * the refused selection, since a plan may have been bought meanwhile.
    */
   readonly onReturn?: () => void;
+  /**
+   * Runs just before a step opens a page or a modal (Plans, Account, Profile,
+   * a venue's page). A refusal shown in a UI-kit sheet closes the sheet here:
+   * sheets are drawn over every page, and the page would open under it. Not
+   * run for the Kenni or deletion sheet, which open over a sheet, as on iOS.
+   */
+  readonly beforeOpen?: () => void;
 }
 
 /** Who performs the steps: a screen's navigation, and what opens things outside the navigator. */
 export interface RefusalStepDeps {
-  readonly navigation: Pick<AppNavigation, 'navigate'>;
+  /** The refusing screen's own `navigation` (it says whether a page can be pushed there). */
+  readonly navigation: SharedRouteNavigation;
   readonly openUrl?: (url: string) => void;
   readonly openKenni?: typeof openKenniSheet;
   readonly openDeletion?: typeof openAccountDeletion;
@@ -121,16 +137,23 @@ export function takeRefusalStep(
   const destination = refusalDestination(cta, options.venueSlug);
   if (!destination) return 'none';
   const { navigation } = deps;
+  const beforeOpen = () => options.beforeOpen?.();
   switch (destination.kind) {
     case 'plans':
+      beforeOpen();
+      // A root modal: reachable from every screen and sheet.
       navigation.navigate('Plans');
       break;
     case 'account':
-      navigation.navigate('Account');
+      beforeOpen();
+      openSharedRoute(navigation, 'Account');
       break;
     case 'deletion':
       // The deletion sheet when ACCT-4 has it; Account (where deletion lives) until then.
-      if (!(deps.openDeletion ?? openAccountDeletion)()) navigation.navigate('Account');
+      if (!(deps.openDeletion ?? openAccountDeletion)()) {
+        beforeOpen();
+        openSharedRoute(navigation, 'Account');
+      }
       break;
     case 'identity':
       (deps.openKenni ?? openKenniSheet)({
@@ -139,10 +162,12 @@ export function takeRefusalStep(
       });
       break;
     case 'bookings':
-      navigation.navigate('Profile', { initialTab: 'bookings' });
+      beforeOpen();
+      openSharedRoute(navigation, 'Profile', { initialTab: 'bookings' });
       break;
     case 'venue':
-      navigation.navigate('VenueDetail', { slug: destination.slug });
+      beforeOpen();
+      openSharedRoute(navigation, 'VenueDetail', { slug: destination.slug });
       break;
   }
   return destination.kind;
@@ -179,11 +204,11 @@ export function useRefusalStep(options: RefusalStepOptions = {}): {
 
   const take = useCallback(
     (cta: RefusalCta) => {
-      const { venueSlug, local, onReturn } = latest.current;
+      const { venueSlug, local, onReturn, beforeOpen } = latest.current;
       const outcome = takeRefusalStep(
         cta,
         { navigation },
-        { venueSlug, local, onReturn, onClosed: () => latest.current.onReturn?.() },
+        { venueSlug, local, onReturn, beforeOpen, onClosed: () => latest.current.onReturn?.() },
       );
       // A step that pushed or presented a screen: re-check when the member is back here.
       awaitingReturn.current = outcome === 'plans' || outcome === 'account' || outcome === 'bookings' || outcome === 'venue' || outcome === 'deletion';

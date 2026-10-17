@@ -10,7 +10,9 @@
  *
  * Root modals cover the tab bar (iOS sheets and full-screen covers): Plans,
  * WriteReview and the classes sheet slide up over it; the meal page and the
- * workout runner take the whole screen.
+ * workout runner take the whole screen. The shared sheet (F4's own) slides a
+ * shared route up over a modal that cannot push it (./SharedSheetNavigator.tsx).
+ * None of them has a tab bar under it (./NoTabBarLayout.tsx).
  */
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
@@ -24,6 +26,8 @@ import { useAppStore } from '../stores/appStore';
 import AuthNavigator from './AuthNavigator';
 import MealCaptureNavigator from './MealCaptureNavigator';
 import { useNavPrefs } from './navPrefs';
+import { noTabBarScreenLayout } from './NoTabBarLayout';
+import SharedSheetNavigator from './SharedSheetNavigator';
 import TabNavigator from './TabNavigator';
 import type { RootStackParamList } from './types';
 
@@ -42,12 +46,13 @@ export default function RootNavigator() {
         {isAuthenticated ? (
           <>
             <Stack.Screen name="Main" component={TabNavigator} />
-            <Stack.Group screenOptions={{ presentation: 'modal' }}>
+            <Stack.Group screenOptions={{ presentation: 'modal' }} screenLayout={noTabBarScreenLayout}>
               <Stack.Screen name="Plans" component={PlansScreen} />
               <Stack.Screen name="WriteReview" component={WriteReviewScreen} />
               <Stack.Screen name="ClassesDiscoveryModal" component={ClassesDiscoveryModalScreen} />
+              <Stack.Screen name="SharedSheet" component={SharedSheetNavigator} />
             </Stack.Group>
-            <Stack.Group screenOptions={{ presentation: 'fullScreenModal' }}>
+            <Stack.Group screenOptions={{ presentation: 'fullScreenModal' }} screenLayout={noTabBarScreenLayout}>
               <Stack.Screen name="MealCapture" component={MealCaptureNavigator} />
               <Stack.Screen name="WorkoutRunner" component={WorkoutRunnerScreen} />
             </Stack.Group>

@@ -133,6 +133,61 @@ describe('taking a step', () => {
     expect(openUrl.mock.calls).toEqual([['https://www.lifepass.is/profile'], ['mailto:support@lifepass.is']]);
   });
 
+  it('a sheet closes itself before a page or a modal opens, not before a sheet or a link', () => {
+    const order: string[] = [];
+    const navigate = jest.fn((name: string) => order.push(`open ${name}`));
+    const beforeOpen = () => order.push('sheet closes');
+    const d = {
+      navigation: { navigate } as never,
+      openUrl: () => order.push('link'),
+      openKenni: () => order.push('kenni sheet'),
+      openDeletion: () => {
+        order.push('deletion sheet');
+        return true;
+      },
+    } as RefusalStepDeps;
+    for (const cta of ['seePlans', 'manageMembership', 'myBookings', 'verifyIdentity', 'cancelDeletion', 'contactSupport'] as const) {
+      takeRefusalStep(cta, d, { beforeOpen });
+    }
+    takeRefusalStep('bookATime', d, { beforeOpen, venueSlug: 'laugar' });
+    expect(order).toEqual([
+      'sheet closes',
+      'open Plans',
+      'sheet closes',
+      'open Account',
+      'sheet closes',
+      'open Profile',
+      'kenni sheet',
+      'deletion sheet',
+      'link',
+      'sheet closes',
+      'open VenueDetail',
+    ]);
+  });
+
+  it('a page goes where the screen can push it, or over the modal the screen is on', () => {
+    // A screen in a tab: its stack has the shared routes.
+    const inTab = jest.fn();
+    const tabScreen = {
+      navigate: inTab,
+      getState: () => ({ routeNames: ['HomeMain', 'Profile', 'Account'] }),
+      getParent: () => undefined,
+    };
+    takeRefusalStep('manageMembership', { navigation: tabScreen as never });
+    expect(inTab).toHaveBeenCalledWith('Account');
+
+    // A root modal (no shared routes above it), with the app not on screen:
+    // nothing is pushed where it would do nothing.
+    const inModal = jest.fn();
+    const modalScreen = {
+      navigate: inModal,
+      getState: () => ({ routeNames: ['Main', 'Plans', 'SharedSheet'] }),
+      getParent: () => undefined,
+    };
+    takeRefusalStep('manageMembership', { navigation: modalScreen as never });
+    expect(inModal).not.toHaveBeenCalled();
+  });
+
   it('a step nothing can take does nothing', () => {
     const { deps: d, navigate } = deps();
     expect(takeRefusalStep('chooseAnotherTime', d)).toBe('none');

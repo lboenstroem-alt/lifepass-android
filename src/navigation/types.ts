@@ -231,6 +231,15 @@ export type AuthStackParamList = {
 export type RootRoutes = RootModalRoutes & {
   Auth: NavigatorScreenParams<AuthStackParamList> | undefined;
   Main: NavigatorScreenParams<MainTabRoutes> | undefined;
+  /**
+   * F4's own, not a package's: a SHARED route opened where it cannot be
+   * pushed (from a root modal, or over one), in its own stack that slides up
+   * over everything, as iOS presents Account over Plans as a sheet with its
+   * own NavigationStack. Closing it lands back where the member was. Opened
+   * by `openSharedRoute` / `navigateInCurrentTab` (./sharedSheet.ts), never
+   * by name.
+   */
+  SharedSheet: NavigatorScreenParams<SharedRoutes>;
 };
 
 /** The root navigator's param list (the navigation ref's type). */
@@ -260,6 +269,9 @@ export type TabRootProps<Name extends 'HomeMain' | 'ExploreMain' | 'ScanMain' | 
     NativeStackScreenProps<TabStackRoutes, Name>,
     CompositeScreenProps<BottomTabScreenProps<MainTabRoutes>, NativeStackScreenProps<RootRoutes>>
   >;
+
+/** Props of the shared sheet's navigator (./SharedSheetNavigator.tsx). */
+export type SharedSheetProps = NativeStackScreenProps<RootRoutes, 'SharedSheet'>;
 
 /** Props of a root modal's screen, e.g. `RootModalProps<'Plans'>`. */
 export type RootModalProps<Name extends RootModalName> = NativeStackScreenProps<RootRoutes, Name>;

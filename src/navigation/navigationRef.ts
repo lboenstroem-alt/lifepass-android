@@ -53,6 +53,14 @@ export function currentTab(): MainTab | null {
   return (MAIN_TABS as readonly string[]).includes(name ?? '') ? (name as MainTab) : null;
 }
 
+/** The root route on screen: `Main` (the tabs), a root modal, the shared sheet or `Auth`. */
+export function rootRouteName(): string | null {
+  if (!navigationRef.isReady()) return null;
+  const root = navigationRef.getRootState() as unknown as LooseState | undefined;
+  if (!root || typeof root.index !== 'number') return null;
+  return root.routes[root.index]?.name ?? null;
+}
+
 /** True once the signed-in tabs are mounted (a route can be performed now). */
 export function tabsReady(): boolean {
   return tabsState() !== null;
@@ -73,6 +81,13 @@ export function openRootModal<Name extends RootModalName>(
 /**
  * Pushes a shared route onto the CURRENT tab's stack, so the tab bar stays
  * (what a screen's own `navigation.navigate` does, for code with no screen).
+ *
+ * While a root modal is on top (Plans, the runner, the meal page...) the page
+ * slides up in the shared sheet over it instead: pushed onto the tab under
+ * the modal it would open out of sight, and navigating to `Main` from there
+ * would stack a second copy of the tabs. The modal stays as it was (a runner
+ * or a meal in progress is never closed for it), and closing the sheet lands
+ * back on it, as on iOS where the page is a sheet over the sheet.
  */
 export function navigateInCurrentTab<Name extends SharedRouteName>(
   name: Name,
@@ -80,6 +95,10 @@ export function navigateInCurrentTab<Name extends SharedRouteName>(
 ): boolean {
   const tab = currentTab();
   if (!tab) return false;
+  if (rootRouteName() !== 'Main') {
+    navigateLoosely('SharedSheet', { screen: name, params: params[0] });
+    return true;
+  }
   navigateLoosely('Main', { screen: tab, params: { screen: name, params: params[0], initial: false } });
   return true;
 }
