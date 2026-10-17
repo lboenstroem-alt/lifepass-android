@@ -42,6 +42,7 @@ import {
   bookingInProgress,
   groupBookable,
   hasSelection,
+  loadsInitialDayOnAppear,
   usesClasses as sessionUsesClasses,
   type BookingSessionStore,
   type BookingVenue,
@@ -54,16 +55,6 @@ import StepsIndicator from './components/StepsIndicator';
 import TimetableStep from './components/TimetableStep';
 import type { GuestCounts } from './party/GroupPartySection';
 import { useBooking, useBookingRefusalSteps, useNewBookingSession } from './useBookingSession';
-
-/**
- * Whether an appearance must load the opening day's timetable: opened on a
- * day, still on that timetable, and not loaded yet (iOS
- * `loadsInitialDayOnAppear`). Without it a flow opened on a day would spin
- * forever, since its step was 1 from the first frame.
- */
-export function loadsInitialDayOnAppear(initialDate: string | null | undefined, step: number, alreadyLoaded: boolean): boolean {
-  return !alreadyLoaded && !!initialDate && step === 1;
-}
 
 /** The venue as far as the phone already knows it (the catalogue Home and Explore loaded). */
 function knownVenue(venueId: string): BookingVenue | null {

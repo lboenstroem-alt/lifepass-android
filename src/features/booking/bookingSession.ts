@@ -521,6 +521,16 @@ export function bookingInProgress(
   return s.isBooking || s.showChargeConsent || s.bookingPayOpen || s.bookingOutcomeUnknown;
 }
 
+/**
+ * Whether an appearance must load the opening day's timetable: opened on a
+ * day, still on that timetable, and not loaded yet (iOS
+ * `loadsInitialDayOnAppear`). Without it a flow opened on a day would spin
+ * forever, since its step was 1 from the first frame.
+ */
+export function loadsInitialDayOnAppear(initialDate: string | null | undefined, step: number, alreadyLoaded: boolean): boolean {
+  return !alreadyLoaded && !!initialDate && step === 1;
+}
+
 /** The create's body for the current selection, with the party and the rung (iOS `buildInput`). */
 export function buildInput(
   s: Pick<State, 'activity' | 'selectedClass' | 'selectedSlot' | 'participants' | 'offeredAgeBands' | 'guestAgeBands' | 'visitChoice'>,
