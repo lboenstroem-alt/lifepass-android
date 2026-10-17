@@ -129,7 +129,7 @@ describe('listening', () => {
     const stop = startNotificationRouter();
     await new Promise((resolve) => setImmediate(resolve));
     expect(useNotificationRouter.getState().pending).toEqual({ route: 'plan.feedback_note', reportId: null });
-    expect(Notifications.clearLastNotificationResponseAsync).toHaveBeenCalled();
+    expect(Notifications.clearLastNotificationResponse).toHaveBeenCalled();
     expect(consumeNotificationRoute(true)?.planAction).toEqual({ kind: 'openFeedbackNote' });
     stop();
 

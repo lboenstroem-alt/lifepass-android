@@ -143,7 +143,9 @@ export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
       }
       return;
     }
-    navigation.navigate(route.name, route.params);
+    // By name only: a tab's params can still hold a nested route a link once
+    // asked for, which must not be opened again by a plain tab tap.
+    navigation.navigate(route.name);
   }
 
   function tabButton(tab: Exclude<MainTab, 'Scan'>) {

@@ -148,22 +148,29 @@ export function consumeNotificationRoute(isAuthenticated: boolean): Notification
 export function startNotificationRouter(): () => void {
   const stopWatchingSession = useAppStore.subscribe(dropIfSignedOut);
   const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-    if (handleNotificationResponse(response)) {
-      Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
-    }
+    if (handleNotificationResponse(response)) clearLastResponse();
   });
-  Notifications.getLastNotificationResponseAsync()
-    .then((response) => {
-      if (handleNotificationResponse(response)) {
-        // Taken: a later relaunch must not find it again.
-        Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
-      }
-    })
-    .catch(() => undefined);
+  // The tap that cold-started the app (SDK 54's synchronous read).
+  let launchResponse: Notifications.NotificationResponse | null = null;
+  try {
+    launchResponse = Notifications.getLastNotificationResponse();
+  } catch {
+    launchResponse = null;
+  }
+  // Taken: a later relaunch must not find it again.
+  if (handleNotificationResponse(launchResponse)) clearLastResponse();
   return () => {
     subscription.remove();
     stopWatchingSession();
   };
+}
+
+function clearLastResponse(): void {
+  try {
+    Notifications.clearLastNotificationResponse();
+  } catch {
+    // Nothing to clear on this platform build; the tap is still taken once here.
+  }
 }
 
 /** Back to a fresh process (tests). */
