@@ -38,6 +38,10 @@ import '../features/plan/register';
 import '../features/plans/register';
 import '../features/runner/register';
 import '../features/venue/register';
+// Shared layers with session hooks of their own (F7): the health store's
+// sign-out wipe and profile reconcile, and the notification startup.
+import '../health/register';
+import '../notifications/register';
 
 import { resetUiKit } from '../components/ui/reset';
 
