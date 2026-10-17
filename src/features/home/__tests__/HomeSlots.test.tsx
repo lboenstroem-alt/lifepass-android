@@ -6,13 +6,14 @@
  * the profile read carried. Each slot is replaced here by a stand-in that
  * exposes what Home passed.
  */
-import { fireEvent, screen } from '@testing-library/react-native';
+import { act, fireEvent, screen } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { restoreTestFontScale, setTestFontScale } from '../../../hooks/testing';
 import { useIntentStore } from '../../../stores/intentStore';
-import { bookingRow, freshHome, leaveHome, profileJSON, renderHome, settle } from './homeHarness';
+import { homeReadsCount } from '../homeReads';
+import { bookingRow, freshHome, homeNavigation, leaveHome, profileJSON, renderHome, settle } from './homeHarness';
 import { REYKJAVIK, testVenue, venuePage } from './homeVenues';
 
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
@@ -32,15 +33,21 @@ jest.mock('../../plan/HomeTodayRow', () => {
   };
 });
 jest.mock('../../attractions/HomeOutsideCard', () => {
-  const { Pressable: MockPressable, View: MockView } = require('react-native');
+  const { Pressable: MockPressable, Text: MockText, View: MockView } = require('react-native');
+  const { useHomeReads: mockUseHomeReads } = require('../homeReads');
   return {
     __esModule: true,
-    default: (props: { onOpenSight: (slug: string) => void; onSeeAllOnMap: () => void }) => (
-      <MockView>
-        <MockPressable testID="outside.sight" onPress={() => props.onOpenSight('seljalandsfoss')} />
-        <MockPressable testID="outside.map" onPress={props.onSeeAllOnMap} />
-      </MockView>
-    ),
+    default: function MockOutside(props: { onOpenSight: (slug: string) => void; onSeeAllOnMap: () => void }) {
+      // What a card that follows Home's reads sees (../homeReads.ts).
+      const reads: number = mockUseHomeReads();
+      return (
+        <MockView>
+          <MockText testID="outside.reads">{String(reads)}</MockText>
+          <MockPressable testID="outside.sight" onPress={() => props.onOpenSight('seljalandsfoss')} />
+          <MockPressable testID="outside.map" onPress={props.onSeeAllOnMap} />
+        </MockView>
+      );
+    },
   };
 });
 jest.mock('../../../components/CheckInProofBanner', () => {
@@ -95,6 +102,29 @@ it('the Outside card opens a sight on Home’s stack, and "See all on the map" p
   await fireEvent.press(screen.getByTestId('outside.sight'));
   await settle();
   expect(screen.getByTestId('params.AttractionDetail')).toHaveTextContent(JSON.stringify({ slug: 'seljalandsfoss' }));
+});
+
+it('the Outside card reads again with Home: at every focus and at a pull to refresh (iOS loadOutsideMarkers)', async () => {
+  freshHome();
+  serve();
+  await renderHome();
+  const reads = () => Number(screen.getByTestId('outside.reads').props.children);
+  const first = reads();
+  expect(first).toBe(homeReadsCount());
+
+  // Away to another tab and back: Home reads again, so does the card.
+  await act(async () => homeNavigation.navigate('Explore'));
+  await settle();
+  await act(async () => homeNavigation.navigate('Home'));
+  await settle();
+  expect(reads()).toBe(first + 1);
+
+  const refresh = screen.getByTestId('home.scroll').props.refreshControl as { props: { onRefresh: () => Promise<void> } };
+  await act(async () => {
+    await refresh.props.onRefresh();
+  });
+  await settle();
+  expect(reads()).toBe(first + 2);
 });
 
 it('the proof banner shows above the hero from the profile Home read, with the short name only', async () => {

@@ -18,7 +18,9 @@
 // bookings and the profile again (the spinner only shows while there are no
 // venues at all), and at the start of every new tab visit the featured venue
 // rolls again (./useHomeVisit.ts). A pull to refresh reads the venues (the
-// hero holds still), then the bookings and the profile.
+// hero holds still), then the bookings and the profile. Both tell the cards
+// other packages draw here to read again too (the Outside card's sights,
+// ./homeReads.ts).
 //
 // WHERE TAPS GO. Profile (the avatar, the person button, "View") is pushed on
 // Home's own stack; so are a venue and Account (the referral card). The Coach,
@@ -50,6 +52,7 @@ import { colors } from '../../theme';
 import type { Venue } from '../../types/venue';
 import { firstNameOf, greetingKey } from './greeting';
 import { HomeHeaderOnly, HomeHero } from './HomeHeader';
+import { signalHomeReads } from './homeReads';
 import HomeProofBanner from './HomeProofBanner';
 import { HomeVenuesStatus, NearbyShelf, PopularShelf, ReferralCard } from './HomeShelves';
 import { soonestPass } from './passChip';
@@ -119,6 +122,9 @@ export default function HomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      // The cards other packages draw inside Home (the Outside card's sights)
+      // read again with Home (./homeReads.ts).
+      signalHomeReads();
       void (async () => {
         await venuesStore.getState().load();
         // Prompts only while the member has not decided (the store's rule).
@@ -133,6 +139,7 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    signalHomeReads();
     try {
       await venuesStore.getState().load();
       await reloadBookings();
