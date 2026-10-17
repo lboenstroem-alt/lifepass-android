@@ -150,6 +150,24 @@ describe('PrimaryButton (iOS LPPrimaryButton)', () => {
     expect(screen.getByTestId('cta')).toHaveStyle({ backgroundColor: colors.rust, opacity: 0.4 });
   });
 
+  // iOS ClassBookingSheet.confirmButton: the amount is part of Confirm's name
+  // (classsheet.confirm_a11y plus the price line), so TalkBack says what it
+  // charges before the member activates it, busy or not.
+  it('takes a spoken name fuller than its title, and keeps it (with busy) while loading', async () => {
+    const name = 'Confirm booking: Yoga, Fri 18:00. ISK 1,990 charged when you confirm';
+    const view = await render(
+      <PrimaryButton title="Confirm" accessibilityLabel={name} tone="action" shape="booking" onPress={jest.fn()} />,
+    );
+    expect(screen.getByRole('button', { name })).not.toBeBusy();
+    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull();
+    await view.rerender(
+      <PrimaryButton title="Confirm" accessibilityLabel={name} tone="action" shape="booking" loading onPress={jest.fn()} />,
+    );
+    const button = screen.getByRole('button', { name });
+    expect(button).toBeBusy();
+    expect(button).toBeDisabled();
+  });
+
   it("takes the booking flows' geometry: radius 12, about 48 tall, no shadow", async () => {
     await render(<PrimaryButton title="Confirm" onPress={jest.fn()} tone="action" shape="booking" testID="cta" />);
     expect(screen.getByTestId('cta')).toHaveStyle({ borderRadius: 12, minHeight: 48, paddingVertical: 14, elevation: 0 });

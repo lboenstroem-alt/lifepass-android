@@ -3,6 +3,8 @@
  *   MealItemMathTests (HealthFormat.parseDecimal / parseInt vectors)
  *   TargetWeightValidationTests ("72,5" equals "72.5")
  *   WeeklyCheckInSheet.stepWeight (step, round, refuse outside the range)
+ *   BodySheet.stepHeight / stepCustomKcal (whole-number fields, parseInt)
+ *   HealthFormat.decimal (NumberFormatter: half to even, on the decimal)
  */
 import {
   decimalsOf,
@@ -61,6 +63,33 @@ describe('formatDecimalInput (HealthFormat.decimal, without grouping)', () => {
     expect(formatDecimalInput(2.25, 'en', 2)).toBe('2.25');
     expect(formatDecimalInput(-0.01, 'en')).toBe('0');
   });
+
+  // NumberFormatter's default rounding is half to even, applied to the
+  // shortest decimal of the value (ICU), so a stored 72.35 kg prefills as
+  // 72.4 on iOS although 72.35 * 10 is 723.4999... as a float.
+  it('rounds half to even on the decimal, as NumberFormatter does', () => {
+    expect(formatDecimalInput(72.25, 'en')).toBe('72.2');
+    expect(formatDecimalInput(72.35, 'en')).toBe('72.4');
+    expect(formatDecimalInput(72.25, 'is')).toBe('72,2');
+    expect(formatDecimalInput(72.35, 'is')).toBe('72,4');
+    expect(formatDecimalInput(72.26, 'en')).toBe('72.3');
+    expect(formatDecimalInput(72.251, 'en')).toBe('72.3');
+    expect(formatDecimalInput(0.5, 'en', 0)).toBe('0');
+    expect(formatDecimalInput(1.5, 'en', 0)).toBe('2');
+    expect(formatDecimalInput(2.5, 'en', 0)).toBe('2');
+    expect(formatDecimalInput(-72.35, 'en')).toBe('-72.4');
+    expect(formatDecimalInput(1.005, 'en', 2)).toBe('1');
+    expect(formatDecimalInput(9.96, 'en')).toBe('10');
+    expect(formatDecimalInput(99.95, 'en')).toBe('100');
+  });
+
+  it('writes very small and very large numbers plainly', () => {
+    expect(formatDecimalInput(0.05, 'en')).toBe('0');
+    expect(formatDecimalInput(0.15, 'en')).toBe('0.2');
+    expect(formatDecimalInput(1e-7, 'en', 3)).toBe('0');
+    expect(formatDecimalInput(1.5e21, 'en', 0)).toBe('1500000000000000000000');
+    expect(formatDecimalInput(0, 'is')).toBe('0');
+  });
 });
 
 describe('stepText (WeeklyCheckInSheet.stepWeight)', () => {
@@ -81,6 +110,20 @@ describe('stepText (WeeklyCheckInSheet.stepWeight)', () => {
   it('refuses a step out of range (the field keeps its value; it is not clamped)', () => {
     expect(stepText('400', 1, { ...weight, language: 'en' })).toBeNull();
     expect(stepText('20', -1, { ...weight, language: 'en' })).toBeNull();
+  });
+
+  // iOS BodySheet.stepHeight: HealthFormat.parseInt(heightText) ?? prefilled.
+  it('a whole-number field reads the field as a whole number, else steps from the fallback', () => {
+    const height = { step: 1, min: 100, max: 250, fallback: 170, integer: true, language: 'en' as const };
+    expect(stepText('170.5', 1, height)).toBe('171');
+    expect(stepText('180', 1, height)).toBe('181');
+    expect(stepText('', -1, height)).toBe('169');
+    expect(stepText('250', 1, height)).toBeNull();
+    // stepCustomKcal: 50 kcal inside 1,000 to 5,000, printed without grouping.
+    const kcal = { step: 50, min: 1000, max: 5000, fallback: 2000, integer: true, language: 'is' as const };
+    expect(stepText('2,5', 1, kcal)).toBe('2050');
+    expect(stepText('1950', 1, kcal)).toBe('2000');
+    expect(stepText('1000', -1, kcal)).toBeNull();
   });
 
   it('whole steps print whole numbers', () => {
