@@ -13,6 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen } from '@testing-library/react-native';
 
 import { handleNotificationResponse, useNotificationRouter } from '../../app/notificationRouter';
+import { usePlanShell } from '../../features/plan/shell';
 import { setAnalyticsObserver, type AnalyticsParams } from '../../lib/analytics';
 import { useAppStore } from '../../stores/appStore';
 import { useIntentStore } from '../../stores/intentStore';
@@ -182,7 +183,10 @@ describe('a notification tap', () => {
     tapNotification('plan.checkin');
     await renderShell();
     expect(currentTab()).toBe('Plan');
-    expect(useIntentStore.getState().takePlanAction()?.action).toEqual({ kind: 'openWeeklyCheckIn' });
+    // Plan's screen (PLAN-1) takes the action off the intent store as it
+    // appears and holds it until its read can answer it.
+    const planAction = usePlanShell.getState().parked?.action ?? useIntentStore.getState().takePlanAction()?.action;
+    expect(planAction).toEqual({ kind: 'openWeeklyCheckIn' });
     // iOS testANotificationStillRoutesFromALaunchOntoExplore.
     expect(screen.queryByText(/^Explore, filters/, { includeHiddenElements: true })).toBeNull();
     expect(useIntentStore.getState().exploreLaunchPresentation).toBe(false);

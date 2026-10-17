@@ -7,13 +7,22 @@
 //   a failed-outbox list and whose bookings hint is showing all belong to the
 //   member who left; none of it may greet the next one (iOS drops PlanView's
 //   state with the signed-in views).
+// - The intro card's Not now, as remembered in memory: the stored flag
+//   (`plan.intro.collapsed.<id>`) is health use and goes with the health wipe
+//   (src/health/localKeys.ts), and the memory goes with it, so a member who
+//   withdrew and consented again is offered the full card, as on iOS.
 //
 // Kept on the phone, as on iOS: the bookings hint's visit count and "found
-// Profile" flag (per member, not health data). The intro card's Not now
-// (`plan.intro.collapsed.<id>`) is health use and goes with the health wipe
-// (src/health/localKeys.ts).
+// Profile" flag (per member, not health data).
 import { registerSignOutCleaner } from '../../app/signOut';
+import { registerHealthWipeHook } from '../../health';
 
+import { forgetIntroCollapse } from './intro/introCollapse';
 import { resetPlanShell } from './shell/planShell';
 
-registerSignOutCleaner('plan.shell', () => resetPlanShell());
+registerSignOutCleaner('plan.shell', () => {
+  resetPlanShell();
+  forgetIntroCollapse();
+});
+
+registerHealthWipeHook('plan.intro-collapse', () => forgetIntroCollapse());
