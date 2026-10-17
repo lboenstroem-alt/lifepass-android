@@ -44,7 +44,7 @@ import {
   type PlanAttemptContext,
   type WalkInAttemptContext,
 } from './inflight';
-import { verifyPlanCheckout, type PlanVerification } from './planVerification';
+import { profileConfirmsPurchase, type PlanVerification } from './planVerification';
 import { presentResolution, shouldPresent } from './presenters';
 import { settleRecord, type Settled } from './resolve';
 
@@ -317,9 +317,13 @@ export async function checkoutOnHostedPage(input: CheckoutOnHostedPageInput): Pr
   return { kind: 'verified', verification, presented };
 }
 
-/** Re-runs a plan's verification on its own (the "Completed your purchase? Tap to check" chip). */
-export function recheckPlanPurchase(plan: PlanAttemptContext): Promise<PlanVerification> {
-  return verifyPlanCheckout(null, plan, 'done');
+/**
+ * The "Completed your purchase? Tap to check" chip (iOS `recheckPurchase`):
+ * two profile reads, a short check the member asked for. Confirmed, or still
+ * unverified (the chip stays).
+ */
+export async function recheckPlanPurchase(plan: PlanAttemptContext): Promise<PlanVerification> {
+  return (await profileConfirmsPurchase(plan, 2)) ? { kind: 'confirmed' } : { kind: 'unverified' };
 }
 
 // ---------------------------------------------------------------------------

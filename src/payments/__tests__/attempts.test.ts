@@ -144,6 +144,12 @@ describe('plan checkout', () => {
     api.on('GET', '/subscriptions', Reply.ok(PLUS_SUBSCRIPTION));
     await expect(recheckPlanPurchase(plan)).resolves.toEqual({ kind: 'confirmed' });
   });
+
+  it('the chip is a short check: two profile reads, and the chip stays when nothing shows (iOS recheckPurchase)', async () => {
+    await expect(recheckPlanPurchase(plan)).resolves.toEqual({ kind: 'unverified' });
+    expect(api.sentAll('/profile', 'GET')).toHaveLength(2);
+    expect(api.sentAll('/payments/status')).toHaveLength(0);
+  });
 });
 
 describe('co-pay', () => {
