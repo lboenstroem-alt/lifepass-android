@@ -171,7 +171,7 @@ describe('the session body', () => {
     expect(plain.activityId).toBe(activityId.toLowerCase());
   });
 
-  it('every key any shape sends is one the contract declares', () => {
+  it('every key any shape sends is one the contract declares, and together they are all of them', () => {
     const declared = new Set(requestBodyKeys('POST', '/bookings/payment-sessions').properties);
     const shapes: PaymentSessionInput[] = [
       { kind: 'class', activityId, eventId: 1, acceptedChargeAmountIsk: 1 },
@@ -187,8 +187,23 @@ describe('the session body', () => {
       },
       { kind: 'walk_in', activityId: null, venueId, acceptedChargeAmountIsk: 1, guestAgeBands: ['infant'] },
     ];
+    const sent = new Set<string>();
     for (const shape of shapes) {
-      for (const key of Object.keys(paymentSessionBody(shape))) expect(declared).toContain(key);
+      for (const key of Object.keys(paymentSessionBody(shape))) {
+        expect(declared).toContain(key);
+        sent.add(key);
+      }
+    }
+    // And together the three shapes use every key the contract has: nothing
+    // the server reads (a party, a rung, an attendance choice) is dropped.
+    expect([...sent].sort()).toEqual([...declared].sort());
+    expect(requestBodyKeys('POST', '/bookings/payment-sessions').required.sort()).toEqual(
+      ['acceptedChargeAmountIsk', 'activityId', 'kind'].sort(),
+    );
+    for (const shape of shapes) {
+      expect(Object.keys(paymentSessionBody(shape))).toEqual(
+        expect.arrayContaining(['kind', 'activityId', 'acceptedChargeAmountIsk']),
+      );
     }
   });
 });
