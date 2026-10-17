@@ -11,6 +11,9 @@
  * A new feature folder adds its line here (F3 owns this file; ask for the
  * line in a contract request). Health Connect is not built (owner decision),
  * so it has no line.
+ *
+ * Shared layers with no feature folder register at the bottom of this file
+ * when they hold something of the member's above the navigator.
  */
 import '../features/account/register';
 import '../features/attractions/register';
@@ -31,6 +34,10 @@ import '../features/plan/register';
 import '../features/plans/register';
 import '../features/runner/register';
 import '../features/venue/register';
+
+import { resetUiKit } from '../components/ui/reset';
+
+import { registerSignOutCleaner } from './signOut';
 
 /** The feature areas loaded above, for the test that every register file is listed. */
 export const REGISTERED_FEATURE_AREAS: readonly string[] = [
@@ -54,3 +61,13 @@ export const REGISTERED_FEATURE_AREAS: readonly string[] = [
   'runner',
   'venue',
 ];
+
+/**
+ * The UI kit (F5, contract request): its dialog and toast hosts sit ABOVE the
+ * navigator and outlive the switch to the sign-in screens. A confirm queued
+ * for the member who left (its buttons bound to their booking or meal) or a
+ * toast about their data must never reach the next person on the phone. iOS
+ * drops them with the signed-in views it tears down. No button's action runs.
+ * Every sign-out, forced ones after a 401 included, runs the cleaners.
+ */
+registerSignOutCleaner('ui-kit', () => resetUiKit());
