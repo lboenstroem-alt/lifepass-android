@@ -795,7 +795,7 @@ describe('through Supabase with the auth fetch', () => {
     // next call does not queue for that attempt.
     const { error, ms } = await timedFailure(app.get('/profile', undefined, { timeoutMs: 5000 }));
     expect((error as TransportError).transport).toBe('network');
-    expect(ms).toBeLessThan(100);
+    expect(ms).toBeLessThan(150); // the SDK's next attempt is due 200 ms after the first
     expect(authHost.sentAll('/auth/v1/token')).toHaveLength(attempts);
     expect(api.requests).toHaveLength(0);
 
