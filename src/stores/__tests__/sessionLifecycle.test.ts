@@ -17,6 +17,7 @@ import { setEnv } from '@test/harness';
 
 import { stubApiClientPerTest } from '../../api/testing';
 import {
+  PROFILE_READ_HOOK_BUDGET_MS,
   registerActivationHook,
   registerPreSignOutHook,
   registerProfileReadHook,
@@ -267,6 +268,51 @@ describe('launch', () => {
     await store().loadProfile();
     expect(seen).toEqual([`${MEMBER_A}:Anna`, `${MEMBER_A}:Anna B`]);
   });
+  it('a profile-read hook that never settles holds the launch screen for its budget only', async () => {
+    let called = false;
+    unregister.push(
+      registerProfileReadHook('test.hung', () => {
+        called = true;
+        return new Promise<void>(() => undefined);
+      }),
+    );
+    await storeSession(MEMBER_A);
+    serveMember();
+    // Only the timeouts are faked: the reads still go through.
+    jest.useFakeTimers({
+      doNotFake: [
+        'Date',
+        'nextTick',
+        'queueMicrotask',
+        'setImmediate',
+        'clearImmediate',
+        'setInterval',
+        'clearInterval',
+        'performance',
+        'hrtime',
+      ],
+    });
+    const turns = async (until: () => boolean) => {
+      for (let i = 0; i < 200 && !until(); i += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    };
+    try {
+      const launch = store().bootstrap();
+      await turns(() => called);
+      expect(called).toBe(true);
+      expect(store().profile?.id).toBe(MEMBER_A);
+      await jest.advanceTimersByTimeAsync(PROFILE_READ_HOOK_BUDGET_MS - 1);
+      expect(store().isLoading).toBe(true);
+      await jest.advanceTimersByTimeAsync(1);
+      // Never `await launch` before it is known to be done: a launch that
+      // hangs must fail this test, not every test after it.
+      await turns(() => !store().isLoading);
+      expect(store().isLoading).toBe(false);
+      expect(store().isAuthenticated).toBe(true);
+      await launch;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
 
 describe('sign-in', () => {
@@ -309,6 +355,33 @@ describe('sign-in', () => {
     expect(api.sentAll('/profile', 'GET')).toHaveLength(1);
   });
 
+  it('a sign-in that lands while launch finds no stored session (an auth link that opened a signed-out phone) signs the member in once', async () => {
+    serveMember();
+    authHost.on('GET', '/auth/v1/user', Reply.json(200, sessionJSON(MEMBER_A, 3600).user));
+    // Launch asks for the session before the link's session is stored, and hears "none".
+    let answer!: (value: Awaited<ReturnType<typeof supabase.auth.getSession>>) => void;
+    const getSession = jest
+      .spyOn(supabase.auth, 'getSession')
+      .mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    try {
+      const launch = store().bootstrap();
+      await settle();
+      const session = sessionJSON(MEMBER_A, 3600);
+      await supabase.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
+      await settle();
+      expect(store().isAuthenticated).toBe(false);
+      answer({ data: { session: null }, error: null });
+      await launch;
+      await settle(10);
+      expect(store().isAuthenticated).toBe(true);
+      expect(store().userId).toBe(MEMBER_A);
+      expect(store().isLoading).toBe(false);
+      expect(api.sentAll('/profile', 'GET')).toHaveLength(1);
+    } finally {
+      getSession.mockRestore();
+    }
+  });
+
   it('an announced sign-in and its SIGNED_IN are one sign-in', async () => {
     await store().bootstrap();
     serveMember();
@@ -321,18 +394,27 @@ describe('sign-in', () => {
     expect(store().session?.access_token).toBe(session.access_token);
   });
 
-  it("another member signing in never sees the last member's profile", async () => {
-    serveMember({ fullName: 'Anna' });
+  it("another member signing in never sees the last member's profile, or the Kenni nudge armed for them", async () => {
+    // A fresh, unverified account: its nudge is armed.
+    serveMember({ fullName: 'Anna', kennitalaVerified: false, createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() });
     await store().handleSignIn(MEMBER_A);
     expect(store().profile?.fullName).toBe('Anna');
+    expect(store().pendingKennitalaPrompt).toBe(true);
     let profileWhileB: unknown = 'unread';
+    let nudgeWhileB: boolean | null = null;
     api.on('GET', '/profile', () => {
       profileWhileB = store().profile;
-      return Reply.ok(profileJSON({ id: MEMBER_B, fullName: 'Björn', kennitalaVerified: true }));
+      nudgeWhileB = store().pendingKennitalaPrompt;
+      return Reply.ok(
+        profileJSON({ id: MEMBER_B, fullName: 'Björn', kennitalaVerified: true, createdAt: '2025-03-01T09:00:00Z' }),
+      );
     });
+    // An auth link for a verified, older account, opened with no sign-out in between.
     await store().handleSignIn(MEMBER_B);
     expect(profileWhileB).toBeNull();
+    expect(nudgeWhileB).toBe(false);
     expect(store().profile?.fullName).toBe('Björn');
+    expect(store().pendingKennitalaPrompt).toBe(false);
   });
 
   it("another member signing in never keeps the last member's plan, even when that member's profile never loaded", async () => {

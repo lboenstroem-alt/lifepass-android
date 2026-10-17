@@ -9,11 +9,13 @@
  * English; and every error without its own copy was the server's English.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState } from 'react-native';
 
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../api/testing';
 import { currentLanguage, deviceLanguage } from '../../i18n';
+import { supabase } from '../../supabase/lib/client';
 import {
   ACCOUNT_LANGUAGE_KEY,
   deriveLanguage,
@@ -41,6 +43,28 @@ describe('before and without the profile', () => {
     resetAppStoreForTests();
     expect(store().language).toBe('is');
     expect(currentLanguage()).toBe('is');
+  });
+
+  it('a language changed in Settings while the app was away is spoken on the return (Android keeps the JS runtime)', async () => {
+    phoneLanguage('en');
+    resetAppStoreForTests();
+    const start = jest.spyOn(supabase.auth, 'startAutoRefresh').mockResolvedValue();
+    const stop = jest.spyOn(supabase.auth, 'stopAutoRefresh').mockResolvedValue();
+    try {
+      await store().bootstrap();
+      expect(store().isAuthenticated).toBe(false);
+      expect(store().language).toBe('en');
+      const onChange = jest.mocked(AppState.addEventListener).mock.calls.at(-1)![1] as (state: string) => void;
+
+      onChange('background');
+      phoneLanguage('is');
+      onChange('active');
+      expect(store().language).toBe('is');
+      expect(currentLanguage()).toBe('is');
+    } finally {
+      start.mockRestore();
+      stop.mockRestore();
+    }
   });
 
   it('a failed profile read keeps the last known account language', async () => {

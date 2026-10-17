@@ -68,3 +68,82 @@ it('the store loads whole when a register file is what reaches it first', async 
     expect(seen.at(-1)).toBe(false);
   });
 });
+
+/**
+ * One register file that throws while it loads (a native module missing on
+ * one phone, say) loses its own hooks and nothing else. With plain imports
+ * the throw stopped every register file after it and the UI kit's cleaner,
+ * and sign-out quietly kept the Coach's saved chats for the next account.
+ */
+describe('a register file that throws while it loads', () => {
+  const BODY_REGISTER = '../../features/body/register';
+  const UI_KIT_RESET = '../../components/ui/reset';
+
+  afterEach(() => {
+    jest.dontMock(BODY_REGISTER);
+    jest.dontMock(UI_KIT_RESET);
+  });
+
+  it('costs only its own hooks: the Coach and the UI kit still wipe at sign-out, and the failure is reported', async () => {
+    await jest.isolateModulesAsync(async () => {
+      const resetUiKit = jest.fn();
+      jest.doMock(BODY_REGISTER, () => {
+        throw new Error('native module missing');
+      });
+      jest.doMock(UI_KIT_RESET, () => ({ resetUiKit }));
+      /* eslint-disable @typescript-eslint/no-require-imports */
+      // This registry's copy of the storage mock: the one the Coach's register file writes to.
+      type Storage = typeof import('@react-native-async-storage/async-storage').default;
+      const storage = require('@react-native-async-storage/async-storage') as Storage | { default: Storage };
+      const AsyncStorage = 'default' in storage ? storage.default : storage;
+      const analytics = require('../../lib/analytics') as typeof import('../../lib/analytics');
+      const store = require('../appStore') as AppStoreModule;
+      const hooks = require('../../app/signOut') as SignOutModule;
+      const coach = require('../../features/coach/register') as typeof import('../../features/coach/register');
+      /* eslint-enable @typescript-eslint/no-require-imports */
+
+      const reported: string[] = [];
+      analytics.setAnalyticsObserver((event, params) => {
+        if (event === 'service_error') reported.push(String(params.op));
+      });
+      try {
+        const ids = hooks.registeredHookIds();
+        expect(reported).toEqual(['register_body']);
+        expect(ids.signIn).toContain('coach.sessions');
+        expect(ids.signOut).toEqual(expect.arrayContaining(['coach.sessions', 'ui-kit', 'venues.list']));
+
+        const member = '8c2c1b36-2a7e-4b1f-9e0e-2f1c4f0a9c11';
+        await hooks.runSignInHooks({ userId: member, restoredSession: false });
+        await AsyncStorage.setItem(coach.COACH_SESSIONS_KEY, JSON.stringify([{ id: 's-1', messages: [] }]));
+        store.useAppStore.setState({ isAuthenticated: true, userId: member });
+        await store.useAppStore.getState().handleSignOut();
+
+        expect(await AsyncStorage.getItem(coach.COACH_SESSIONS_KEY)).toBeNull();
+        expect(resetUiKit).toHaveBeenCalledTimes(1);
+      } finally {
+        analytics.setAnalyticsObserver(null);
+      }
+    });
+  });
+
+  it('every area in the list loads its own register file', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { REGISTERED_FEATURE_AREAS } = require('../../app/registrations') as typeof import('../../app/registrations');
+    const loaded: string[] = [];
+    await jest.isolateModulesAsync(async () => {
+      for (const area of REGISTERED_FEATURE_AREAS) {
+        jest.doMock(`../../features/${area}/register`, () => {
+          loaded.push(area);
+          return {};
+        });
+      }
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        (require('../../app/signOut') as SignOutModule).registeredHookIds();
+      } finally {
+        for (const area of REGISTERED_FEATURE_AREAS) jest.dontMock(`../../features/${area}/register`);
+      }
+    });
+    expect(loaded).toEqual([...REGISTERED_FEATURE_AREAS]);
+  });
+});
