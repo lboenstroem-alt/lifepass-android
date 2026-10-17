@@ -133,6 +133,21 @@ export default function UiKitScreen() {
               })
             }
           />
+          <PrimaryButton
+            title="Action sheet (confirmationDialog)"
+            onPress={() =>
+              showDialog({
+                presentation: 'actionSheet',
+                titleVisibility: 'visible',
+                title: 'Delete this meal?',
+                message: 'It is removed from your food log.',
+                buttons: [
+                  { label: 'Delete meal', role: 'destructive' },
+                  { label: 'Cancel', role: 'cancel' },
+                ],
+              })
+            }
+          />
           <PrimaryButton title="Toast" onPress={() => showToast('Saved to lunch', { action: { label: 'Food diary', onPress: () => undefined } })} />
           <PrimaryButton title="Meal toast, no action (4 s)" onPress={() => showToast('Saved offline', { kind: 'meal' })} />
           <PrimaryButton title="Health toast (3.2 s)" onPress={() => showToast('Changed on another device')} />

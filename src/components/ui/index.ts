@@ -22,7 +22,7 @@ export { default as Sheet, SHEET_CLOSE_FALLBACK_MS, useSheetOpen } from './Sheet
 export type { SheetProps } from './Sheet';
 export { default as SheetTextInput, useInSheet } from './SheetTextInput';
 export { Dialog, DialogHost, showDialog, dismissAllDialogs, orderButtons } from './Dialog';
-export type { DialogButton, DialogButtonRole, DialogOptions, DialogProps } from './Dialog';
+export type { DialogButton, DialogButtonRole, DialogOptions, DialogPresentation, DialogProps } from './Dialog';
 export { default as ConfirmSheet } from './ConfirmSheet';
 export type { ConfirmSheetProps } from './ConfirmSheet';
 export { ToastHost, showToast, dismissToast, TOAST_MS, MEAL_TOAST_MS, ACTION_TOAST_MS, TOAST_BOTTOM_OFFSET } from './Toast';

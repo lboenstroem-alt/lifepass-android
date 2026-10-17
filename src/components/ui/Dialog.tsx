@@ -1,7 +1,23 @@
 // A dialog with any number of buttons: the Android stand-in for SwiftUI's
-// `.alert` (plan 5.6). Android's own `Alert` caps at three buttons, and iOS
-// asks some questions with five (the runner's Leave dialog), so LifePass
-// draws its own.
+// `.alert` and `.confirmationDialog` (plan 5.6). Android's own `Alert` caps
+// at three buttons, and iOS asks some questions with five (the runner's Leave
+// dialog), so LifePass draws its own.
+//
+// WHICH PRESENTATION. Port the iOS modifier, not the look you want:
+//   .alert(...)                        presentation 'alert' (the default): a
+//                                      card in the middle of the screen
+//   .confirmationDialog(...)           presentation 'actionSheet': a card at
+//                                      the BOTTOM, the title (small) and the
+//                                      message on top, the answers stacked
+//                                      in iOS's order, and the cancel button
+//                                      as a separate block below
+//     titleVisibility: .visible        titleVisibility 'visible'
+//     (no titleVisibility)             'hidden' (the default), as iOS's
+//                                      `.automatic` hides it on a phone
+// e.g. the Account language picker, meal delete and discard, Plan's outbox
+// discard, the venue's directions, the programme proposal's replace and
+// discard. An action sheet also closes on a tap outside or on back, with or
+// without a cancel button, as an iOS confirmation dialog does.
 //
 // Two ways to use it:
 //   showDialog({ title, message, buttons })      anywhere, like Alert.alert;
@@ -35,6 +51,9 @@ import LPText from './LPText';
 
 export type DialogButtonRole = 'default' | 'cancel' | 'destructive';
 
+/** 'alert': iOS `.alert`, centred. 'actionSheet': iOS `.confirmationDialog`, at the bottom. */
+export type DialogPresentation = 'alert' | 'actionSheet';
+
 export type DialogButton = {
   label: string;
   role?: DialogButtonRole;
@@ -54,6 +73,14 @@ export type DialogOptions = {
   cancelable?: boolean;
   /** Called when the dialog closes without a button (back or outside). */
   onDismiss?: () => void;
+  /** Which iOS modifier this ports (see the top of this file). Default 'alert'. */
+  presentation?: DialogPresentation;
+  /**
+   * An action sheet's title: 'visible' where iOS passes
+   * `titleVisibility: .visible`, else 'hidden' (the default, as iOS's
+   * `.automatic` on a phone). An alert always shows its title.
+   */
+  titleVisibility?: 'visible' | 'hidden';
   testID?: string;
 };
 
@@ -80,15 +107,29 @@ export function orderButtons(buttons: DialogButton[]): { stacked: boolean; order
   return { stacked, ordered: stacked ? [...others, ...cancel] : [...cancel, ...others] };
 }
 
-export function Dialog({ visible, onClose, title, message, buttons, cancelable, onDismiss, testID }: DialogProps) {
+export function Dialog({
+  visible,
+  onClose,
+  title,
+  message,
+  buttons,
+  cancelable,
+  onDismiss,
+  presentation = 'alert',
+  titleVisibility = 'hidden',
+  testID,
+}: DialogProps) {
   const reduceMotion = useReduceMotion();
   const window = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const sheet = presentation === 'actionSheet';
   const { stacked, ordered } = orderButtons(buttons);
   const cancelButton = buttons.find((b) => b.role === 'cancel');
-  const mayDismiss = cancelable ?? cancelButton !== undefined;
+  // An iOS confirmation dialog always closes on a tap outside; an alert only with a cancel.
+  const mayDismiss = cancelable ?? (sheet || cancelButton !== undefined);
   // A one-button notice ("Email sent", OK): back acknowledges it.
-  const acknowledgement = cancelable === undefined && !cancelButton && buttons.length === 1 ? buttons[0] : undefined;
+  const acknowledgement =
+    !sheet && cancelable === undefined && !cancelButton && buttons.length === 1 ? buttons[0] : undefined;
   // The scrim is padded clear of the system bars; the card keeps a margin inside that.
   const maxHeight = Math.max(window.height - insets.top - insets.bottom - CARD_MARGIN, 160);
 
@@ -118,6 +159,38 @@ export function Dialog({ visible, onClose, title, message, buttons, cancelable, 
     }
     dismissWithoutButton();
   }, [acknowledgement, dismissWithoutButton, press]);
+
+  if (sheet) {
+    return (
+      <Modal
+        visible={visible}
+        transparent
+        animationType={reduceMotion ? 'none' : 'fade'}
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={onBack}
+        testID={testID}
+      >
+        <View style={[styles.scrim, styles.sheetScrim, { paddingTop: insets.top, paddingBottom: insets.bottom + 8 }]}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={mayDismiss ? dismissWithoutButton : undefined}
+            accessible={false}
+            importantForAccessibility="no"
+          />
+          <ActionSheetCard
+            title={title}
+            showTitle={titleVisibility === 'visible'}
+            message={message}
+            buttons={buttons}
+            onPress={press}
+            maxHeight={maxHeight}
+            testID={testID}
+          />
+        </View>
+      </Modal>
+    );
+  }
 
   return (
     <Modal
@@ -187,6 +260,103 @@ export function Dialog({ visible, onClose, title, message, buttons, cancelable, 
   );
 }
 
+/**
+ * iOS `.confirmationDialog` on a phone: the answers in one rounded group at
+ * the bottom (title and message on top, in the declared order), and the
+ * cancel button in its own block below. The group scrolls at large text; the
+ * cancel block never scrolls away.
+ */
+function ActionSheetCard({
+  title,
+  showTitle,
+  message,
+  buttons,
+  onPress,
+  maxHeight,
+  testID,
+}: {
+  title: string;
+  showTitle: boolean;
+  message?: string;
+  buttons: DialogButton[];
+  onPress: (button: DialogButton) => void;
+  maxHeight: number;
+  testID?: string;
+}) {
+  const answers = buttons.filter((b) => b.role !== 'cancel');
+  const cancel = buttons.find((b) => b.role === 'cancel');
+  const hasHeader = showTitle || !!message;
+  return (
+    <View style={[styles.sheetColumn, { maxHeight }]} accessibilityViewIsModal testID={testID ? `${testID}.sheet` : undefined}>
+      <View style={[styles.sheetGroup, styles.sheetShrink]}>
+        <ScrollView
+          testID={testID ? `${testID}.scroll` : 'dialog.scroll'}
+          bounces={false}
+          overScrollMode="never"
+          showsVerticalScrollIndicator
+        >
+          {hasHeader ? (
+            <View style={styles.sheetHeader}>
+              {showTitle ? (
+                <LPText size={13} weight="semibold" color={colors.paper2} align="center" accessibilityRole="header">
+                  {title}
+                </LPText>
+              ) : null}
+              {message ? (
+                <LPText size={13} color={colors.paper2} align="center">
+                  {message}
+                </LPText>
+              ) : null}
+            </View>
+          ) : null}
+          {answers.map((button, index) => (
+            <SheetButton
+              key={`${index}-${button.label}`}
+              button={button}
+              divider={hasHeader || index > 0}
+              onPress={onPress}
+            />
+          ))}
+        </ScrollView>
+      </View>
+      {cancel ? (
+        <View style={styles.sheetGroup} testID={testID ? `${testID}.cancel` : undefined}>
+          <SheetButton button={cancel} divider={false} onPress={onPress} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function SheetButton({
+  button,
+  divider,
+  onPress,
+}: {
+  button: DialogButton;
+  divider: boolean;
+  onPress: (button: DialogButton) => void;
+}) {
+  return (
+    <Pressable
+      testID={button.testID}
+      onPress={() => onPress(button)}
+      accessibilityRole="button"
+      accessibilityLabel={button.label}
+      style={({ pressed }) => [styles.sheetButton, divider && styles.stackDivider, pressed && styles.pressed]}
+    >
+      <LPText
+        size={17}
+        weight={button.role === 'cancel' ? 'semibold' : 'regular'}
+        color={button.role === 'destructive' ? colors.destructive : colors.accentText}
+        align="center"
+      >
+        {button.label}
+      </LPText>
+    </Pressable>
+  );
+}
+
 // ─── App-wide host ──────────────────────────────────────────────────
 
 type QueuedDialog = DialogOptions & { id: number };
@@ -251,4 +421,11 @@ const styles = StyleSheet.create({
   rowDivider: { borderLeftWidth: hairline, borderLeftColor: colors.line },
   stackDivider: { borderTopWidth: hairline, borderTopColor: colors.line },
   pressed: { backgroundColor: colors.ink3 },
+  // The action sheet: at the bottom, 8 from the edges, the cancel block 8 below the group.
+  sheetScrim: { justifyContent: 'flex-end', paddingHorizontal: 8 },
+  sheetColumn: { width: '100%', maxWidth: 480, gap: 8 },
+  sheetGroup: { backgroundColor: colors.ink, borderRadius: 14, overflow: 'hidden', elevation: 12 },
+  sheetShrink: { flexShrink: 1 },
+  sheetHeader: { paddingHorizontal: 16, paddingVertical: 14, gap: 4 },
+  sheetButton: { minHeight: 56, justifyContent: 'center', paddingHorizontal: 16, paddingVertical: 10 },
 });

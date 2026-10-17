@@ -148,6 +148,127 @@ it('draws nothing while hidden', async () => {
   expect(screen.queryByText('Hidden')).toBeNull();
 });
 
+describe("presentation 'actionSheet' (iOS .confirmationDialog)", () => {
+  const discard = (spy: jest.Mock): DialogButton[] => [
+    { label: 'Cancel', role: 'cancel', onPress: () => spy('cancel') },
+    { label: 'Discard', role: 'destructive', onPress: () => spy('discard') },
+  ];
+
+  it('sits at the bottom: title and message on top, the answers, then Cancel in its own block', async () => {
+    await render(
+      <Dialog
+        visible
+        onClose={jest.fn()}
+        presentation="actionSheet"
+        titleVisibility="visible"
+        title="Discard this workout?"
+        message="It was not saved."
+        buttons={discard(jest.fn())}
+        testID="dialog"
+      />,
+    );
+    const scrim = screen.getByTestId('dialog.sheet').parent!;
+    expect(StyleSheet.flatten(scrim.props.style)).toMatchObject({ justifyContent: 'flex-end' });
+    const group = screen.getByTestId('dialog.scroll');
+    expect(within(group).getByRole('header', { name: 'Discard this workout?' })).toBeOnTheScreen();
+    expect(within(group).getByText('It was not saved.')).toBeOnTheScreen();
+    expect(within(group).getByRole('button', { name: 'Discard' })).toBeOnTheScreen();
+    // Cancel is declared first, but drawn apart, below the group.
+    expect(within(group).queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(within(screen.getByTestId('dialog.cancel')).getByRole('button', { name: 'Cancel' })).toBeOnTheScreen();
+  });
+
+  it("keeps the answers in iOS's declared order", async () => {
+    await render(
+      <Dialog
+        visible
+        onClose={jest.fn()}
+        presentation="actionSheet"
+        title="Language"
+        buttons={[
+          { label: 'English' },
+          { label: 'Íslenska' },
+          { label: 'Cancel', role: 'cancel' },
+        ]}
+      />,
+    );
+    expect(screen.getAllByRole('button').map((b) => b.props.accessibilityLabel)).toEqual(['English', 'Íslenska', 'Cancel']);
+  });
+
+  it("hides the title unless asked, as iOS's default titleVisibility does on a phone", async () => {
+    await render(
+      <Dialog
+        visible
+        onClose={jest.fn()}
+        presentation="actionSheet"
+        title="Get directions"
+        buttons={[{ label: 'Google Maps' }, { label: 'Cancel', role: 'cancel' }]}
+      />,
+    );
+    expect(screen.queryByText('Get directions')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Google Maps' })).toBeOnTheScreen();
+  });
+
+  it('a press closes it, then runs the answer', async () => {
+    const spy = jest.fn();
+    const onClose = jest.fn(() => spy('close'));
+    await render(
+      <Dialog visible onClose={onClose} presentation="actionSheet" title="Discard?" buttons={discard(spy)} />,
+    );
+    await fireEvent.press(screen.getByRole('button', { name: 'Discard' }));
+    expect(spy.mock.calls.map(([what]) => what)).toEqual(['close', 'discard']);
+  });
+
+  it('back presses Cancel', async () => {
+    const spy = jest.fn();
+    await render(
+      <Dialog visible onClose={jest.fn()} presentation="actionSheet" title="Discard?" buttons={discard(spy)} testID="dialog" />,
+    );
+    await fireEvent(screen.getByTestId('dialog'), 'requestClose');
+    expect(spy).toHaveBeenCalledWith('cancel');
+    expect(spy).not.toHaveBeenCalledWith('discard');
+  });
+
+  it('without a cancel button, back still closes it with no answer, as a tap outside does on iOS', async () => {
+    const onClose = jest.fn();
+    const onDismiss = jest.fn();
+    const pick = jest.fn();
+    await render(
+      <Dialog
+        visible
+        onClose={onClose}
+        onDismiss={onDismiss}
+        presentation="actionSheet"
+        title="Get directions"
+        buttons={[{ label: 'Google Maps', onPress: pick }]}
+        testID="dialog"
+      />,
+    );
+    await fireEvent(screen.getByTestId('dialog'), 'requestClose');
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(pick).not.toHaveBeenCalled();
+  });
+
+  it('showDialog takes the presentation too', async () => {
+    await render(<DialogHost />);
+    await act(async () => {
+      showDialog({
+        presentation: 'actionSheet',
+        titleVisibility: 'visible',
+        title: 'Delete meal?',
+        buttons: [
+          { label: 'Delete', role: 'destructive' },
+          { label: 'Cancel', role: 'cancel' },
+        ],
+        testID: 'dialog',
+      });
+    });
+    expect(screen.getByTestId('dialog.cancel')).toBeOnTheScreen();
+    expect(screen.getByRole('header', { name: 'Delete meal?' })).toBeOnTheScreen();
+  });
+});
+
 describe('showDialog and the host', () => {
   it('shows a dialog from anywhere, one at a time, in order', async () => {
     const answers: string[] = [];
