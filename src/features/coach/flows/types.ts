@@ -1,4 +1,4 @@
-// @f4-stub (plan 3.0.3): how a Coach flow plugs into COACH-1's send pipeline; COACH-1 owns this file.
+// How a Coach flow plugs into COACH-1's store (plan 3.0.3); COACH-1 owns this file.
 //
 // iOS `CoachViewModel.send(_:detectPlanRequest:detectScheduleQuestion:)` runs
 // ONE ordered pipeline for every typed message. Each step is either a flow
@@ -41,9 +41,28 @@
 //
 // A flow is a module that exports a `CoachFlow`. COACH-1's store runs the
 // pipeline (`runSendPipeline`); COACH-2 to COACH-5 fill the four flows. The
-// message renderers are the flow's own bubbles (question chips, plan cards,
-// proposal cards), keyed by the message kind the flow appends.
+// message renderers are the flow's own bubbles (plan cards, proposal cards,
+// multi-selects), keyed by the message kind the flow appends.
+//
+// WHAT A FLOW WORKS WITH. Everything a flow does to the chat goes through the
+// store's host (`coachHost()` in ../store/host.ts): append and update
+// messages (a QUESTION bubble is a message with `options`, drawn by COACH-1's
+// question bubble and answered back through `selectOption` below), the
+// typing dots and the chat generation (`host.busy()`), the AI locks, the
+// model history, and the one-shot routes (Plans, Account, the Plan tab). A
+// flow keeps its own state (what it has asked, the answers) and resets it in
+// `abandon` and `reset`.
+//
+// HOW A FLOW IS ENTERED. Typed words reach it through the pipeline above. A
+// tap reaches it through `enter` (a category tile, an empty-state chip, a
+// parked entry from another tab) and `selectOption` (a chip on a question
+// bubble the flow asked: the message carries `flow`, so the tap goes back to
+// the flow that asked it, iOS `selectOption`'s routing). The store checks
+// `!isTyping` and abandons every open question before `enter`, as each iOS
+// entry point does first.
 import type { ComponentType } from 'react';
+
+import type { CoachProgramEntry } from '../../../stores/intentStore';
 
 export type CoachFlowId = 'venueWizard' | 'dayPlan' | 'program' | 'adjust';
 
@@ -95,18 +114,53 @@ export interface CoachStartContext {
   abandonOpenQuestions(): void;
 }
 
-/** A message a flow added to the chat, as COACH-1's store keeps it. */
+/**
+ * A flow's own bubble, as COACH-1's store keeps it (a `CoachMessage` with a
+ * `kind`; see ../store/messages.ts for the whole message).
+ */
 export interface CoachFlowMessage {
   readonly id: string;
   /** Which renderer draws it. */
   readonly kind: string;
   /** The flow's own data for the bubble. */
   readonly payload?: unknown;
+  /** The text the bubble keeps when the chat is saved (a plan's intro), or its caption. */
+  readonly text: string;
+  /** The health lane: never saved, never sent to the model, wiped with the health data. */
+  readonly isHealth?: boolean;
 }
 
 export interface CoachMessageRendererProps {
   readonly message: CoachFlowMessage;
+  /** A reply or a build is in flight (iOS `isBusy: vm.isTyping`): chips that would call out wait. */
+  readonly busy: boolean;
 }
+
+/**
+ * The venue wizard's categories (iOS `venueQuestions` keys): what a category
+ * tile, the strip and the lagoon chip start (`CoachViewModel.wizardCategory`).
+ */
+export type CoachWizardCategory = 'swimming' | 'gym' | 'spa' | 'yoga' | 'golf' | 'lagoon';
+
+/**
+ * A tap that starts a flow (never typed words: those go through the pipeline).
+ *
+ * - `category`: a category tile, the strip after a search, or the lagoon
+ *   chip. The venue wizard, under `userText` (the tile's own label, so an
+ *   Icelandic member sees an Icelandic bubble). iOS `startSearch`.
+ * - `chip`: the empty state's full-width chips: "Plan my day" (the day-plan
+ *   wizard), "Get a 4-week plan" (the programme wizard), "Adjust my plan"
+ *   (Adjust my plan). `userText` is the chip's label for the member's bubble.
+ *   iOS `startPlan(labelKey:)`, `startProgram(entry: .chip)`, `startAdjust()`.
+ * - `parked`: an entry another tab parked (Plan's intro card, Home, the end
+ *   of a block, a feedback line's Adjust). The programme flow takes
+ *   `planTab`, `home` and `nextBlock`; Adjust my plan takes `adjust`. iOS
+ *   `startProgram(parked:)`, after the store has waited out a reply in flight.
+ */
+export type CoachFlowEntry =
+  | { readonly kind: 'category'; readonly category: CoachWizardCategory; readonly userText: string }
+  | { readonly kind: 'chip'; readonly userText: string }
+  | { readonly kind: 'parked'; readonly entry: CoachProgramEntry };
 
 export interface CoachFlow {
   readonly id: CoachFlowId;
@@ -122,6 +176,28 @@ export interface CoachFlow {
   reset(): void;
   /** The flow's bubbles, by message kind. */
   readonly renderers: Readonly<Record<string, ComponentType<CoachMessageRendererProps>>>;
+  /**
+   * A tap that starts this flow (see `CoachFlowEntry`). The store has checked
+   * that no reply is in flight and abandoned every open question first.
+   * Absent: the flow has no button entry (or has not landed yet), and the tap
+   * does nothing.
+   */
+  enter?(entry: CoachFlowEntry): void | Promise<void>;
+  /**
+   * A chip on a question bubble this flow asked (`message.flow === id`):
+   * `value` is the option's wire value, `label` what the member saw (or the
+   * text typed into an "Other" field, for both). The flow checks that the
+   * bubble is still its open question (iOS: "only the CURRENT flow's open
+   * question may answer").
+   */
+  selectOption?(messageId: string, value: string, label: string): void | Promise<void>;
+  /**
+   * The health data on this phone was wiped (tracking switched off, here or
+   * elsewhere; iOS `.healthLocalDataWiped`). The store has already removed
+   * every `isHealth` turn from the chat; a flow that holds health answers
+   * (the programme wizard, Adjust my plan) ends here.
+   */
+  healthWiped?(): void;
 }
 
 /**

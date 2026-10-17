@@ -1,117 +1,121 @@
-import { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-} from 'react-native';
+/* eslint lifepass/no-literal-copy: "error" */
+// A question bubble and its chips (iOS CoachView.swift `QuestionBubbleView`):
+// every wizard's questions draw here, and a tap goes back through the store
+// to the flow that asked (`useCoachStore.selectOption`).
+//
+// - Answered (or abandoned): the chips close; the chosen one stays filled in
+//   the action blue, the others fade to 35%.
+// - "Other" opens an inline field. Where the answer travels to a server with
+//   its own limit (`maxLength`, UTF-16 units), the text is cut to it AS IT IS
+//   TYPED, so the answer the member sees is the answer that is sent.
+//
+// Owned by COACH-1 until COACH-2 lands (plan 3.0.1).
 import { Ionicons } from '@expo/vector-icons';
-import WaveIcon from '../../components/WaveIcon';
-import { colors } from './coachTheme';
+import { useState } from 'react';
+import { Pressable, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
+
+import { LPText } from '../../components/ui';
+import { truncatedToUTF16 } from '../../features/coach/chat/text';
+import { coachPalette } from '../../features/coach/theme/palette';
+import { useT } from '../../i18n';
 import type { QuestionOption } from '../../types/coach';
+import { assistantBubbleStyle, CoachAssistantAvatar } from './MessageBubble';
 
 type Props = {
   question: string;
-  options: QuestionOption[];
+  options: readonly QuestionOption[];
   answered: boolean;
-  selectedAnswer?: string;           // label of the chosen option
+  /** The label of the chip that answered it. */
+  selectedAnswer?: string;
   onSelect: (value: string, label: string) => void;
 };
 
-export default function QuestionBubbleMessage({
-  question,
-  options,
-  answered,
-  selectedAnswer,
-  onSelect,
-}: Props) {
-  const [showOtherInput, setShowOtherInput] = useState(false);
+export default function QuestionBubbleMessage({ question, options, answered, selectedAnswer, onSelect }: Props) {
+  const { t } = useT();
+  const { width } = useWindowDimensions();
+  const [showOther, setShowOther] = useState(false);
   const [otherText, setOtherText] = useState('');
+  const otherLimit = options.find((option) => option.isOther)?.maxLength;
 
-  function submitOther() {
-    const text = otherText.trim();
+  const changeOther = (typed: string) => {
+    setOtherText(otherLimit === undefined ? typed : truncatedToUTF16(typed, otherLimit));
+  };
+
+  const submitOther = () => {
+    let text = otherText.trim();
+    // Belt and braces with the live cap: whatever reaches the flow is inside the limit.
+    if (otherLimit !== undefined) text = truncatedToUTF16(text, otherLimit);
     if (!text) return;
     onSelect(text, text);
-  }
+  };
 
   return (
     <View style={styles.root}>
-      {/* Question bubble */}
       <View style={styles.row}>
-        <View style={styles.avatar}>
-          <WaveIcon size={12} color={colors.paper} />
-        </View>
-        <View style={styles.bubble}>
-          <Text style={styles.questionText}>{question}</Text>
+        <CoachAssistantAvatar size={24} />
+        <View style={[styles.bubble, assistantBubbleStyle, { maxWidth: width * 0.75 }]}>
+          <LPText size={14} color={coachPalette.textPrimary} style={styles.text}>
+            {question}
+          </LPText>
         </View>
       </View>
 
-      {/* Option chips */}
       <View style={styles.chips}>
-        {options.map((opt) => {
-          const isSelected = answered && selectedAnswer === opt.label;
-          const isOtherChip = opt.isOther;
-
-          if (isOtherChip && !answered) {
-            // "Other" chip — toggles inline text input
-            return (
-              <View key="other" style={styles.otherWrap}>
-                {!showOtherInput ? (
-                  <TouchableOpacity
-                    style={styles.chip}
-                    onPress={() => setShowOtherInput(true)}
-                    activeOpacity={0.75}
+        {options.map((option) => {
+          if (option.isOther && !answered) {
+            if (showOther) {
+              return (
+                <View key={`other-${option.value}`} style={styles.otherRow}>
+                  <TextInput
+                    value={otherText}
+                    onChangeText={changeOther}
+                    placeholder={t('coach.other.placeholder')}
+                    placeholderTextColor={coachPalette.placeholder}
+                    style={styles.otherInput}
+                    autoFocus
+                    returnKeyType="send"
+                    submitBehavior="blurAndSubmit"
+                    onSubmitEditing={submitOther}
+                    selectionColor={coachPalette.accent}
+                    underlineColorAndroid="transparent"
+                    accessibilityLabel={t('coach.other.label')}
+                    testID="coach.question.other_input"
+                  />
+                  <Pressable
+                    onPress={submitOther}
+                    style={styles.otherSend}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('coach.a11y.send_message')}
+                    hitSlop={8}
                   >
-                    <Text style={styles.chipText}>Other</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.otherInputRow}>
-                    <TextInput
-                      style={styles.otherInput}
-                      value={otherText}
-                      onChangeText={setOtherText}
-                      placeholder="Type here…"
-                      placeholderTextColor={colors.paper4}
-                      autoFocus
-                      returnKeyType="send"
-                      onSubmitEditing={submitOther}
-                    />
-                    <TouchableOpacity
-                      style={styles.otherSendBtn}
-                      onPress={submitOther}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="arrow-forward" size={14} color={colors.ink} />
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
+                    <Ionicons name="arrow-forward" size={14} color="#FFFFFF" />
+                  </Pressable>
+                </View>
+              );
+            }
+            return (
+              <Chip
+                key={`other-${option.value}`}
+                label={t('coach.other.label')}
+                selected={false}
+                dimmed={false}
+                disabled={false}
+                onPress={() => setShowOther(true)}
+              />
             );
           }
-
+          const selected = answered && selectedAnswer === option.label;
           return (
-            <TouchableOpacity
-              key={opt.label}
-              style={[
-                styles.chip,
-                isSelected && styles.chipSelected,
-                answered && !isSelected && styles.chipDimmed,
-              ]}
-              onPress={() => !answered && onSelect(opt.value, opt.label)}
-              activeOpacity={answered ? 1 : 0.75}
+            <Chip
+              key={`${option.value}-${option.label}`}
+              label={option.label}
+              selected={selected}
+              dimmed={answered && !selected}
               disabled={answered}
-            >
-              <Text
-                style={[
-                  styles.chipText,
-                  isSelected && styles.chipTextSelected,
-                  answered && !isSelected && styles.chipTextDimmed,
-                ]}
-              >
-                {opt.label}
-              </Text>
-            </TouchableOpacity>
+              onPress={() => {
+                if (!answered) onSelect(option.value, option.label);
+              }}
+            />
           );
         })}
       </View>
@@ -119,102 +123,81 @@ export default function QuestionBubbleMessage({
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+function Chip({
+  label,
+  selected,
+  dimmed,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  dimmed: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled, selected }}
+      style={({ pressed }) => [
+        styles.chip,
+        selected && styles.chipSelected,
+        dimmed && styles.chipDimmed,
+        pressed && !disabled && styles.chipPressed,
+      ]}
+    >
+      <LPText
+        size={13}
+        weight={selected ? 'semibold' : 'medium'}
+        color={selected ? '#FFFFFF' : dimmed ? coachPalette.textMeta : coachPalette.textPrimary}
+      >
+        {label}
+      </LPText>
+    </Pressable>
+  );
+}
 
 const styles = StyleSheet.create({
-  root: { gap: 10 },
-
-  row: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 16,
-  },
-  avatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  bubble: {
-    maxWidth: '82%',
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-    borderRadius: 16,
-    borderTopLeftRadius: 4,
-    // Opaque near-white so the AI's (dark) question text stays readable.
-    backgroundColor: 'rgba(255,255,255,0.94)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(15,23,42,0.06)',
-  },
-  questionText: {
-    fontSize: 14,
-    color: colors.ink,
-    lineHeight: 20,
-  },
-
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingHorizontal: 16,
-  },
-
+  root: { gap: 10, alignSelf: 'stretch' },
+  row: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  bubble: { paddingHorizontal: 13, paddingVertical: 9, flexShrink: 1 },
+  text: { lineHeight: 20 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 14,
     paddingVertical: 8,
+    minHeight: 36,
+    justifyContent: 'center',
     borderRadius: 999,
-    backgroundColor: colors.ink4,
+    backgroundColor: coachPalette.tile,
     borderWidth: 0.8,
-    borderColor: colors.line2,
+    borderColor: coachPalette.stroke,
   },
-  chipSelected: {
-    backgroundColor: colors.paper,
-    borderColor: colors.paper,
-  },
-  chipDimmed: {
-    opacity: 0.35,
-  },
-  chipText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.paper,
-  },
-  chipTextSelected: {
-    color: colors.ink,
-    fontWeight: '600',
-  },
-  chipTextDimmed: {
-    color: colors.paper3,
-  },
-
-  // "Other" inline input
-  otherWrap: { flexDirection: 'row' },
-  otherInputRow: {
+  chipSelected: { backgroundColor: coachPalette.userBubble, borderColor: coachPalette.userBubble },
+  chipDimmed: { opacity: 0.35 },
+  chipPressed: { opacity: 0.75 },
+  otherRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.ink4,
-    borderRadius: 999,
-    borderWidth: 0.8,
-    borderColor: colors.line2,
+    gap: 6,
     paddingLeft: 14,
     paddingRight: 4,
     paddingVertical: 4,
-    gap: 6,
+    borderRadius: 999,
+    backgroundColor: coachPalette.tile,
+    borderWidth: 0.8,
+    borderColor: coachPalette.stroke,
   },
-  otherInput: {
-    minWidth: 120,
-    fontSize: 13,
-    color: colors.paper,
-  },
-  otherSendBtn: {
+  otherInput: { minWidth: 110, fontSize: 13, color: coachPalette.textPrimary, paddingVertical: 4 },
+  otherSend: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: colors.paper,
+    backgroundColor: coachPalette.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },

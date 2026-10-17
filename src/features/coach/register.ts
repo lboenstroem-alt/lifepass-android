@@ -1,47 +1,41 @@
-// Session hooks for the Coach: its saved chats are this member's typed words,
-// and they must never reach the next account on the phone.
+// Session hooks for the Coach: its saved chats and the chat on screen are
+// this member's typed words, and they must never reach the next account on
+// the phone.
 //
-// Pre-created by F3 (plan 3.0, rule 7) with the claim and forget iOS runs at
-// sign-in and sign-out (CoachViewModel `claimSavedSessions` and
-// `forgetSavedSessions`), over the keys the Coach saves its chats under today
-// (src/coach/chatSessions.ts). COACH-1 takes this file over, and adds the
-// "an open Coach screen drops its recents" half through `onSignedOut`.
+// - SIGN-IN (and a session restored at launch): the saved chats are claimed
+//   (iOS `CoachViewModel.claimSavedSessions`): someone else's are deleted,
+//   chats from before chats had an owner go to a restored session only. A
+//   chat still in memory from another member is dropped.
+// - SIGN-OUT (and an account deletion, which signs out): the saved chats and
+//   their owner are deleted, and the store is reset: messages, counts, locks
+//   and every flow. iOS gets the second half for free (the view model goes
+//   with the tabs); a zustand store outlives them, so it is reset here.
+// - THE LOCAL HEALTH WIPE (tracking switched off, here or on the web): every
+//   health turn leaves the chat on screen (iOS `.healthLocalDataWiped`).
 //
-// Before this, the chats sat in one device-wide key: the next account on the
-// phone saw them in the drawer and could send them to the Coach under its own
-// name.
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
+// Before this, the first build kept the chats in one device-wide key: the
+// next account on the phone saw them in the drawer and could send them to the
+// Coach under its own name.
 import { registerSignInHook, registerSignOutCleaner } from '../../app/signOut';
+import { registerHealthWipeHook } from '../../health';
+import {
+  claimSavedCoachSessions,
+  COACH_SESSIONS_KEY,
+  COACH_SESSIONS_OWNER_KEY,
+  forgetSavedCoachSessions,
+} from './persistence/sessions';
+import { useCoachStore } from './store/coachStore';
 
-/** Where the Coach keeps its saved chats (iOS uses the same key). */
-export const COACH_SESSIONS_KEY = 'coach.sessions.v1';
-/** Whose chats they are: the member id, lower case. */
-export const COACH_SESSIONS_OWNER_KEY = 'coach.sessions.owner';
+export { claimSavedCoachSessions, COACH_SESSIONS_KEY, COACH_SESSIONS_OWNER_KEY, forgetSavedCoachSessions };
 
-/**
- * At sign-in and session restore: the saved chats stay only when they are
- * this member's. Someone else's are deleted. Chats saved before chats had an
- * owner (iOS 2.4.0, and every Android build before this one) go only to a
- * RESTORED session, the member who was signed in when the update arrived; a
- * fresh sign-in never inherits them.
- */
-export async function claimSavedCoachSessions(userId: string, restoredSession: boolean): Promise<void> {
-  const id = userId.toLowerCase();
-  const owner = await AsyncStorage.getItem(COACH_SESSIONS_OWNER_KEY);
-  if (owner === id) return;
-  if (owner !== null || !restoredSession) {
-    await AsyncStorage.removeItem(COACH_SESSIONS_KEY);
-  }
-  await AsyncStorage.setItem(COACH_SESSIONS_OWNER_KEY, id);
-}
+registerSignInHook('coach.sessions', async ({ userId, restoredSession }) => {
+  await claimSavedCoachSessions(userId, restoredSession);
+  useCoachStore.getState().signedIn(userId);
+});
 
-/** Sign-out and an account deletion: the saved chats go, and so does their owner. */
-export async function forgetSavedCoachSessions(): Promise<void> {
-  await AsyncStorage.multiRemove([COACH_SESSIONS_KEY, COACH_SESSIONS_OWNER_KEY]);
-}
+registerSignOutCleaner('coach.sessions', async () => {
+  useCoachStore.getState().resetForSignOut();
+  await forgetSavedCoachSessions();
+});
 
-registerSignInHook('coach.sessions', ({ userId, restoredSession }) =>
-  claimSavedCoachSessions(userId, restoredSession),
-);
-registerSignOutCleaner('coach.sessions', () => forgetSavedCoachSessions());
+registerHealthWipeHook('coach.health-messages', () => useCoachStore.getState().dropHealthMessages());

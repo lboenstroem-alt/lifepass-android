@@ -1,54 +1,22 @@
-export type ChatRole = 'assistant' | 'user';
+// Coach shapes shared outside the Coach's own folder.
+//
+// The Coach's messages, sessions and replies live in src/features/coach
+// (store/messages.ts, persistence/sessions.ts, chat/coachApi.ts). What stays
+// here is the question chip, which the venue wizard's question tables
+// (src/data/coachQuestions.ts, COACH-2) are written in.
 
+/** One chip on a question bubble (iOS `QuestionOption`, Models/CoachQuestions.swift). */
 export interface QuestionOption {
-  label: string;   // displayed on the chip
-  value: string;   // sent to the AI (may differ from label)
-  isOther?: boolean; // shows an inline text input instead
-}
-
-export interface VenueCard {
-  id: string;
-  name: string;
-  location: string;
-  description: string;
-  imageUrl: string;
-  creditCost: number;
-  category: string;
-  // v1 pricing (present when the card was resolved from a real venue;
-  // absent on cards parsed straight from the AI reply) — drives the
-  // "Included" / "from ISK X" pill, same as the iOS coach cards.
-  inBundle?: boolean;
-  surchargePrice?: number;
-  resolvedSurchargePrice?: number;
-  topupPrice?: number;
-  daypassPrice?: number;
-  primaryCategory?: string;
-}
-
-export interface CoachReply {
-  text: string;
-  venueCards?: VenueCard[];
-  searchQuery?: string;
-}
-
-export interface ChatMessage {
-  id: string;
-  role: ChatRole;
-  text: string;
-  createdAt: Date;
-  venueCards?: VenueCard[];
-  searchQuery?: string;
-  // Q&A fields
-  questionOptions?: QuestionOption[];
-  questionAnswered?: boolean;
-  selectedAnswer?: string;
-  // Inline category picker
-  categoryPicker?: boolean;
-  categoryPickerAnswered?: boolean;
-}
-
-export interface SuggestionChip {
-  id: string;
-  text: string;
-  prompt: string;
+  /** What the chip says (already translated). */
+  readonly label: string;
+  /** The wire value the flow reads; never shown. */
+  readonly value: string;
+  /** "Other": the chip opens an inline text field instead of answering. */
+  readonly isOther?: boolean;
+  /**
+   * For an "Other" field whose answer travels to a server with its own
+   * limit: the longest text it will accept, in UTF-16 units (JS string
+   * length). Absent for an answer that stays on the phone.
+   */
+  readonly maxLength?: number;
 }
