@@ -27,7 +27,7 @@ import {
   type KenniSheetOutcome,
 } from '..';
 import { resetKenniSheetRequestsForTests } from '../sheetRequests';
-import { resetKenniWebAuthForTests } from '../webAuth';
+import { resetKenniWebAuthForTests, setKenniLateRedirectGraceForTests } from '../webAuth';
 
 jest.mock('@gorhom/bottom-sheet', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -69,6 +69,7 @@ beforeEach(() => {
   resetAppStoreForTests();
   resetKenniSheetRequestsForTests();
   resetKenniWebAuthForTests();
+  setKenniLateRedirectGraceForTests(0);
   openTab.mockReset();
   jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
   closures = [];
@@ -266,6 +267,28 @@ describe('a kenni-callback link that reached the router', () => {
     await waitFor(() => expect(isKenniSheetRequested()).toBe(false));
     expect(handleKenniCallbackLink(GOOD_CALLBACK)).toBe(true);
     expect(isKenniSheetRequested()).toBe(false);
+  });
+});
+
+describe('a kenni-callback link the tab already completed', () => {
+  it('reaching the router just after the tab closed is never completed again', async () => {
+    signIn();
+    verifiesOnTheServer();
+    const onClose = jest.fn();
+    await render(<KenniNudgeHost />);
+    await act(async () => openKenniSheet({ bodyKey: 'kenni.body', onClose }));
+    await fireEvent.press(screen.getByRole('button', { name: en('kenni.cta') }));
+    await waitFor(() => expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen());
+
+    let handled = false;
+    await act(async () => {
+      handled = handleKenniCallbackLink(GOOD_CALLBACK);
+    });
+    expect(handled).toBe(true);
+    // Still the opener's sheet, still verified, and the state was spent once.
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen();
+    expect(api.sentAll('/auth/kenni/complete')).toHaveLength(1);
   });
 });
 

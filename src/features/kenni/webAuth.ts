@@ -39,7 +39,23 @@
  * reported as `couldNotStart` rather than opening a second tab (iOS
  * `ResumeOnce`: a sheet stuck on its spinner is the gate to a plan checkout
  * stuck for good).
+ *
+ * A REDIRECT THAT LOSES THE RACE. The polyfill resolves `dismiss` as soon as
+ * the app comes back to the foreground, and the redirect's own link event
+ * can arrive just after that (F8 met the same race on the hosted pages,
+ * src/payments/hostedPage.ts). Read as a cancel, the member who has just
+ * approved in the Auðkenni app would be told they cancelled, and the code
+ * Kenni sent would go unused. So this step listens for the link itself while
+ * the tab is open, and a tab that closed without one waits a moment
+ * (`KENNI_LATE_REDIRECT_GRACE_MS`) for a late one before it says cancelled.
+ *
+ * A redirect this step handed to the sheet is remembered for the process
+ * (`wasKenniCallbackConsumed`), so the same link reaching the deep-link
+ * router afterwards is never completed a second time (./callbackLink.ts):
+ * a state completes once, and a second try would turn "verified" into
+ * "couldn't finish".
  */
+import { Linking } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 
 /** The redirect the native authorization URL ends on (set server side). */
@@ -68,7 +84,18 @@ export const KENNI_TAB_OPTIONS: WebBrowser.AuthSessionOpenOptions = Object.freez
 /** Opens the authorization URL and resolves with the captured redirect. */
 export type Authenticate = (authorizationUrl: string) => Promise<string>;
 
+/**
+ * How long a tab that closed without a redirect waits for one that lost the
+ * race to the return to the foreground (the same wait F8 gives a hosted page).
+ */
+export const KENNI_LATE_REDIRECT_GRACE_MS = 300;
+
+let lateRedirectGraceMs = KENNI_LATE_REDIRECT_GRACE_MS;
+
 let inFlight = false;
+
+/** Redirects a tab handed to the sheet in this process (each completes once). */
+const consumed = new Set<string>();
 
 /**
  * True while a Custom Tab for Kenni is open and waiting for its redirect. A
@@ -79,31 +106,79 @@ export function isKenniWebAuthInFlight(): boolean {
   return inFlight;
 }
 
+/** True for a redirect a tab in this process already handed to its sheet. */
+export function wasKenniCallbackConsumed(url: string): boolean {
+  return consumed.has(url);
+}
+
+function isOurRedirect(url: unknown): url is string {
+  return typeof url === 'string' && url.toLowerCase().startsWith(KENNI_CALLBACK_PREFIX);
+}
+
 /** The real browser step. */
 export const authenticateWithCustomTab: Authenticate = async (authorizationUrl) => {
   if (inFlight) throw new KenniWebAuthError('couldNotStart');
   inFlight = true;
-  let result: WebBrowser.WebBrowserAuthSessionResult;
+
+  // The redirect as the app's own link event delivers it (see "A redirect
+  // that loses the race" above); the first one wins.
+  let lateRedirect: string | null = null;
+  let arrived: (() => void) | null = null;
+  // Read through a call: the listener sets it while this function awaits.
+  const seenRedirect = (): string | null => lateRedirect;
+  const subscription = Linking.addEventListener('url', (event: { url: string }) => {
+    if (lateRedirect !== null || !isOurRedirect(event.url)) return;
+    lateRedirect = event.url;
+    arrived?.();
+  });
+
+  const consume = (url: string): string => {
+    consumed.add(url);
+    return url;
+  };
+
   try {
-    result = await WebBrowser.openAuthSessionAsync(authorizationUrl, KENNI_CALLBACK_PREFIX, KENNI_TAB_OPTIONS);
-  } catch (error) {
-    throw new KenniWebAuthError('couldNotStart', error);
+    let result: WebBrowser.WebBrowserAuthSessionResult;
+    try {
+      result = await WebBrowser.openAuthSessionAsync(authorizationUrl, KENNI_CALLBACK_PREFIX, KENNI_TAB_OPTIONS);
+    } catch (error) {
+      throw new KenniWebAuthError('couldNotStart', error);
+    }
+    switch (result.type) {
+      case 'success':
+        return consume(result.url);
+      case 'locked':
+        // Another browser session is already up.
+        throw new KenniWebAuthError('couldNotStart');
+      default: {
+        // `dismiss` (Android: back in the app with no redirect yet) and
+        // `cancel` (the member closed it). A redirect may still be on its way.
+        if (seenRedirect() === null && lateRedirectGraceMs > 0) {
+          await new Promise<void>((resolve) => {
+            arrived = resolve;
+            setTimeout(resolve, lateRedirectGraceMs);
+          });
+          arrived = null;
+        }
+        const late = seenRedirect();
+        if (late !== null) return consume(late);
+        throw new KenniWebAuthError('cancelled');
+      }
+    }
   } finally {
+    subscription.remove();
     inFlight = false;
-  }
-  switch (result.type) {
-    case 'success':
-      return result.url;
-    case 'locked':
-      // Another browser session is already up.
-      throw new KenniWebAuthError('couldNotStart');
-    default:
-      // `dismiss` (Android) and `cancel` (the member closed it).
-      throw new KenniWebAuthError('cancelled');
   }
 };
 
-/** For tests: forget a session a failed test left marked open. */
+/** For tests: forget a session a failed test left marked open, and the redirects seen. */
 export function resetKenniWebAuthForTests(): void {
   inFlight = false;
+  consumed.clear();
+  lateRedirectGraceMs = KENNI_LATE_REDIRECT_GRACE_MS;
+}
+
+/** For tests: the late-redirect wait (0 says cancelled at once). */
+export function setKenniLateRedirectGraceForTests(ms: number): void {
+  lateRedirectGraceMs = ms;
 }

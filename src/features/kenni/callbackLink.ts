@@ -13,11 +13,14 @@
 // could not finish.
 //
 // While a tab is open in this process, its own session takes the redirect,
-// so the link is left to it (completing twice would spend the state twice).
+// so the link is left to it, and so is a redirect a tab already handed to
+// its sheet (the router can hear the same link just after the tab closed):
+// a state completes once, and a second completion would be refused and turn
+// "verified" into "couldn't finish".
 import { useAppStore } from '../../stores/appStore';
 
 import { presentRequest } from './sheetRequests';
-import { isKenniWebAuthInFlight, KENNI_CALLBACK_PREFIX } from './webAuth';
+import { isKenniWebAuthInFlight, KENNI_CALLBACK_PREFIX, wasKenniCallbackConsumed } from './webAuth';
 
 /** True for `lifepass://kenni-callback` (with or without a query). */
 export function isKenniCallbackUrl(url: string | null | undefined): boolean {
@@ -34,7 +37,7 @@ export function isKenniCallbackUrl(url: string | null | undefined): boolean {
  */
 export function handleKenniCallbackLink(url: string): boolean {
   if (!isKenniCallbackUrl(url)) return false;
-  if (isKenniWebAuthInFlight()) return true;
+  if (isKenniWebAuthInFlight() || wasKenniCallbackConsumed(url)) return true;
   if (!useAppStore.getState().isAuthenticated) return true;
   presentRequest({ bodyKey: 'kenni.body', onClose: () => undefined, resumeUrl: url });
   return true;
