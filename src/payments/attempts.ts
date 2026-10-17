@@ -112,6 +112,22 @@ async function begin(record: NewInflightRecord, url: string | (() => Promise<str
   return { saved, page };
 }
 
+/**
+ * Settles an attempt this flow holds. The settling is written never to throw;
+ * should it ever, the claim is let go before the error goes on, so one bad
+ * answer cannot leave every later page of its kind "busy" until the app
+ * restarts. The record stays saved: a later return to the app settles it.
+ */
+async function settleClaimed(saved: InflightRecord, leg: 'done' | 'cancel'): Promise<Settled> {
+  try {
+    return await settleRecord(saved, leg);
+  } catch (error) {
+    held.delete(saved.attemptId);
+    releaseAttempt(saved.attemptId);
+    throw error;
+  }
+}
+
 /** Ends a live attempt: its record per `settled`, its claim, and the outcome if the screen is gone. */
 async function finish(
   saved: InflightRecord,
@@ -207,7 +223,7 @@ export async function payOnHostedPage(request: PayOnHostedPageRequest): Promise<
     };
   }
   request.onConfirming?.(page.leg);
-  const settled = await settleRecord(saved, page.leg);
+  const settled = await settleClaimed(saved, page.leg);
   const settlement = paySettlementOf(settled);
   const { presented, attempt } = await finish(saved, settled, request.isScreenAlive);
   return { kind: 'settled', page: 'returned', leg: page.leg, settlement, key: keyDisposition(settlement), presented, attempt };
@@ -231,7 +247,7 @@ export async function checkPaymentAgain(
   if (!saved || !isAttemptLive(attempt.attemptId)) return { kind: 'busy' };
   held.delete(attempt.attemptId);
   resumeAttempt(attempt.attemptId);
-  const settled = await settleRecord(saved, 'done');
+  const settled = await settleClaimed(saved, 'done');
   const settlement = paySettlementOf(settled);
   const finished = await finish(saved, settled, isScreenAlive);
   return {
@@ -294,7 +310,7 @@ export async function checkoutOnHostedPage(input: CheckoutOnHostedPageInput): Pr
     return { kind: 'neverOpened' };
   }
   if (page.leg !== 'cancel') input.onVerifying?.();
-  const settled = await settleRecord(saved, page.leg);
+  const settled = await settleClaimed(saved, page.leg);
   const { presented } = await finish(saved, settled, input.isScreenAlive);
   const verification =
     settled.resolution.rail === 'plan' ? settled.resolution.verification : ({ kind: 'timeout' } as const);
@@ -338,7 +354,7 @@ export async function cardSetupOnHostedPage(input: {
     releaseAttempt(saved.attemptId);
     return { kind: 'notOpened', error: page.error };
   }
-  const settled = await settleRecord(saved, page.leg);
+  const settled = await settleClaimed(saved, page.leg);
   await finish(saved, settled, input.isScreenAlive);
   const card = settled.resolution.rail === 'card_setup' ? settled.resolution.card : undefined;
   return { kind: 'confirmed', card };
@@ -378,7 +394,7 @@ export async function copayOnHostedPage(input: {
   }
   // A co-pay page returns to the website, not the app, so the leg says
   // nothing: settle it the same way after any close.
-  const settled = await settleRecord(saved, 'done');
+  const settled = await settleClaimed(saved, 'done');
   await finish(saved, settled, input.isScreenAlive);
   return { kind: 'returned', settled: settled.resolution.rail === 'copay' && settled.resolution.settled };
 }

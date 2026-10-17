@@ -6,6 +6,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../api/testing';
+import { useAppStore } from '../../stores/appStore';
 import { PLUS_SUBSCRIPTION } from '../../stores/__tests__/storeHarness';
 import { cardSetupOnHostedPage, checkoutOnHostedPage, copayOnHostedPage, recheckPlanPurchase } from '../attempts';
 
@@ -109,6 +110,29 @@ describe('plan checkout', () => {
     api.on('GET', '/payments/status', Reply.raw(504, '<html>504</html>'));
     const result = await checkoutOnHostedPage({ memberId: MEMBER_A, url: 'https://pay.kling.is/c/1', externalSessionId: SESSION, plan });
     expect(result).toMatchObject({ kind: 'verified', verification: { kind: 'failed' } });
+  });
+
+  it('a settling that throws lets the attempt go: the next page still opens, and the old record is settled first', async () => {
+    const fallback = { memberId: MEMBER_A, url: 'https://www.lifepass.is/plans?completePurchase=plan-plus', externalSessionId: null, plan };
+    const realRefresh = useAppStore.getState().refreshCredits;
+    openAuthSession.mockResolvedValueOnce(DISMISSED);
+    useAppStore.setState({ refreshCredits: () => Promise.reject(new Error('the store broke')) });
+    try {
+      await expect(checkoutOnHostedPage(fallback)).rejects.toThrow('the store broke');
+    } finally {
+      useAppStore.setState({ refreshCredits: realRefresh });
+    }
+    // Saved for a later return to the app, and no longer anyone's.
+    expect(await storedRecords()).toHaveLength(1);
+
+    openAuthSession.mockResolvedValueOnce({ type: 'success', url: 'lifepass://payment-canceled' });
+    await expect(checkoutOnHostedPage({ ...fallback, externalSessionId: SESSION })).resolves.toEqual({
+      kind: 'verified',
+      verification: { kind: 'cancelled' },
+      presented: false,
+    });
+    expect(openAuthSession).toHaveBeenCalledTimes(2);
+    expect(await storedRecords()).toEqual([]);
   });
 
   it('the web-first fallback checks the profile quietly, and the chip checks again', async () => {
