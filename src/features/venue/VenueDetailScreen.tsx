@@ -1,69 +1,318 @@
-// @f4-stub (plan 3.0.2): route `VenueDetail` ({ slug }), filled by VENUE-1.
-//
-// Keep the default export and its props type; replace the body (and this
-// marker). Until every caller passes a slug, a legacy caller may still pass
-// `{ venueId }`: read both with `venueDetailTarget(route.params)`.
-//
-// Until then it shows the first build's venue screen, which loads by id: a
-// slug is looked up first (`GET /venues/by-slug/{slug}`).
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+/* eslint lifepass/no-literal-copy: "error" */
+/**
+ * A venue's page, by slug (route `VenueDetail`, plan 3.0.2): the Android port
+ * of iOS `VenueDetailView` (Views/Venues/VenueDetailView.swift).
+ *
+ * Reached from Explore's list and map, Home, Saved, the Coach's venue card,
+ * Plan, a booking refusal's "Book a time" and an attraction's pairing, always
+ * pushed onto the current tab's stack (or the shared sheet over a modal), so
+ * the tab bar stays under it as on iOS.
+ *
+ * The page, top to bottom:
+ *   - the hero (./components/Hero.tsx), drawn from the very top of the screen
+ *     under the status bar, with back, the favourite heart and share;
+ *   - the rating (opens the reviews) and Directions, the description in the
+ *     account language, the amenity chips;
+ *   - the content state: coming soon, walk-ins and/or bookable classes, or
+ *     "Bookings not yet available" (./components/ActivitiesBlock.tsx);
+ *   - this week's hours (only with hours), "Getting there" (only with an
+ *     address, a phone or a position), the newest reviews;
+ *   - the floating bar above the tab bar (./components/FloatingBar.tsx);
+ *   - a band behind the status bar that fades in once the hero's title has
+ *     scrolled up to it, so text never passes unbacked under the clock.
+ *
+ * While loading: a spinner. A failed load with no venue: the reason, or "Could
+ * not load venue details.", and "Try again". A failure after the venue loaded
+ * (its reviews): the "Heads up" alert, the page staying as it is.
+ *
+ * Process death: the page holds nothing a restart must restore; it reloads
+ * from its slug, which the navigation state keeps.
+ */
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  Linking,
+  Share,
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+  type ScrollView,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { fetchVenueBySlug } from '../../api/venues';
-import { ErrorState } from '../../components/ui';
+import { Dialog, LPText, PrimaryButton, type DialogButton } from '../../components/ui';
+import { useFavourite } from '../favourites';
+import { useReduceMotion } from '../../hooks/useReduceMotion';
+import { useT } from '../../i18n';
+import type { BookableActivity } from '../../api/walkInPreview';
 import { venueDetailTarget, type SharedRouteProps } from '../../navigation/types';
-import LegacyVenueDetailScreen from '../../screens/venue/VenueDetailScreen';
 import { colors } from '../../theme';
+import type { Venue } from '../../types/venue';
+import ActivitiesBlock from './components/ActivitiesBlock';
+import { AmenitiesBlock, DescriptionBlock, MetaRow } from './components/Details';
+import FloatingBar, { BAR_HEIGHT } from './components/FloatingBar';
+import Hero from './components/Hero';
+import { GettingThereBlock, OpeningHoursBlock } from './components/InfoBlocks';
+import ReviewsBlock from './components/ReviewsBlock';
+import { BAR_MATERIAL } from './components/shared';
+import { openInGoogleMaps, openInOtherMapsApp } from './directions';
+import { HERO_HEIGHT, STATUS_BAND_FADE, statusBarBandFullAt, venueShareMessage } from './model';
+import { useVenueDetail, type VenueTarget } from './useVenueDetail';
+
+/** The gap between the floating bar and the tab bar (iOS: 110 pt from the bottom, over a 96 pt bar). */
+const BAR_GAP = 14;
+/** Room under the last block beyond the bar itself, so the last review clears it. */
+const CONTENT_TAIL = 34;
+/** The failed and loading blocks' height (iOS `.frame(height: 400)`). */
+const STATE_BLOCK_HEIGHT = 400;
+/** "Book a class" puts the list a tenth of the way down the screen (iOS anchor y 0.1). */
+const CLASSES_ANCHOR = 0.1;
 
 export default function VenueDetailScreen({ navigation, route }: SharedRouteProps<'VenueDetail'>) {
-  const target = venueDetailTarget(route.params);
-  const slug = 'slug' in target ? target.slug : null;
-  const [venueId, setVenueId] = useState<string | null>('venueId' in target ? target.venueId : null);
-  const [failed, setFailed] = useState(false);
+  const params = route.params;
+  // A first-build caller may still pass `{ venueId }` (looked up, ./resolveSlug.ts).
+  const target = useMemo<VenueTarget>(() => venueDetailTarget(params), [params]);
+  const model = useVenueDetail(target);
+  const { reloadReviews } = model;
+  const { t } = useT();
+  const insets = useSafeAreaInsets();
+  // The tab bar floats over the page; in the shared sheet there is none (the
+  // layout then answers the system bar's inset). Outside both, nothing.
+  const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
+  const reduceMotion = useReduceMotion();
 
-  const resolve = useCallback(() => {
-    if (slug === null) return () => undefined;
-    let live = true;
-    setFailed(false);
-    fetchVenueBySlug(slug).then(
-      (venue) => {
-        if (live) setVenueId(venue.id);
-      },
-      () => {
-        if (live) setFailed(true);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [slug]);
+  // The page always starts under the status bar on an edge-to-edge Android
+  // screen, pushed or in the shared sheet, so the whole inset is covered.
+  const coveredTop = insets.top;
+  const barBottom = Math.max(tabBarHeight, insets.bottom) + BAR_GAP;
 
-  useEffect(() => resolve(), [resolve]);
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const geometry = useRef({ viewport: 0, activities: 0, classes: 0 });
+  const [directionsOpen, setDirectionsOpen] = useState(false);
 
-  if (venueId === null) {
-    return (
-      <View style={styles.page}>
-        {failed ? <ErrorState onRetry={resolve} /> : <ActivityIndicator color={colors.rust} />}
-      </View>
-    );
-  }
+  // iOS reloads the reviews when the reviews page reports a new one; here the
+  // page reads them again when the member comes back from the reviews page.
+  const reviewsOpened = useRef(false);
+  useEffect(
+    () =>
+      navigation.addListener('focus', () => {
+        if (!reviewsOpened.current) return;
+        reviewsOpened.current = false;
+        reloadReviews();
+      }),
+    [navigation, reloadReviews],
+  );
+
+  const venue = model.venue;
+
+  const openReviews = useCallback(() => {
+    if (!venue) return;
+    reviewsOpened.current = true;
+    navigation.navigate('VenueReviews', { venueId: venue.id, venueName: venue.name });
+  }, [navigation, venue]);
+
+  const book = useCallback(
+    (activity: BookableActivity) => {
+      if (!venue) return;
+      navigation.navigate('BookingFlow', {
+        venueId: venue.id,
+        activity: { id: activity.id, name: activity.name, provider: activity.provider },
+      });
+    },
+    [navigation, venue],
+  );
+
+  // Pushed, so the scanner shows the way back to this venue.
+  const scan = useCallback(() => {
+    if (venue) navigation.navigate('ScanPushed', { fromVenueSlug: venue.slug });
+  }, [navigation, venue]);
+
+  const scrollToClasses = useCallback(() => {
+    const { viewport, activities, classes } = geometry.current;
+    const y = HERO_HEIGHT + activities + classes - viewport * CLASSES_ANCHOR;
+    scrollRef.current?.scrollTo({ y: Math.max(0, y), animated: !reduceMotion });
+  }, [reduceMotion]);
+
+  const share = useCallback(() => {
+    if (!venue) return;
+    Share.share({ message: venueShareMessage(venue, t), title: venue.name }, { dialogTitle: venue.name }).catch(() => {
+      // The member closed the sheet, or no app could take it: nothing to say.
+    });
+  }, [t, venue]);
+
+  const call = useCallback((url: string) => {
+    Linking.openURL(url).catch(() => {
+      // No dialler (a tablet): the number is on the page to copy.
+    });
+  }, []);
+
+  const directionsButtons: DialogButton[] = venue
+    ? [
+        { label: t('venue.maps_google'), onPress: () => void openInGoogleMaps(venue), testID: 'venue.directions.google' },
+        { label: t('venue.page.maps_other'), onPress: () => void openInOtherMapsApp(venue), testID: 'venue.directions.other' },
+        { label: t('common.cancel'), role: 'cancel' },
+      ]
+    : [];
+
+  const fullAt = statusBarBandFullAt(coveredTop);
+  const bandOpacity = scrollY.interpolate({
+    inputRange: [fullAt - STATUS_BAND_FADE, fullAt],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
 
   return (
-    <LegacyVenueDetailScreen
-      navigation={{
-        goBack: () => navigation.goBack(),
-        navigate: (_screen, params) => navigation.navigate('BookingFlow', params),
-      }}
-      route={{ params: { venueId } }}
+    <View style={styles.page} testID="venue.page">
+      <Animated.ScrollView
+        ref={scrollRef}
+        testID="venue.scroll"
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+        onLayout={(event: LayoutChangeEvent) => {
+          geometry.current.viewport = event.nativeEvent.layout.height;
+        }}
+        contentContainerStyle={venue && !model.isLoading ? { paddingBottom: barBottom + BAR_HEIGHT + CONTENT_TAIL } : null}
+      >
+        {model.isLoading ? (
+          <View style={styles.stateBlock} accessibilityLabel={t('a11y.loading')} accessible testID="venue.loading">
+            <ActivityIndicator color={colors.rust} />
+          </View>
+        ) : venue ? (
+          <>
+            <VenueHero venue={venue} topInset={coveredTop} onBack={() => navigation.goBack()} onShare={share} />
+            <View style={styles.content}>
+              <MetaRow venue={venue} onOpenReviews={openReviews} onDirections={() => setDirectionsOpen(true)} />
+              <DescriptionBlock venue={venue} />
+              <AmenitiesBlock venue={venue} />
+              <View
+                onLayout={(event: LayoutChangeEvent) => {
+                  geometry.current.activities = event.nativeEvent.layout.y;
+                }}
+              >
+                <ActivitiesBlock
+                  venue={venue}
+                  slotActivities={model.slotActivities}
+                  onBook={book}
+                  onCall={call}
+                  onClassesLayout={(y) => {
+                    geometry.current.classes = y;
+                  }}
+                />
+              </View>
+              <OpeningHoursBlock venue={venue} />
+              <GettingThereBlock venue={venue} onDirections={() => setDirectionsOpen(true)} />
+              <ReviewsBlock reviews={model.reviews} onOpenReviews={openReviews} />
+            </View>
+          </>
+        ) : (
+          <LoadFailed message={model.error ?? t('venue.could_not_load')} onRetry={model.load} />
+        )}
+      </Animated.ScrollView>
+
+      {venue && !model.isLoading ? (
+        <View style={[styles.bar, { bottom: barBottom }]} pointerEvents="box-none">
+          <FloatingBar
+            venue={venue}
+            slotActivities={model.slotActivities}
+            onScan={scan}
+            onBookAClass={scrollToClasses}
+            onBook={book}
+          />
+        </View>
+      ) : null}
+
+      {coveredTop > 0 && venue && !model.isLoading ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.band, { height: coveredTop, opacity: bandOpacity }]}
+          testID="venue.status_band"
+        />
+      ) : null}
+
+      <Dialog
+        visible={directionsOpen && venue !== null}
+        onClose={() => setDirectionsOpen(false)}
+        presentation="actionSheet"
+        title={t('venue.get_directions')}
+        buttons={directionsButtons}
+        testID="venue.directions"
+      />
+      <Dialog
+        visible={model.error !== null && venue !== null && !model.isLoading}
+        onClose={model.clearError}
+        title={t('common.heads_up')}
+        message={model.error ?? undefined}
+        buttons={[{ label: t('common.ok'), onPress: model.clearError }]}
+        testID="venue.heads_up"
+      />
+    </View>
+  );
+}
+
+/** The hero with the venue's heart, read from the shared favourites store. */
+function VenueHero({
+  venue,
+  topInset,
+  onBack,
+  onShare,
+}: {
+  readonly venue: Venue;
+  readonly topInset: number;
+  readonly onBack: () => void;
+  readonly onShare: () => void;
+}) {
+  const favourite = useFavourite(venue.id);
+  const toggle = favourite.toggle;
+  const onToggleFavourite = useCallback(() => {
+    // The store flips the heart at once, reverts it and says so on a failure
+    // (VENUE-2); nothing for the page to add.
+    toggle().catch(() => undefined);
+  }, [toggle]);
+  return (
+    <Hero
+      venue={venue}
+      topInset={topInset}
+      isFavourite={favourite.isFavourite}
+      onBack={onBack}
+      onToggleFavourite={onToggleFavourite}
+      onShare={onShare}
     />
   );
 }
 
+/** No venue: the reason and "Try again" (iOS loadFailedState). */
+function LoadFailed({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) {
+  const { t } = useT();
+  return (
+    <View style={[styles.stateBlock, styles.failed]} testID="venue.load_failed">
+      <MaterialCommunityIcons name="wifi-alert" size={40} color={colors.paper3} />
+      <LPText size={14} color={colors.paper3} align="center" style={styles.failedText}>
+        {message}
+      </LPText>
+      <PrimaryButton title={t('venue.try_again')} block={false} onPress={onRetry} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: colors.ink,
-    alignItems: 'center',
-    justifyContent: 'center',
+  page: { flex: 1, backgroundColor: colors.ink },
+  content: { paddingHorizontal: 20, paddingTop: 18, gap: 28 },
+  stateBlock: { height: STATE_BLOCK_HEIGHT, alignItems: 'center', justifyContent: 'center' },
+  failed: { gap: 16 },
+  failedText: { paddingHorizontal: 32 },
+  bar: { position: 'absolute', left: 20, right: 20 },
+  band: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: BAR_MATERIAL,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.line,
   },
 });
