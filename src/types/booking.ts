@@ -4,7 +4,8 @@ export interface Booking {
   id: string;
   venueId: string;
   venueName: string;
-  venueImageUrl: string;
+  /** None today: the bookings API carries no venue image (never a stock photo). */
+  venueImageUrl?: string;
   activityName: string;
   bookingTime: Date;
   status: BookingStatus;

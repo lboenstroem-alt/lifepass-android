@@ -43,10 +43,13 @@ export function adaptBooking(b: ApiBooking): Booking {
     id: b.id,
     venueId: b.venue.id,
     venueName: b.venue.name,
-    // The booking read shape carries no venue image. Empty, never a stock
-    // photo shown as the venue: Home's upcoming card falls back to the hero's
-    // photo, as iOS does (F6, plan "no picsum anywhere").
-    venueImageUrl: '',
+    // The booking read shape carries no venue image. None, never a stock
+    // photo shown as the venue (F6, plan "no picsum anywhere"): Home's
+    // upcoming card falls back to the hero's photo, as iOS does, and iOS
+    // Library rows show a calendar glyph, not a photo (LIB-1's rewrite).
+    // Undefined rather than '', so a caller can branch on it and an Image is
+    // never handed an empty uri.
+    venueImageUrl: undefined,
     activityName: b.externalTitle ?? b.activity?.name ?? 'Activity',
     bookingTime: new Date(b.startsAt),
     status: adaptStatus(b.status),
