@@ -119,6 +119,23 @@ export async function writeSavedSessions(sessions: readonly ChatSession[]): Prom
 // ---------------------------------------------------------------------------
 // Building a session
 
+/**
+ * A new session's id: a v4 UUID, as iOS `UUID().uuidString`. expo-crypto
+ * always answers on a phone; Jest's generated native mock answers
+ * `undefined`, and two sessions with no id would replace each other in the
+ * upsert, so a UUID is built from Math.random there (it only has to be
+ * unique, it is not a secret).
+ */
+function newSessionId(): string {
+  const id = Crypto.randomUUID();
+  if (typeof id === 'string' && id.length > 0) return id;
+  const hex = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16));
+  hex[12] = '4';
+  hex[16] = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
+  const s = hex.join('');
+  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20)}`;
+}
+
 /** The drawer title: the first non-health thing the member said, cut at 40 characters. */
 export function sessionTitle(messages: readonly CoachMessage[]): string | null {
   const first = messages.find((message) => message.role === 'user' && !message.isHealth);
@@ -141,7 +158,7 @@ export function buildSession(
   const title = sessionTitle(messages);
   if (title === null) return null;
   return {
-    id: id ?? Crypto.randomUUID(),
+    id: id ?? newSessionId(),
     title,
     date: now.toISOString(),
     messages: messages
