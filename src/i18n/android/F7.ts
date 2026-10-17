@@ -36,7 +36,7 @@ export default definePack({
   },
   is: {
     'notif.channel.health': 'Áætlun og heilsa',
-    'notif.channel.health.description': 'Æfingadagar, vikulega yfirferðin og mánaðarleg endurgjöf.',
+    'notif.channel.health.description': 'Æfingadagar, vikuyfirferðin og mánaðaryfirlitið.',
     'notif.channel.rest_timer': 'Hvíldartími',
     'notif.channel.rest_timer.description': 'Lætur þig vita þegar hvíldinni milli setta er lokið.',
     'notif.channel.bookings': 'Bókanir',

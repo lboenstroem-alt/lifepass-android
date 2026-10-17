@@ -56,6 +56,7 @@ export {
   consentGrantBody,
   consentSource,
   consentToApply,
+  consentWithdrawalBody,
   HealthConsentVersion,
   needsAgeAttestation,
   PRIVACY_POLICY_URL,

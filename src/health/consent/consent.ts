@@ -63,6 +63,21 @@ export function consentGrantBody(options: {
 }
 
 /**
+ * The withdrawal's body (iOS BodyAndGoalsView `withdrawalResponse`): the
+ * version the member's consent was recorded under, else the current text's.
+ * Never null: the route requires a version and answers a null with 400,
+ * which would delete nothing. Withdrawal lives on Body and goals, so the
+ * source is `account`; no age attestation is ever sent with it.
+ */
+export function consentWithdrawalBody(recordedVersion: string | null | undefined): {
+  optedIn: false;
+  version: string;
+  source: 'account';
+} {
+  return { optedIn: false, version: recordedVersion ?? HealthConsentVersion.current, source: 'account' };
+}
+
+/**
  * The consent to show at once after a grant: the server's own answer where it
  * gave one, else what was sent. The profile read that follows replaces it
  * with the server's copy; until then a member who switched tracking back on

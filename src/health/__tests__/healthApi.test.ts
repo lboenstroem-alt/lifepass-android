@@ -29,8 +29,10 @@ import {
   localeQuery,
   postSessionAction,
   SessionAction,
+  fetchNutritionGoalEnvelope,
   setHealthConsent,
 } from '../api';
+import { consentWithdrawalBody, HealthConsentVersion } from '../consent/consent';
 
 stubApiClientPerTest();
 
@@ -158,6 +160,33 @@ describe('the consent route (OP-02, OP-03)', () => {
     await setHealthConsent({ optedIn: true, version: '2026-09-v3', source: 'account', ageAttested: true }, 'consent-key-0002');
     sent = expectSentToMatchContract('POST', '/profile/health-consent');
     expect(sent.body).toEqual({ optedIn: true, version: '2026-09-v3', source: 'account', ageAttested: true });
+  });
+
+  it('a withdrawal always names a version: the recorded one, else the current text', async () => {
+    expect(consentWithdrawalBody('2026-09-v3')).toEqual({ optedIn: false, version: '2026-09-v3', source: 'account' });
+    expect(consentWithdrawalBody(null)).toEqual({ optedIn: false, version: HealthConsentVersion.current, source: 'account' });
+    expect(consentWithdrawalBody(undefined).version).toBe('2026-09-v1');
+
+    api.on('POST', '/profile/health-consent', Reply.ok({ optedIn: false, version: '2026-09-v1', deleted: { measurements: 2 } }));
+    const result = await setHealthConsent(consentWithdrawalBody(null), 'consent-key-0003');
+    const sent = expectSentToMatchContract('POST', '/profile/health-consent');
+    expect(sent.body).toEqual({ optedIn: false, version: '2026-09-v1', source: 'account' });
+    expect(result.deleted).toEqual({ measurements: 2 });
+  });
+});
+
+describe('the calorie goal (OP-47)', () => {
+  it('reads the whole envelope in the account language', async () => {
+    api.on(
+      'GET',
+      '/health/nutrition-goal',
+      Reply.ok({ goal: { goal: 'lose', activity: 'light' }, targetWeight: { targetWeightKg: 72.5, direction: 'lose' }, features: ['target_weight'] }),
+    );
+    const envelope = await fetchNutritionGoalEnvelope('is');
+    expect(api.sent('/health/nutrition-goal').query).toEqual({ locale: 'is' });
+    expect(envelope.goal?.goal).toBe('lose');
+    expect(envelope.targetWeight?.targetWeightKg).toBe(72.5);
+    expect(envelope.features).toEqual(['target_weight']);
   });
 });
 

@@ -35,8 +35,10 @@
 import { API_TIMEOUTS, apiDelete, apiGet, apiGetRawData, apiPost, type Query } from '../api';
 import type { Lang } from '../i18n';
 
-import { arrayOf, boolean, instant, integer, object, opt, string, type Reader } from './decode';
+import { arrayOf, boolean, instant, integer, object, opt, soft, string, type Reader } from './decode';
 import {
+  decodeFeatureList,
+  decodeTargetWeightView,
   decodeHealthDay,
   decodeMeasurement,
   decodeMealDaySummary,
@@ -69,6 +71,7 @@ import {
   type SessionHistoryItem,
   type SessionView,
   type SkipReason,
+  type TargetWeightView,
   type TargetWithheldReason,
   type WeeklyReviewView,
   type WeightTrendPoint,
@@ -135,7 +138,15 @@ export function fetchHealthDay(options: { date?: string | null; language: Lang; 
 
 export interface ConsentBody {
   readonly optedIn: boolean;
-  readonly version: string | null;
+  /**
+   * ALWAYS a string, on a withdrawal too: the route requires it (`required:
+   * [optedIn, version]`) and answers a null with 400, which deletes nothing.
+   * A grant sends the text shown (`HealthConsentVersion.shown`); a withdrawal
+   * sends the version the member's consent was recorded under, else
+   * `HealthConsentVersion.current` (./consent/consent.ts
+   * `consentWithdrawalBody`, as iOS BodyAndGoalsView does).
+   */
+  readonly version: string;
   /** `coach_intake` or `account` (the route's schema also has `profile`, which is the web's). */
   readonly source: string;
   /** Sent ONLY when the age row was shown: a verified account must not claim an attestation it never made. */
@@ -515,10 +526,39 @@ export const decodeNutritionGoalView: Reader<NutritionGoalView> = (value, path) 
   };
 };
 
-export function fetchNutritionGoal(language: Lang): Promise<NutritionGoalView | null> {
+/**
+ * The whole answer of `GET /health/nutrition-goal` (iOS
+ * `TargetWeightService.NutritionGoalEnvelope`): the calorie goal, and on a
+ * newer server the standing target weight and the feature list. Body and
+ * goals and the body sheet read all three; the features count as a last
+ * writer for the server's feature list (the caller passes them to the app
+ * store's `noteServerFeatures`).
+ *
+ * The goal decodes as it always did (a malformed goal fails the read); the
+ * two additions are fail soft, so a malformed target can never cost the
+ * member their goal.
+ */
+export interface NutritionGoalEnvelope {
+  readonly goal: NutritionGoalView | null;
+  readonly targetWeight: TargetWeightView | null;
+  /** Null when the server sent none (an older server), or something that is not a list of names. */
+  readonly features: readonly string[] | null;
+}
+
+export const decodeNutritionGoalEnvelope: Reader<NutritionGoalEnvelope> = (value, path) => {
+  const json = object(value, path);
+  return {
+    goal: opt(json, 'goal', path, decodeNutritionGoalView),
+    targetWeight: soft(json, 'targetWeight', path, decodeTargetWeightView),
+    features: decodeFeatureList(json.features),
+  };
+};
+
+/** `GET /health/nutrition-goal` (iOS `nutritionGoalEnvelope(language:)`), in the account language. */
+export function fetchNutritionGoalEnvelope(language: Lang): Promise<NutritionGoalEnvelope> {
   return apiGet('/health/nutrition-goal', localeQuery(language), {
     timeoutMs: HEALTH_SESSION_TIMEOUT_MS,
-    decode: (data) => opt(object(data, 'goal'), 'goal', 'goal', decodeNutritionGoalView),
+    decode: (data) => decodeNutritionGoalEnvelope(data, 'nutritionGoal'),
   });
 }
 

@@ -13,6 +13,7 @@
 import { sampleResponse } from '@test/contract';
 
 import { useAppStore, selectSupportsPlanRevision, selectSupportsTargetWeight } from '../../stores/appStore';
+import { decodeNutritionGoalEnvelope } from '../api';
 import {
   allPendingDrafts,
   decodeCachedHealthDay,
@@ -151,6 +152,37 @@ describe('the target view and the feature list (iOS HealthDayDecodeTests)', () =
     const old = decodeProgramSummary({ id: 'prog-1', status: 'abandoned' }, 'p');
     expect(isRevision(old)).toBe(false);
     expect(old.revised).toBeNull();
+  });
+
+  it('the goal envelope from an older server: the goal alone', () => {
+    const envelope = decodeNutritionGoalEnvelope({ goal: { goal: 'lose', activity: 'light' } }, 'nutritionGoal');
+    expect(envelope.goal?.goal).toBe('lose');
+    expect(envelope.targetWeight).toBeNull();
+    expect(envelope.features).toBeNull();
+  });
+
+  it('the goal envelope from a new server: no goal, a target and the features', () => {
+    const envelope = decodeNutritionGoalEnvelope(
+      {
+        goal: null,
+        targetWeight: { targetWeightKg: 70.0, direction: 'lose', appliesTo: 'program' },
+        features: ['target_weight', 'plan_revision'],
+      },
+      'nutritionGoal',
+    );
+    expect(envelope.goal).toBeNull();
+    expect(envelope.targetWeight?.targetWeightKg).toBe(70.0);
+    expect(envelope.features).toHaveLength(2);
+  });
+
+  it('a malformed target or feature list in the envelope never costs the goal', () => {
+    const envelope = decodeNutritionGoalEnvelope(
+      { goal: { goal: 'gain' }, targetWeight: { direction: 'lose' }, features: 'target_weight' },
+      'nutritionGoal',
+    );
+    expect(envelope.goal?.goal).toBe('gain');
+    expect(envelope.targetWeight).toBeNull();
+    expect(envelope.features).toBeNull();
   });
 });
 
