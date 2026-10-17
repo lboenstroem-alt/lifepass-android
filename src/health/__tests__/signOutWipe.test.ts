@@ -14,7 +14,8 @@ import { notificationsState } from '@test/mocks/expoNotifications';
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../api/testing';
-import { registeredHookIds } from '../../app/signOut';
+import { decodeProfile } from '../../api/profile';
+import { registeredHookIds, runActivationHooks } from '../../app/signOut';
 import { scheduleAt } from '../../notifications';
 import { resetAppStoreForTests, useAppStore } from '../../stores/appStore';
 import { FeedbackKeys, ReminderKeys, WearableKeys } from '../localKeys';
@@ -37,10 +38,11 @@ afterEach(async () => {
   await localStore.settled();
 });
 
-it('the health wipe and the reconcile are registered with the session hooks', () => {
+it('the health wipe, the reconcile and the activation read are registered with the session hooks', () => {
   const ids = registeredHookIds();
   expect(ids.signOut).toContain('health.wipe');
   expect(ids.profileRead).toContain('health.reconcile');
+  expect(ids.activation).toContain('health.activate');
 });
 
 it('sign-out wipes health state even when the profile never loaded', async () => {
@@ -123,4 +125,35 @@ it("the app store's profile read reconciles: tracking switched off on the web em
   await localStore.settled();
   expect(fileSystemState.files()).toEqual([]);
   expect(useHealthStore.getState().toastKey).toBe('health.consent_off_elsewhere');
+});
+
+describe('activation', () => {
+  function member(health: Record<string, unknown>) {
+    return {
+      id: MEMBER_A,
+      locale: 'en',
+      kennitalaVerified: true,
+      marketingConsent: false,
+      usage: null,
+      health,
+    };
+  }
+
+  it('reads today for a member with consent, entitled, with a live plan; for no one else', async () => {
+    api.on('GET', '/health', Reply.ok({ date: '2026-10-17', today: '2026-10-17' }));
+    const live = { access: 'entitled', consent: { version: '2026-09-v1' }, program: { id: 'p1', status: 'active' } };
+    for (const [health, reads] of [
+      [live, 1],
+      [{ ...live, consent: null }, 0],
+      [{ ...live, access: 'pass_only' }, 0],
+      [{ ...live, program: { id: 'p1', status: 'completed' } }, 0],
+    ] as const) {
+      resetHealthStoreForTests();
+      api.reset();
+      api.on('GET', '/health', Reply.ok({ date: '2026-10-17', today: '2026-10-17' }));
+      useAppStore.setState({ isAuthenticated: true, userId: MEMBER_A, profile: decodeProfile(member(health)) });
+      await runActivationHooks({ memberId: MEMBER_A, trigger: 'foreground' });
+      expect(api.sentAll('/health')).toHaveLength(reads);
+    }
+  });
 });
