@@ -1,142 +1,121 @@
-// Checkout + payment status, backed by the LifePass API (Kling hosted
-// checkout). Mirrors iOS PaymentService.swift. Auth stays on Supabase; the
-// bearer token rides on every apiPost/apiGet. The hosted page owns the price,
-// so the app never computes or displays an ISK figure at checkout.
-import * as WebBrowser from 'expo-web-browser';
-import * as Crypto from 'expo-crypto';
-import { apiGet, apiPost, ApiError } from '../../api/client';
+/**
+ * The legacy checkout service, kept as a thin shim over the money rails core
+ * (F8) for the screens written against it (TopUpScreen, AccountScreen) until
+ * PLANS-2 and ACCT-3 replace them. Nothing new should import it:
+ *
+ *   - plan and pass checkout calls: src/api/planCheckout.ts (PLANS-2's);
+ *   - the hosted page, its return and its recovery after process death:
+ *     src/payments (`checkoutOnHostedPage`, `copayOnHostedPage`, ...).
+ *
+ * What changed under the old names: the page waits on the `lifepass://payment-`
+ * prefix, so the cancel link comes back too; a tab closed with no link is
+ * verified like iOS's Done instead of being read as a cancel; a plan or pass
+ * checkout is saved before its page opens and recovered after process death;
+ * a pass is confirmed from the profile (the status endpoint can never
+ * confirm one).
+ */
+import { activePasses } from '../../api/profile';
+import { isSubscriptionActive } from '../../api/subscriptions';
+import {
+  confirmCheckout as confirmCheckoutSession,
+  confirmCheckoutWithRetries,
+  createCheckout as createCheckoutSession,
+  pollPaymentStatus as pollStatus,
+} from '../../api/planCheckout';
+import { checkoutOnHostedPage } from '../../payments/attempts';
+import { openHostedPage } from '../../payments/hostedPage';
+import { PAYMENT_CANCEL_URL, PAYMENT_SUCCESS_URL } from '../../payments/returnUrls';
+import { useAppStore } from '../../stores/appStore';
 
-// Terms/privacy versions sent with checkout consent — must match the versions
-// the web + iOS send so consent logs reference the same documents (iOS
-// MerchantInfo.swift). Bump both together when the documents change.
-const TERMS_VERSION = '2026-07-v1';
-const PRIVACY_VERSION = '2026-07-v1';
-
-// Native deep-link return URLs. Kling redirects the hosted checkout to these on
-// completion / cancel; openAuthSessionAsync captures them and hands control
-// back to the app.
-export const PAYMENT_SUCCESS_URL = 'lifepass://payment-success';
-export const PAYMENT_CANCEL_URL = 'lifepass://payment-canceled';
-
-type CheckoutSessionResponse = {
-  checkoutUrl?: string;
-  url?: string;
-  externalSessionId?: string;
-};
+export { PAYMENT_CANCEL_URL, PAYMENT_SUCCESS_URL };
 
 export type CheckoutSession = { url: string; externalSessionId?: string };
 
-/**
- * POST /payments/checkout-sessions → the Kling hosted-checkout URL.
- * `productSlug` is a v1 slug (`plan-*` / `pass-*`). Requires an Idempotency-Key
- * so a retry can't create a second checkout.
- */
+export type CheckoutOutcome = 'fulfilled' | 'pending' | 'canceled';
+
+/** `POST /payments/checkout-sessions` (src/api/planCheckout.ts). */
 export async function createCheckout(
   productSlug: string,
   opts?: { saveCard?: boolean; promotionCode?: string },
 ): Promise<CheckoutSession> {
-  // Partner promo codes (e.g. Saman "FRIMANNPASS") ride MEMBERSHIP checkout
-  // only; the server applies them to subscriptions and ignores them for passes.
-  // The caller passes it for subscriptions only (mirrors iOS PlansViewModel).
   const promotionCode = opts?.promotionCode?.trim();
-  const res = await apiPost<CheckoutSessionResponse>(
-    '/payments/checkout-sessions',
-    {
-      productSlug,
-      successUrl: PAYMENT_SUCCESS_URL,
-      cancelUrl: PAYMENT_CANCEL_URL,
-      ...(opts?.saveCard !== undefined ? { saveCard: opts.saveCard } : {}),
-      ...(promotionCode ? { promotionCode } : {}),
-      terms: {
-        acceptedAt: new Date().toISOString(),
-        privacyVersion: PRIVACY_VERSION,
-        termsVersion: TERMS_VERSION,
-      },
-    },
-    { idempotencyKey: Crypto.randomUUID() },
-  );
-
-  const url = res.checkoutUrl ?? res.url;
-  if (!url) throw new Error('Checkout could not be started. Please try again.');
-  return { url, externalSessionId: res.externalSessionId };
+  const session = await createCheckoutSession(productSlug, {
+    saveCard: opts?.saveCard,
+    promotionCode: promotionCode || null,
+  });
+  return { url: session.url, externalSessionId: session.externalSessionId ?? undefined };
 }
 
-/**
- * POST /payments/checkout-sessions/confirm — ask the server to run the verified
- * Kling pull for this session. Kling has NO webhook on the mobile path (on the
- * web, fulfilment happens when the /payment-success page renders, which a
- * deep-link return bypasses), so mobile must trigger it explicitly. A 404/405
- * (route not deployed) returns false and the caller falls back to polling.
- */
+/** `POST /payments/checkout-sessions/confirm`; any failure reads as "not confirmed". */
 export async function confirmCheckout(externalSessionId: string): Promise<boolean> {
   try {
-    const { status } = await apiPost<{ status?: string }>(
-      '/payments/checkout-sessions/confirm',
-      { externalSessionId },
-      { idempotencyKey: Crypto.randomUUID() },
-    );
-    const s = status?.toLowerCase();
-    return s === 'fulfilled' || s === 'completed' || s === 'paid' || s === 'already_fulfilled';
-  } catch (e) {
-    if (e instanceof ApiError && (e.status === 404 || e.status === 405)) return false;
+    return await confirmCheckoutSession(externalSessionId);
+  } catch {
+    return false;
+  }
+}
+
+/** `GET /payments/status?plan=` until fulfilled; a refusal reads as "not yet". */
+export async function pollPaymentStatus(plan?: string, maxAttempts = 12): Promise<boolean> {
+  try {
+    return await pollStatus(plan, maxAttempts);
+  } catch {
     return false;
   }
 }
 
 /**
- * GET /payments/status → poll until fulfilment completes. The server emits
- * `pending` or `fulfilled`; returns true once `fulfilled`. `plan` scopes the
- * lookup to the purchased slug (mirrors iOS `pollPaymentStatus(plan:)`) so the
- * status endpoint resolves the right product — it matters most for `pass-*`.
- */
-export async function pollPaymentStatus(plan?: string, maxAttempts = 12): Promise<boolean> {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const { status } = await apiGet<{ status: string }>('/payments/status', { plan });
-      if (status === 'fulfilled') return true;
-    } catch {
-      // transient — keep polling
-    }
-    const delayMs = Math.min(attempt + 1, 5) * 1000;
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-  return false;
-}
-
-export type CheckoutOutcome = 'fulfilled' | 'pending' | 'canceled';
-
-/**
- * Full checkout flow: create the session, open Kling's hosted page, then settle
- * the outcome on return. openAuthSessionAsync opens a Chrome Custom Tab that
- * captures the lifepass:// return redirect — so unlike the email-confirmation
- * link, the custom-scheme return works on Android (the auth session intercepts
- * it instead of the browser trying to navigate to about:blank).
+ * Creates the checkout, opens it and verifies the purchase on return
+ * (src/payments `checkoutOnHostedPage`).
  */
 export async function startCheckout(
   productSlug: string,
   opts?: { saveCard?: boolean; promotionCode?: string },
 ): Promise<CheckoutOutcome> {
   const { url, externalSessionId } = await createCheckout(productSlug, opts);
-  return settleHostedCheckout(url, externalSessionId, productSlug);
+  const { userId, profile, subscription } = useAppStore.getState();
+  const memberId = userId ?? profile?.id;
+  if (!memberId) return settleHostedCheckout(url, externalSessionId, productSlug);
+  const result = await checkoutOnHostedPage({
+    memberId,
+    url,
+    externalSessionId: externalSessionId ?? null,
+    plan: {
+      productSlug,
+      planName: null,
+      prePurchasePassIds: activePasses(profile).map((pass) => pass.id),
+      prePurchaseSubSlug: subscription && isSubscriptionActive(subscription) ? subscription.productSlug : null,
+    },
+  });
+  if (result.kind !== 'verified') return 'canceled';
+  switch (result.verification.kind) {
+    case 'confirmed':
+      return 'fulfilled';
+    case 'cancelled':
+    case 'unverified':
+      return 'canceled';
+    case 'timeout':
+    case 'failed':
+      return 'pending';
+  }
 }
 
 /**
- * Open a Kling hosted-checkout URL and settle the outcome on return. Shared by
- * pass/plan checkout AND co-pay activation/retry (which return their URL from a
- * different endpoint). openAuthSessionAsync captures the lifepass:// return.
+ * Opens a hosted checkout whose URL came from elsewhere (the co-pay
+ * activation and retry) and settles it on return: the verified pull, then
+ * the status poll when a plan slug is known.
  */
 export async function settleHostedCheckout(
   url: string,
   externalSessionId?: string,
   plan?: string,
 ): Promise<CheckoutOutcome> {
-  const result = await WebBrowser.openAuthSessionAsync(url, PAYMENT_SUCCESS_URL);
-  if (result.type !== 'success' || !result.url) return 'canceled';
-  if (result.url.includes('payment-canceled')) return 'canceled';
-
-  // Returned via the success deep link. Trigger the server-side verified pull,
-  // then fall back to status polling until fulfilment lands.
-  let fulfilled = externalSessionId ? await confirmCheckout(externalSessionId) : false;
-  if (!fulfilled) fulfilled = await pollPaymentStatus(plan);
-  return fulfilled ? 'fulfilled' : 'pending';
+  const page = await openHostedPage(url, 'payment');
+  if (page.kind === 'neverOpened') return 'canceled';
+  // A plan checkout's cancel link is a deliberate back-out: nothing to verify
+  // (iOS `checkoutCancelled`). A co-pay page (no plan) is always confirmed.
+  if (plan && page.leg === 'cancel') return 'canceled';
+  if (externalSessionId && (await confirmCheckoutWithRetries(externalSessionId))) return 'fulfilled';
+  if (plan && (await pollPaymentStatus(plan))) return 'fulfilled';
+  return page.leg === 'cancel' ? 'canceled' : 'pending';
 }
