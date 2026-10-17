@@ -242,4 +242,32 @@ describe('NumberStepper', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Increase by 0.1 kilograms' }));
     expect(screen.getByTestId('weight.input')).toHaveDisplayValue('400');
   });
+
+  // iOS BodySheet.stepHeight reads the field with HealthFormat.parseInt, so a
+  // "170.5" it cannot read steps from the prefilled 170, never to 172.
+  it('a whole-number stepper reads the field as a whole number', async () => {
+    function Height() {
+      const [text, setText] = useState('170.5');
+      return (
+        <NumberStepper
+          testID="height"
+          text={text}
+          onChangeText={setText}
+          step={1}
+          min={100}
+          max={250}
+          fallback={170}
+          integer
+          unit="cm"
+          label="Height"
+          spokenUnit="centimetres"
+          decreaseLabel="Decrease by 1 centimetre"
+          increaseLabel="Increase by 1 centimetre"
+        />
+      );
+    }
+    await render(<Height />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Increase by 1 centimetre' }));
+    expect(screen.getByTestId('height.input')).toHaveDisplayValue('171');
+  });
 });

@@ -48,7 +48,11 @@ export type NumberStepperProps = {
   showButtons?: boolean;
   /** 'large': the check-in's 28 pt centred number; 'regular': a 17 pt field. */
   size?: 'large' | 'regular';
-  /** Whole numbers (the number pad, no separator); parse with `parseWholeNumber`. */
+  /**
+   * Whole numbers (the number pad, no separator); parse with
+   * `parseWholeNumber`. Steps read the field the same way, so a pasted
+   * "170.5" steps from `fallback`, never from a silently rounded 171.5.
+   */
   integer?: boolean;
   invalid?: boolean;
   disabled?: boolean;
@@ -87,7 +91,7 @@ export default function NumberStepper({
 
   const stepBy = (direction: 1 | -1) => {
     if (disabled) return;
-    const next = stepText(text, direction, { step, min, max, fallback, maxFractionDigits, language });
+    const next = stepText(text, direction, { step, min, max, fallback, maxFractionDigits, integer, language });
     if (next !== null) onChangeText(next);
   };
 
