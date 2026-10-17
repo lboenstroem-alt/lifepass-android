@@ -329,6 +329,42 @@ describe('the free tier', () => {
 
 // ---------------------------------------------------------------------------
 
+describe('where a flow sends the member (iOS programRoute)', () => {
+  it('the Plan tab, and Plan opened on its past plans or the saved proposal', async () => {
+    await renderCoach();
+    await act(async () => useCoachStore.getState().route({ kind: 'planTab' }));
+    expect(useIntentStore.getState().pendingTab).toBe('Plan');
+    expect(useIntentStore.getState().pendingPlanAction).toBeNull();
+
+    await act(async () => useCoachStore.getState().route({ kind: 'pastPlans' }));
+    expect(useIntentStore.getState().pendingPlanAction?.action).toEqual({ kind: 'openPastPlans' });
+
+    await act(async () => useCoachStore.getState().route({ kind: 'savedProposal' }));
+    expect(useIntentStore.getState().pendingPlanAction?.action).toEqual({ kind: 'openProposal' });
+    // Each is performed once.
+    expect(useCoachStore.getState().pendingRoute).toBeNull();
+  });
+
+  it('the memberships screen, Account, and a venue by slug', async () => {
+    await renderCoach();
+    await act(async () => useCoachStore.getState().route({ kind: 'plans' }));
+    await settle();
+    expect(screen.getByText('Plans {}')).toBeOnTheScreen();
+
+    await act(async () => navigation.goBack());
+    await act(async () => useCoachStore.getState().route({ kind: 'account' }));
+    await settle();
+    expect(screen.getByText('Account {}')).toBeOnTheScreen();
+
+    await act(async () => navigation.goBack());
+    await act(async () => useCoachStore.getState().route({ kind: 'venue', slug: 'laugardalslaug' }));
+    await settle();
+    expect(screen.getByText('VenueDetail {"slug":"laugardalslaug"}')).toBeOnTheScreen();
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe('the drawer', () => {
   it('lists no recents at first, and a new chat saves the one on screen to RECENTS', async () => {
     api.on('POST', '/coach', Reply.ok({ reply: 'Three pools.' }));
