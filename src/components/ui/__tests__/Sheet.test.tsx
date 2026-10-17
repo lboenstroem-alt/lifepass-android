@@ -1,55 +1,37 @@
 /**
  * The sheet's busy lock (plan F5: "The Sheet refuses dismissal while busy,
- * swipe and back"), hardware back, the controlled open/close cycle, the
- * pinned footer, and TalkBack focus.
+ * swipe and back"), hardware back, the controlled open/close cycle and its
+ * presentations, the pinned footer, the screen's context inside the sheet,
+ * and TalkBack focus.
  *
- * The library's own test stand-in renders a sheet's children inline and has
- * no footer slot; this file wraps it to record the props the sheet hands the
- * library, to draw the footer slot as the library does (below the content),
- * and to play the library's part (`onDismiss` once the slide-out ends,
- * `onChange` once it has settled).
+ * Run on the kit's stand-in for the library (../testing/bottomSheetMock):
+ * it records the props the sheet hands the library, has the footer slot,
+ * renders into the provider's host when there is one (as on a phone), and
+ * plays the library's part where a test asks (`onDismiss` once the slide-out
+ * ends, `onChange` once it has settled).
  */
+import { NavigationContainer, useIsFocused, useNavigation, useRoute } from '@react-navigation/native';
+import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as ReactNative from 'react-native';
-import { AccessibilityInfo, BackHandler, StyleSheet, Text, type View } from 'react-native';
-import { createRef, type ReactElement, type ReactNode } from 'react';
+import { AccessibilityInfo, BackHandler, Pressable, StyleSheet, Text, type View } from 'react-native';
+import { createContext, createRef, useContext, useState, type ReactElement } from 'react';
 
 import Sheet, { SHEET_CLOSE_FALLBACK_MS } from '../Sheet';
 import { useInSheet } from '../SheetTextInput';
+import { bottomSheetMock } from '../testing/bottomSheetMock';
+import UiKitProvider from '../UiKitProvider';
 
-type ModalProps = {
-  enablePanDownToClose?: boolean;
-  enableDynamicSizing?: boolean;
-  snapPoints?: (string | number)[];
-  onDismiss?: () => void;
-  onChange?: (index: number) => void;
-  accessible?: boolean;
-  android_keyboardInputMode?: string;
-  keyboardBehavior?: string;
-  footerComponent?: (props: object) => ReactElement;
-  backdropComponent?: (props: object) => ReactElement<{ pressBehavior?: string; accessible?: boolean }>;
-};
+jest.mock('@gorhom/bottom-sheet', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('../testing/bottomSheetMock').bottomSheetModule,
+);
+jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 
-const mockModals: ModalProps[] = [];
+type Backdrop = ReactElement<{ pressBehavior?: string; accessible?: boolean }>;
 
-jest.mock('@gorhom/bottom-sheet', () => {
-  /* eslint-disable @typescript-eslint/no-require-imports */
-  const library = jest.requireActual('@gorhom/bottom-sheet/mock');
-  const React = require('react');
-  /* eslint-enable @typescript-eslint/no-require-imports */
-  class RecordingModal extends library.BottomSheetModal {
-    render() {
-      mockModals.push(this.props as ModalProps);
-      const { footerComponent } = this.props as ModalProps;
-      return React.createElement(React.Fragment, null, super.render(), footerComponent ? footerComponent({}) : null);
-    }
-  }
-  // The footer slot: the library positions it; here it just draws its children.
-  const BottomSheetFooter = ({ children }: { children: ReactNode }) => children;
-  return { ...library, __esModule: true, BottomSheetModal: RecordingModal, BottomSheetFooter };
-});
-
-const lastModal = () => mockModals[mockModals.length - 1];
+const lastModal = () => bottomSheetMock.latest()!;
+const backdrop = () => lastModal().backdropComponent!({}) as Backdrop;
 
 /** The hardware-back listeners the sheet registered, newest last. */
 function backListeners(): (() => boolean | null | undefined)[] {
@@ -59,7 +41,9 @@ function backListeners(): (() => boolean | null | undefined)[] {
 }
 
 beforeEach(() => {
-  mockModals.length = 0;
+  bottomSheetMock.reset();
+  // Most tests here play the library's part: the slide-out ends when they say.
+  bottomSheetMock.settleDismiss = false;
   jest.spyOn(BackHandler, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() }));
 });
 afterEach(() => jest.restoreAllMocks());
@@ -92,7 +76,7 @@ describe('busy lock', () => {
     const { element, onClose } = renderSheet();
     await render(element);
     expect(lastModal().enablePanDownToClose).toBe(true);
-    expect(lastModal().backdropComponent!({}).props.pressBehavior).toBe('close');
+    expect(backdrop().props.pressBehavior).toBe('close');
     const back = backListeners().at(-1)!;
     let consumed: boolean | null | undefined;
     await act(async () => {
@@ -106,7 +90,7 @@ describe('busy lock', () => {
     const { element, onClose } = renderSheet({ busy: true });
     await render(element);
     expect(lastModal().enablePanDownToClose).toBe(false);
-    expect(lastModal().backdropComponent!({}).props.pressBehavior).toBe('none');
+    expect(backdrop().props.pressBehavior).toBe('none');
     const back = backListeners().at(-1)!;
     let consumed: boolean | null | undefined;
     await act(async () => {
@@ -233,7 +217,7 @@ it("never lets TalkBack read the library's English labels", async () => {
   const { element } = renderSheet();
   await render(element);
   expect(lastModal().accessible).toBe(false);
-  expect(lastModal().backdropComponent!({}).props.accessible).toBe(false);
+  expect(backdrop().props.accessible).toBe(false);
 });
 
 describe('fields inside a sheet', () => {
@@ -275,7 +259,7 @@ describe('pinned footer', () => {
     const footer = screen.getByTestId('sheet.footer');
     expect(screen.getByText('Confirm')).toBeOnTheScreen();
     const padding = () =>
-      (StyleSheet.flatten(screen.getByTestId('sheet').props.contentContainerStyle) as { paddingBottom: number }).paddingBottom;
+      (StyleSheet.flatten(screen.getByTestId('sheet.content').props.style) as { paddingBottom: number }).paddingBottom;
     expect(padding()).toBe(8);
     await fireEvent(footer, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 120 } } });
     expect(padding()).toBe(128);
@@ -343,5 +327,227 @@ describe('TalkBack focus', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('TalkBack focus in a sheet that does not scroll', () => {
+  const setFocus = AccessibilityInfo.setAccessibilityFocus as jest.Mock;
+
+  it('with no target named, moves to its content view', async () => {
+    const handled: unknown[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const reactNative: typeof ReactNative = require('react-native');
+    jest.spyOn(reactNative, 'findNodeHandle').mockImplementation(((instance: unknown) => {
+      handled.push(instance);
+      return instance == null ? null : 12;
+    }) as typeof ReactNative.findNodeHandle);
+    await render(
+      <Sheet visible onClose={jest.fn()} scrollable={false} testID="sheet">
+        <Text>Sheet body</Text>
+      </Sheet>,
+    );
+    await act(async () => lastModal().onChange!(0));
+    expect(setFocus).toHaveBeenCalledWith(12);
+    expect(handled).toHaveLength(1);
+    expect(handled[0]).toBeTruthy();
+  });
+});
+
+describe('while it slides away (closed by the parent)', () => {
+  function sheet(visible: boolean, onBody: () => void, onFooter: () => void) {
+    return (
+      <Sheet
+        visible={visible}
+        onClose={jest.fn()}
+        footer={
+          <Pressable accessibilityRole="button" onPress={onFooter}>
+            <Text>Done</Text>
+          </Pressable>
+        }
+      >
+        <Pressable accessibilityRole="button" onPress={onBody}>
+          <Text>See venue</Text>
+        </Pressable>
+      </Sheet>
+    );
+  }
+
+  it('takes no more touches, in the content or the footer, so nothing in it runs twice', async () => {
+    const onBody = jest.fn();
+    const onFooter = jest.fn();
+    const view = await render(sheet(true, onBody, onFooter));
+    await fireEvent.press(screen.getByRole('button', { name: 'See venue' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Done' }));
+    expect(onBody).toHaveBeenCalledTimes(1);
+    expect(onFooter).toHaveBeenCalledTimes(1);
+
+    await view.rerender(sheet(false, onBody, onFooter));
+    // Still drawn while it slides out, but no longer pressable.
+    expect(screen.getByRole('button', { name: 'See venue' })).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: 'See venue' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Done' }));
+    expect(onBody).toHaveBeenCalledTimes(1);
+    expect(onFooter).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('each opening is its own presentation', () => {
+  function sheet(visible: boolean, onClose: () => void, onClosed: () => void) {
+    return (
+      <Sheet visible={visible} onClose={onClose} onClosed={onClosed}>
+        <Text>Sheet body</Text>
+      </Sheet>
+    );
+  }
+
+  it('closed and at once reopened: a fresh sheet comes up, and the late report of the first close changes nothing', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { BottomSheetModal } = require('@gorhom/bottom-sheet');
+    const present = jest.spyOn(BottomSheetModal.prototype, 'present');
+    const onClose = jest.fn();
+    const onClosed = jest.fn();
+    const view = await render(sheet(true, onClose, onClosed));
+    expect(present).toHaveBeenCalledTimes(1);
+    const first = present.mock.contexts[0];
+
+    await view.rerender(sheet(false, onClose, onClosed));
+    const reportFirstClose = lastModal().onDismiss!;
+    await view.rerender(sheet(true, onClose, onClosed));
+    // A new modal is presented; the closing one is never asked to come back.
+    expect(present).toHaveBeenCalledTimes(2);
+    expect(present.mock.contexts[1]).not.toBe(first);
+
+    await act(async () => reportFirstClose());
+    expect(screen.getByText('Sheet body')).toBeOnTheScreen();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onClosed).not.toHaveBeenCalled();
+
+    // The new presentation still closes as any other.
+    await view.rerender(sheet(false, onClose, onClosed));
+    await act(async () => lastModal().onDismiss!());
+    expect(screen.queryByText('Sheet body')).toBeNull();
+    expect(onClosed).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('the fallback finished the close, then the library reports it: closed once, and the parent is not told the member closed it', async () => {
+    jest.useFakeTimers();
+    try {
+      const onClose = jest.fn();
+      const onClosed = jest.fn();
+      const view = await render(sheet(true, onClose, onClosed));
+      await view.rerender(sheet(false, onClose, onClosed));
+      const report = lastModal().onDismiss!;
+      await act(async () => {
+        jest.advanceTimersByTime(SHEET_CLOSE_FALLBACK_MS);
+      });
+      expect(screen.queryByText('Sheet body')).toBeNull();
+      expect(onClosed).toHaveBeenCalledTimes(1);
+      await act(async () => report());
+      expect(onClosed).toHaveBeenCalledTimes(1);
+      expect(onClose).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('its screen unmounted while it was up: a later report from the library tells nobody', async () => {
+    const onClose = jest.fn();
+    const onClosed = jest.fn();
+    const view = await render(sheet(true, onClose, onClosed));
+    const report = lastModal().onDismiss!;
+    await act(async () => view.unmount());
+    await act(async () => report());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onClosed).not.toHaveBeenCalled();
+  });
+
+  it('a member close (pan down) is reported once, however often the library repeats it', async () => {
+    const onClose = jest.fn();
+    const onClosed = jest.fn();
+    await render(sheet(true, onClose, onClosed));
+    const report = lastModal().onDismiss!;
+    await act(async () => report());
+    await act(async () => report());
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the screen's context inside the sheet", () => {
+  // On a phone the library draws the sheet in UiKitProvider's host, above
+  // every screen; the stand-in does the same inside the provider. So a
+  // context the Sheet does not carry across is missing here as it is there.
+  const ScreenOnly = createContext('missing');
+
+  type Params = { Venue: undefined; Detail: undefined };
+  const Stack = createNativeStackNavigator<Params>();
+
+  function SheetContent() {
+    const route = useRoute();
+    const focused = useIsFocused();
+    const navigation = useNavigation<NativeStackScreenProps<Params, 'Venue'>['navigation']>();
+    const screenOnly = useContext(ScreenOnly);
+    return (
+      <>
+        <Text>{`route: ${route.name}`}</Text>
+        <Text>{`focused: ${focused}`}</Text>
+        <Text>{`screen-only context: ${screenOnly}`}</Text>
+        <Pressable accessibilityRole="button" onPress={() => navigation.navigate('Detail')}>
+          <Text>See details</Text>
+        </Pressable>
+      </>
+    );
+  }
+
+  function FooterContent() {
+    return <Text>{`footer route: ${useRoute().name}, ${useIsFocused() ? 'focused' : 'blurred'}`}</Text>;
+  }
+
+  function VenueScreen() {
+    const [open, setOpen] = useState(true);
+    return (
+      <ScreenOnly.Provider value="present">
+        <Text>Venue screen</Text>
+        <Sheet visible={open} onClose={() => setOpen(false)} footer={<FooterContent />}>
+          <SheetContent />
+        </Sheet>
+      </ScreenOnly.Provider>
+    );
+  }
+
+  function DetailScreen() {
+    return <Text>Detail screen</Text>;
+  }
+
+  async function renderApp() {
+    await render(
+      <NavigationContainer>
+        <UiKitProvider>
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="Venue" component={VenueScreen} />
+            <Stack.Screen name="Detail" component={DetailScreen} />
+          </Stack.Navigator>
+        </UiKitProvider>
+      </NavigationContainer>,
+    );
+  }
+
+  it('is drawn outside the screen that opened it, as on a phone', async () => {
+    await renderApp();
+    expect(await screen.findByText('screen-only context: missing')).toBeOnTheScreen();
+  });
+
+  it("reads that screen's route and focus, in the content and the footer, and navigates through its stack", async () => {
+    await renderApp();
+    expect(await screen.findByText('route: Venue')).toBeOnTheScreen();
+    expect(screen.getByText('focused: true')).toBeOnTheScreen();
+    expect(screen.getByText('footer route: Venue, focused')).toBeOnTheScreen();
+
+    await fireEvent.press(screen.getByRole('button', { name: 'See details' }));
+    // The sheet is still up over the stack, so the screens are hidden from TalkBack.
+    expect(await screen.findByText('Detail screen', { includeHiddenElements: true })).toBeOnTheScreen();
+    expect(screen.getByText('focused: false')).toBeOnTheScreen();
+    expect(screen.getByText('footer route: Venue, blurred')).toBeOnTheScreen();
   });
 });

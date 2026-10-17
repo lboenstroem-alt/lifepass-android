@@ -5,7 +5,17 @@ import { dismissAllDialogs, showDialog } from '../Dialog';
 import { resetUiKit } from '../reset';
 import Sheet from '../Sheet';
 import { dismissToast, showToast } from '../Toast';
+import { bottomSheetMock } from '../testing/bottomSheetMock';
 import UiKitProvider from '../UiKitProvider';
+
+// The kit's stand-in for the sheet library: inside the provider a sheet is
+// drawn in the provider's host, after the screens, as on a phone.
+jest.mock('@gorhom/bottom-sheet', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('../testing/bottomSheetMock').bottomSheetModule,
+);
+
+beforeEach(() => bottomSheetMock.reset());
 
 afterEach(async () => {
   await act(async () => {
@@ -50,19 +60,16 @@ it("sign-out's reset drops queued dialogs and the toast without running a button
 });
 
 describe('a sheet is modal to TalkBack, as an iOS sheet is to VoiceOver', () => {
-  // On a phone the sheet renders into the provider's portal host, a sibling
-  // drawn after the screens; the test stand-in renders it where it is
-  // declared, so it is declared beside the provider here.
+  // The sheet is declared on the screen, as an app screen declares it, and
+  // drawn in the provider's host, a sibling after the screens' layer.
   function App({ sheetOpen }: { sheetOpen: boolean }) {
     return (
-      <>
-        <UiKitProvider>
-          <Text>Book</Text>
-        </UiKitProvider>
+      <UiKitProvider>
+        <Text>Book</Text>
         <Sheet visible={sheetOpen} onClose={jest.fn()} busy>
           <Text>Confirm and pay</Text>
         </Sheet>
-      </>
+      </UiKitProvider>
     );
   }
 
