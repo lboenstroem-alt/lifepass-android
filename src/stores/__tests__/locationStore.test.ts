@@ -14,6 +14,7 @@ import {
   selectEffectiveLocation,
   selectGrantedLocation,
   selectLocationOff,
+  startLocationAtLaunch,
   startLocationLifecycle,
   type LocationFix,
   type LocationPermission,
@@ -296,6 +297,44 @@ describe('the lifecycle', () => {
     expect(session.getState().seed).toBe(1001);
     expect(phone.fixes).toBe(fixesAtStart + 1);
     expect(session.getState().origin).toEqual(phone.fix);
+    stop();
+  });
+
+  it('launch asks once, while the member has not decided, and never again', async () => {
+    const phone = new FakePhone();
+    phone.answer = 'denied';
+    const session = createBrowseSession({ seed: 7 });
+    const location = createLocationStore({ platform: phone, session, now: () => NOW });
+    const appState = fakeAppState();
+    const stop = startLocationAtLaunch({ appState, location, session, now: () => NOW });
+    await flush();
+    await flush();
+    expect(phone.prompts).toBe(1);
+    // "Don't allow" shows the banner at once, and nothing orders by a fix.
+    expect(selectLocationOff(location.getState())).toBe(true);
+    expect(session.getState().origin).toBeNull();
+    stop();
+
+    // The next launch: the member has decided, so no dialog.
+    const relaunch = startLocationAtLaunch({ appState, location, session, now: () => NOW });
+    await flush();
+    await flush();
+    expect(phone.prompts).toBe(1);
+    relaunch();
+    expect(appState.count).toBe(0);
+  });
+
+  it('launch with location allowed brings the first fix to the browse order', async () => {
+    const phone = new FakePhone();
+    phone.permission = 'granted';
+    const session = createBrowseSession({ seed: 7 });
+    const location = createLocationStore({ platform: phone, session, now: () => NOW });
+    const stop = startLocationAtLaunch({ appState: fakeAppState(), location, session, now: () => NOW });
+    await flush();
+    await flush();
+    expect(phone.prompts).toBe(0);
+    expect(phone.fixes).toBe(1);
+    expect(session.getState().origin).toEqual(reykjavikFix);
     stop();
   });
 

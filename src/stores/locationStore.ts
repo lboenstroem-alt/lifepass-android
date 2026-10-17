@@ -8,7 +8,8 @@
 //    the system dialog, and only while the member has not decided yet: once
 //    they have, it never asks again (as iOS, which cannot ask twice; Android
 //    could, and that would be nagging). Callers are the places iOS asks from:
-//    app launch, an Explore visit, Home, Coach "near me", classes "Near me".
+//    app launch (`startLocationAtLaunch`), an Explore visit, Home, Coach
+//    "near me", classes "Near me".
 //  - About 100 m accuracy (Balanced), which the 3 km band and the map dot
 //    need; an approximate grant (Android 12+) still counts as granted, as a
 //    reduced-accuracy grant does on iOS.
@@ -314,8 +315,8 @@ let stopShared: (() => void) | null = null;
  *     it re-reads the permission, so a member back from Settings sees the
  *     banner go and their position come in.
  * Idempotent for the shared stores: a second call returns the same stop.
- * F4 calls it at the app root; the venue list hooks call it too, so the
- * wiring exists wherever venues are shown.
+ * The app root starts it through `startLocationAtLaunch`; the legacy Home
+ * hook (src/hooks/useLocation.ts) starts it too until HOME-1 replaces it.
  */
 export function startLocationLifecycle(options: LifecycleOptions = {}): () => void {
   const shared = !options.location && !options.session && !options.appState;
@@ -345,5 +346,23 @@ export function startLocationLifecycle(options: LifecycleOptions = {}): () => vo
     if (shared && stopShared === stop) stopShared = null;
   };
   if (shared) stopShared = stop;
+  return stop;
+}
+
+/**
+ * What the app root does once at launch (iOS LifePassApp: `.task {
+ * LocationService.shared.requestLocation() }` on the root view, and its
+ * scene-phase handler): starts the lifecycle above and asks for location.
+ *
+ * At LAUNCH, not when Home appears: a link (a QR scan, a booking link) can
+ * open the app straight into another tab, and a member who was never asked
+ * would get no distance order at all. Asking costs nothing once the member
+ * has decided: the dialog shows only while the permission is undetermined,
+ * and after that this only refreshes the fix when location is allowed.
+ * Returns the lifecycle's stop (the same one on a second call).
+ */
+export function startLocationAtLaunch(options: LifecycleOptions = {}): () => void {
+  const stop = startLocationLifecycle(options);
+  void (options.location ?? locationStore).getState().requestLocation();
   return stop;
 }
