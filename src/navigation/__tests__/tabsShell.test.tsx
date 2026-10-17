@@ -66,8 +66,9 @@ jest.mock('../../screens/checkin/CheckInScreen', () => require('./standIn').stan
 jest.mock('../../screens/bookings/BookingsScreen', () => require('./standIn').standInScreen('Library'));
 jest.mock('../../screens/account/AccountScreen', () => require('./standIn').standInScreen('LegacyAccount'));
 jest.mock('../../screens/account/TopUpScreen', () => require('./standIn').standInScreen('TopUp'));
-// The first build's venue page: its walk-in bar sends 'CheckIn' to the tab navigator, as the real one does.
-jest.mock('../../screens/venue/VenueDetailScreen', () => {
+// A venue page as the first build drew it: its walk-in bar sends 'CheckIn' to the tab navigator.
+// (VENUE-1's page pushes ScanPushed itself; this keeps the legacy name's translation tested.)
+jest.mock('../../features/venue/VenueDetailScreen', () => {
   const { Pressable: MockPressable, Text: MockText } = require('react-native');
   const { useNavigation: mockUseNavigation } = require('@react-navigation/native');
   function LegacyVenue() {
