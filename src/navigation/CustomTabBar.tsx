@@ -20,13 +20,16 @@
  *   everywhere else it fades to warm paper.
  * - Each tap fires `nav_tab_selected {tab}`. Tapping the tab you are on pops
  *   that tab back to its first screen.
+ * - The bar ignores the keyboard, as on iOS, where the keyboard simply covers
+ *   it: while the keyboard is up the bar is not drawn, so it can never ride
+ *   up over a text field (the Coach's input, a search).
  */
 import { Ionicons } from '@expo/vector-icons';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { StackActions, type NavigationState, type PartialState } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 
@@ -86,6 +89,20 @@ function focusedChildRoute(state: BottomTabBarProps['state']): string | undefine
   return child.routes[child.index]?.name;
 }
 
+/** True while the software keyboard is up. */
+function useKeyboardShown(): boolean {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setShown(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setShown(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return shown;
+}
+
 /** Whether the bar sits on a dark surface: Coach, or Scan while the camera is live. */
 export function barOnDarkSurface(tab: MainTab | undefined, scanCameraLive: boolean): boolean {
   return tab === 'Coach' || (tab === 'Scan' && scanCameraLive);
@@ -103,12 +120,13 @@ export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const healthAccess = useAppStore((s) => s.healthAccess);
   const planTabSeen = useNavPrefs((s) => s.planTabSeen);
   const prefsHydrated = useNavPrefs((s) => s.hydrated);
+  const keyboardShown = useKeyboardShown();
 
   const activeTab = state.routes[state.index]?.name as MainTab | undefined;
   const onDark = barOnDarkSurface(activeTab, scanCameraLive);
   const planDot = showsPlanDot(healthAccess, planTabSeen, prefsHydrated);
 
-  if (BAR_HIDDEN_ON_ROUTES.includes(focusedChildRoute(state) ?? '')) return null;
+  if (keyboardShown || BAR_HIDDEN_ON_ROUTES.includes(focusedChildRoute(state) ?? '')) return null;
 
   function select(tab: MainTab): void {
     const index = state.routes.findIndex((route) => route.name === tab);

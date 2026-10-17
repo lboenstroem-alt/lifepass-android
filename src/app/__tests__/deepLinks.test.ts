@@ -32,6 +32,8 @@ beforeEach(() => {
   mockHandleAuthCallback.mockClear();
 });
 
+afterEach(() => jest.restoreAllMocks());
+
 describe('check-in links', () => {
   it('the printed App Link, on either host, and the custom scheme all park the venue', () => {
     for (const url of [

@@ -8,7 +8,7 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { NavigationContainer } from '@react-navigation/native';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { Keyboard, Text } from 'react-native';
 
 import { setAnalyticsObserver, type AnalyticsParams } from '../../lib/analytics';
 import { resetAppStoreForTests, useAppStore } from '../../stores/appStore';
@@ -60,6 +60,7 @@ beforeEach(() => {
 afterEach(() => {
   setAnalyticsObserver(null);
   resetAppStoreForTests();
+  jest.restoreAllMocks();
 });
 
 describe('NavigationAccessibilityUITests', () => {
@@ -168,5 +169,22 @@ describe('the dark treatment', () => {
     expect(screen.getByTestId('tab-bar.light')).toBeOnTheScreen();
     await act(async () => useIntentStore.getState().setScanCameraLive(true));
     expect(screen.getByTestId('tab-bar.dark')).toBeOnTheScreen();
+  });
+});
+
+describe('the keyboard', () => {
+  it('covers the bar, as on iOS: the bar is not drawn while it is up', async () => {
+    const listeners: Record<string, () => void> = {};
+    jest.spyOn(Keyboard, 'addListener').mockImplementation(((event: string, listener: () => void) => {
+      listeners[event] = listener;
+      return { remove: jest.fn() };
+    }) as never);
+    member('entitled');
+    await render(<Bar />);
+    expect(screen.getByTestId('tab-bar')).toBeOnTheScreen();
+    await act(async () => listeners.keyboardDidShow?.());
+    expect(screen.queryByTestId('tab-bar')).toBeNull();
+    await act(async () => listeners.keyboardDidHide?.());
+    expect(screen.getByTestId('tab-bar')).toBeOnTheScreen();
   });
 });

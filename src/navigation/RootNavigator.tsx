@@ -5,6 +5,9 @@
  * sign-in screens. The navigator gates on the app store's `isAuthenticated`,
  * as iOS ContentView does, not on a session object.
  *
+ * The set-new-password screen after a reset link sits over both (AUTH-1's
+ * host), as iOS ContentView presents it over whatever is showing.
+ *
  * Root modals cover the tab bar (iOS sheets and full-screen covers): Plans,
  * WriteReview and the classes sheet slide up over it; the meal page and the
  * workout runner take the whole screen.
@@ -12,6 +15,7 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import LaunchScreen from '../components/LaunchScreen';
+import PasswordRecoveryHost from '../features/auth/PasswordRecoveryHost';
 import ClassesDiscoveryModalScreen from '../features/classes/ClassesDiscoveryModalScreen';
 import PlansScreen from '../features/plans/PlansScreen';
 import WorkoutRunnerScreen from '../features/runner/screen/WorkoutRunnerScreen';
@@ -33,23 +37,27 @@ export default function RootNavigator() {
   if (isLoading || !launchDecided) return <LaunchScreen />;
 
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      {isAuthenticated ? (
-        <>
-          <Stack.Screen name="Main" component={TabNavigator} />
-          <Stack.Group screenOptions={{ presentation: 'modal' }}>
-            <Stack.Screen name="Plans" component={PlansScreen} />
-            <Stack.Screen name="WriteReview" component={WriteReviewScreen} />
-            <Stack.Screen name="ClassesDiscoveryModal" component={ClassesDiscoveryModalScreen} />
-          </Stack.Group>
-          <Stack.Group screenOptions={{ presentation: 'fullScreenModal' }}>
-            <Stack.Screen name="MealCapture" component={MealCaptureNavigator} />
-            <Stack.Screen name="WorkoutRunner" component={WorkoutRunnerScreen} />
-          </Stack.Group>
-        </>
-      ) : (
-        <Stack.Screen name="Auth" component={AuthNavigator} />
-      )}
-    </Stack.Navigator>
+    <>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {isAuthenticated ? (
+          <>
+            <Stack.Screen name="Main" component={TabNavigator} />
+            <Stack.Group screenOptions={{ presentation: 'modal' }}>
+              <Stack.Screen name="Plans" component={PlansScreen} />
+              <Stack.Screen name="WriteReview" component={WriteReviewScreen} />
+              <Stack.Screen name="ClassesDiscoveryModal" component={ClassesDiscoveryModalScreen} />
+            </Stack.Group>
+            <Stack.Group screenOptions={{ presentation: 'fullScreenModal' }}>
+              <Stack.Screen name="MealCapture" component={MealCaptureNavigator} />
+              <Stack.Screen name="WorkoutRunner" component={WorkoutRunnerScreen} />
+            </Stack.Group>
+          </>
+        ) : (
+          <Stack.Screen name="Auth" component={AuthNavigator} />
+        )}
+      </Stack.Navigator>
+      {/* Set a new password after a reset link, over whatever shows (iOS ContentView's sheet). */}
+      <PasswordRecoveryHost />
+    </>
   );
 }

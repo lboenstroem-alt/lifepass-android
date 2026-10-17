@@ -2,8 +2,8 @@
  * The app root (iOS LifePassApp + ContentView).
  *
  * Once per process, before the first signed-in screen:
- * - the tab migration and the cold-launch tab (src/app/launchTab.ts), and
- *   the tab bar's stored prefs;
+ * - the tab migration, the cold-launch tab and the tab bar's stored prefs
+ *   (src/app/launchTab.ts);
  * - the session restore and first profile read (the app store's `bootstrap`,
  *   behind the launch screen);
  * - location at LAUNCH, not when Home appears: a link can open the app
@@ -48,7 +48,7 @@ import { startNotificationRouter } from './src/app/notificationRouter';
 import { UiKitProvider } from './src/components/ui';
 import { onUnhandledNavigationAction } from './src/navigation/legacyRoutes';
 import { navigationRef } from './src/navigation/navigationRef';
-import { hydrateNavPrefs, setLaunchTab } from './src/navigation/navPrefs';
+import { setLaunchTab } from './src/navigation/navPrefs';
 import RootNavigator from './src/navigation/RootNavigator';
 import { useAppStore } from './src/stores/appStore';
 import { startLocationAtLaunch } from './src/stores/locationStore';
@@ -69,7 +69,6 @@ export function launchApp(): void {
   // The tab is decided alongside the session restore; the launch screen
   // waits for both (RootNavigator).
   void prepareLaunchTab().then(setLaunchTab, () => setLaunchTab('Explore'));
-  void hydrateNavPrefs();
   void useAppStore.getState().bootstrap();
 }
 

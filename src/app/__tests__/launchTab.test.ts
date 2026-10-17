@@ -5,6 +5,8 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { setDev, setEnv } from '@test/harness';
+
 import { resetIntentStoreForTests, useIntentStore } from '../../stores/intentStore';
 import { MEMBER_A, storeSession } from '../../stores/__tests__/storeHarness';
 import { MAIN_TABS } from '../../navigation/types';
@@ -20,7 +22,9 @@ import {
   TABS_V2_KEY,
   UPGRADED_FROM_PROFILE_TAB_KEY,
 } from '../launchTab';
-import { SELECTED_TAB_KEY } from '../../navigation/navPrefs';
+import { PLAN_TAB_SEEN_KEY, resetNavPrefsForTests, SELECTED_TAB_KEY, useNavPrefs } from '../../navigation/navPrefs';
+import { FIXTURE_PROFILE_ID } from '../../dev/fixtureSession';
+import { resetNotificationRouterForTests, useNotificationRouter } from '../notificationRouter';
 
 const mockResumable = jest.fn(async (_profileId?: string): Promise<{ sessionId: string | null } | null> => null);
 jest.mock('../../features/runner', () => ({
@@ -29,6 +33,8 @@ jest.mock('../../features/runner', () => ({
 
 beforeEach(() => {
   resetIntentStoreForTests();
+  resetNavPrefsForTests();
+  resetNotificationRouterForTests();
   mockResumable.mockReset();
   mockResumable.mockResolvedValue(null);
 });
@@ -131,5 +137,39 @@ describe('the nav.tabs.v2 migration', () => {
     await AsyncStorage.setItem(SELECTED_TAB_KEY, '4');
     await migrateTabSelection();
     expect(await AsyncStorage.getItem(SELECTED_TAB_KEY)).toBe('Home');
+  });
+});
+
+describe('the tab bar prefs', () => {
+  it('are read at launch: a member who saw Plan never gets its dot back', async () => {
+    await AsyncStorage.setItem(PLAN_TAB_SEEN_KEY, 'true');
+    await prepareLaunchTab();
+    expect(useNavPrefs.getState()).toMatchObject({ hydrated: true, planTabSeen: true });
+  });
+});
+
+describe('development fixtures (iOS ScreenshotFixtures.applyLaunchDefaults)', () => {
+  it("a fixture run's tab wins over the launch rule, with its dot, pointer and tapped notification", async () => {
+    setEnv({ EXPO_PUBLIC_FIXTURE: 'state=active-plan,tab=4,planDot,profileHint,notification=plan.checkin' });
+    await AsyncStorage.setItem(`nav.profileHint.${FIXTURE_PROFILE_ID}.profileOpened`, 'true');
+    expect(await prepareLaunchTab()).toBe('Plan');
+    expect(useIntentStore.getState().exploreLaunchPresentation).toBe(false);
+    expect(useNavPrefs.getState().planTabSeen).toBe(false);
+    expect(await AsyncStorage.getItem(UPGRADED_FROM_PROFILE_TAB_KEY)).toBe('true');
+    expect(await AsyncStorage.getItem(`nav.profileHint.${FIXTURE_PROFILE_ID}.profileOpened`)).toBeNull();
+    expect(useNotificationRouter.getState().pending).toEqual({ route: 'plan.checkin', reportId: null });
+  });
+
+  it('without a tab, the run opens on Explore with no dot and no pointer', async () => {
+    setEnv({ EXPO_PUBLIC_FIXTURE: 'state=active-plan' });
+    expect(await prepareLaunchTab()).toBe('Explore');
+    expect(useNavPrefs.getState().planTabSeen).toBe(true);
+    expect(await AsyncStorage.getItem(UPGRADED_FROM_PROFILE_TAB_KEY)).toBe('false');
+  });
+
+  it('do nothing in a release build', async () => {
+    setDev(false);
+    setEnv({ EXPO_PUBLIC_FIXTURE: 'state=active-plan,tab=4' });
+    expect(await prepareLaunchTab()).toBe('Explore');
   });
 });

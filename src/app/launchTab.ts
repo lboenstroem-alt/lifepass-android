@@ -27,16 +27,22 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { FIXTURE_PROFILE_ID, requestedFixtureState } from '../dev/fixtureSession';
+import { fixtureArg, hasFixture } from '../dev/fixtures';
 import { resumableWorkout } from '../features/runner';
 import { readStoredSession } from '../lib/secureSessionStorage';
 import {
+  hydrateNavPrefs,
   parseStoredTab,
   persistSelectedTab,
+  PLAN_TAB_SEEN_KEY,
   SELECTED_TAB_KEY,
   TABS_V2_KEY,
   UPGRADED_FROM_PROFILE_TAB_KEY,
 } from '../navigation/navPrefs';
-import type { MainTab } from '../navigation/types';
+import { profileOpenedKey } from '../navigation/profile';
+import { MAIN_TABS, type MainTab } from '../navigation/types';
+import { routeFromData, useNotificationRouter } from './notificationRouter';
 import { useIntentStore } from '../stores/intentStore';
 import { SUPABASE_STORAGE_KEY } from '../supabase/lib/client';
 
@@ -126,13 +132,40 @@ export async function applyColdLaunchTab(): Promise<MainTab> {
 }
 
 /**
+ * Development fixtures only (iOS `ScreenshotFixtures.applyLaunchDefaults`):
+ * a run that stands up a fixture member may ask for a tab (`tab=0..4`, iOS
+ * indices), the moved-Profile pointer (`profileHint`), the Plan dot
+ * (`planDot`) and a tapped notification (`notification=plan.checkin`). The
+ * migration counts as done, or it would reset the tab the run asked for.
+ * Returns the tab asked for, or null. Does nothing in a release build.
+ */
+export async function applyFixtureLaunchDefaults(): Promise<MainTab | null> {
+  if (!__DEV__ || requestedFixtureState() === null) return null;
+  await AsyncStorage.multiSet([
+    [TABS_V2_KEY, 'true'],
+    [UPGRADED_FROM_PROFILE_TAB_KEY, hasFixture('profileHint') ? 'true' : 'false'],
+    [PLAN_TAB_SEEN_KEY, hasFixture('planDot') ? 'false' : 'true'],
+  ]);
+  await AsyncStorage.removeItem(profileOpenedKey(FIXTURE_PROFILE_ID));
+  const route = routeFromData({ route: fixtureArg('notification') });
+  if (route) useNotificationRouter.setState({ pending: route });
+  const raw = fixtureArg('tab');
+  const tab = raw !== null && /^[0-4]$/.test(raw) ? (MAIN_TABS[Number(raw)] ?? null) : null;
+  if (tab) persistSelectedTab(tab);
+  return tab;
+}
+
+/**
  * Everything launch decides before the first signed-in screen: the migration,
- * then the tab, then (on Explore) the one-time filter presentation. Returns
+ * then the tab (a development fixture's tab wins, as on iOS), the tab bar's
+ * stored prefs, then (on Explore) the one-time filter presentation. Returns
  * the tab the tabs navigator opens on.
  */
 export async function prepareLaunchTab(): Promise<MainTab> {
   await migrateTabSelection();
-  const tab = await applyColdLaunchTab();
+  const coldTab = await applyColdLaunchTab();
+  const tab = (await applyFixtureLaunchDefaults().catch(() => null)) ?? coldTab;
+  await hydrateNavPrefs();
   useIntentStore.getState().setExploreLaunchPresentation(tab === LAUNCH_TAB);
   return tab;
 }
