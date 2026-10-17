@@ -74,9 +74,21 @@
 // The app shell mounts one `UiKitProvider` (BottomSheetModalProvider inside
 // the NavigationContainer), which hosts every sheet.
 //
-// TESTS. The library's own Jest mock has no footer slot and never reports a
-// dismissal; use the kit's stand-in (./testing/bottomSheetMock.tsx), which
-// has both and renders into the provider's host like the library.
+// TESTS. jest.setup.ts maps '@gorhom/bottom-sheet' to the LIBRARY's own
+// mock, which ignores `footerComponent` and never calls `onDismiss`. Under it
+// a Sheet's `footer` is NOT RENDERED (ConfirmSheet shows its title but no
+// Confirm or Cancel) and every close ends on SHEET_CLOSE_FALLBACK_MS. Until
+// jest.setup.ts points every suite at the kit's stand-in (contract request to
+// F0), a test that renders a Sheet or ConfirmSheet, or a screen with one,
+// must opt in at the top of its file:
+//
+//   jest.mock('@gorhom/bottom-sheet', () =>
+//     require('<relative path>/components/ui/testing/bottomSheetMock').bottomSheetModule,
+//   );
+//   beforeEach(() => bottomSheetMock.reset());
+//
+// The stand-in draws the footer after the content, reports dismissals, and
+// renders into the provider's host like the library (./testing/bottomSheetMock.tsx).
 import {
   BottomSheetBackdrop,
   BottomSheetFooter,

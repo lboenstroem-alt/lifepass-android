@@ -6,13 +6,21 @@
  *   BodySheet.stepHeight / stepCustomKcal (whole-number fields, parseInt)
  *   HealthFormat.decimal (NumberFormatter: half to even, on the decimal)
  */
+import * as format from '../../../i18n/format';
 import {
   decimalsOf,
   formatDecimalInput,
   parseDecimal,
+  parseInteger,
   parseWholeNumber,
   stepText,
 } from '../numberInput';
+
+it("parses with F1's port of HealthFormat, not a copy of its own", () => {
+  expect(parseDecimal).toBe(format.parseDecimal);
+  expect(parseInteger).toBe(format.parseInteger);
+  expect(parseWholeNumber).toBe(format.parseInteger);
+});
 
 describe('parseDecimal (HealthFormat.parseDecimal)', () => {
   it('reads both separators, whatever the phone', () => {
@@ -60,6 +68,10 @@ describe('formatDecimalInput (HealthFormat.decimal, without grouping)', () => {
     expect(formatDecimalInput(72, 'is')).toBe('72');
     expect(formatDecimalInput(72.04, 'en')).toBe('72');
     expect(formatDecimalInput(1900, 'is')).toBe('1900');
+    // Never grouped, so the field reads back as typed (format.decimal groups).
+    expect(formatDecimalInput(1234.5, 'is')).toBe('1234,5');
+    expect(formatDecimalInput(1234.5, 'en')).toBe('1234.5');
+    expect(parseDecimal(formatDecimalInput(1234.5, 'is'))).toBe(1234.5);
     expect(formatDecimalInput(2.25, 'en', 2)).toBe('2.25');
     expect(formatDecimalInput(-0.01, 'en')).toBe('0');
   });

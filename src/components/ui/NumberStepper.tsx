@@ -4,7 +4,7 @@
 // The field holds TEXT, as on iOS, so what the member typed stays exactly as
 // typed ("72,5", and "7 2" too) until they step it; nothing is filtered out,
 // because dropping a character would turn their input into another number.
-// The caller parses it with `parseDecimal` (or `parseWholeNumber`) and shows
+// The caller parses it with `parseDecimal` (or `parseInteger`) and shows
 // its own error under the field. Stepping reads the
 // field (or `fallback` when empty), adds the step, rounds, and refuses to leave
 // [min, max] (numberInput.ts).
@@ -15,6 +15,10 @@
 // buttons use. Its label says the unit as a WORD ("Weight, kilograms"),
 // because TalkBack reads a printed "kg" as two letters (6.8). A double tap
 // opens the keyboard to type a value.
+//
+// FOCUS puts the caret in the text and selects nothing, as the iOS check-in
+// and body sheet fields do, so a member corrects a prefilled "72,5" instead of
+// losing it to the first key. `selectTextOnFocus` opts in to selecting it all.
 import { Ionicons } from '@expo/vector-icons';
 import { useRef } from 'react';
 import { Pressable, StyleSheet, View, type AccessibilityActionEvent, type TextInput } from 'react-native';
@@ -50,7 +54,7 @@ export type NumberStepperProps = {
   size?: 'large' | 'regular';
   /**
    * Whole numbers (the number pad, no separator); parse with
-   * `parseWholeNumber`. Steps read the field the same way, so a pasted
+   * `parseInteger`. Steps read the field the same way, so a pasted
    * "170.5" steps from `fallback`, never from a silently rounded 171.5.
    */
   integer?: boolean;
@@ -60,6 +64,8 @@ export type NumberStepperProps = {
   dimmed?: boolean;
   onFocus?: () => void;
   onBlur?: () => void;
+  /** Select the whole value on focus (off: the caret goes into the text, as on iOS). */
+  selectTextOnFocus?: boolean;
   testID?: string;
 };
 
@@ -84,6 +90,7 @@ export default function NumberStepper({
   dimmed = false,
   onFocus,
   onBlur,
+  selectTextOnFocus = false,
   testID,
 }: NumberStepperProps) {
   const { language } = useT();
@@ -144,7 +151,7 @@ export default function NumberStepper({
           onBlur={onBlur}
           // The adjustable field around it is what TalkBack focuses.
           importantForAccessibility="no"
-          selectTextOnFocus
+          selectTextOnFocus={selectTextOnFocus}
           style={[
             styles.input,
             large ? sans(28, 'semibold') : sans(17),

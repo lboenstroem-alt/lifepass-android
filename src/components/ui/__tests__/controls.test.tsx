@@ -3,14 +3,17 @@
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { useState } from 'react';
+import { StyleSheet } from 'react-native';
 
 import { setCurrentLanguage } from '../../../i18n';
+import { colors } from '../../../theme';
 import { Chip, ChipRow } from '../Chip';
 import CheckboxRow from '../CheckboxRow';
 import MenuPicker from '../MenuPicker';
 import NumberStepper from '../NumberStepper';
 import { parseDecimal } from '../numberInput';
 import SegmentedControl from '../SegmentedControl';
+import SheetTextInput from '../SheetTextInput';
 import ToggleRow from '../ToggleRow';
 
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
@@ -108,6 +111,18 @@ describe('ToggleRow', () => {
     await fireEvent.press(row);
     expect(onValueChange).toHaveBeenCalledWith(false);
   });
+
+  it('has the metrics of iOS BodyAndGoalsView.toggleRow', async () => {
+    await render(
+      <ToggleRow title="Weekly check-in" subtitle="Sunday at 18:00" value disabled onValueChange={jest.fn()} testID="row" />,
+    );
+    const row = StyleSheet.flatten(screen.getByTestId('row').props.style) as Record<string, unknown>;
+    expect(row).toMatchObject({ paddingHorizontal: 16, paddingVertical: 14, opacity: 0.45 });
+    const title = StyleSheet.flatten(screen.getByText('Weekly check-in').props.style) as Record<string, unknown>;
+    const note = StyleSheet.flatten(screen.getByText('Sunday at 18:00').props.style) as Record<string, unknown>;
+    expect(title).toMatchObject({ fontSize: 14, color: colors.paper });
+    expect(note).toMatchObject({ fontSize: 11, color: colors.paper3 });
+  });
 });
 
 describe('MenuPicker', () => {
@@ -194,6 +209,17 @@ describe('NumberStepper', () => {
     );
   });
 
+  it('focus keeps a prefilled value to edit (nothing selected), with the accent caret, as on iOS', async () => {
+    await render(<Weight />);
+    const input = screen.getByTestId('weight.input');
+    expect(input.props.selectTextOnFocus).toBe(false);
+    expect(input.props).toMatchObject({
+      cursorColor: colors.rust,
+      selectionColor: colors.rust3,
+      selectionHandleColor: colors.rust,
+    });
+  });
+
   it('a TalkBack swipe steps it, like the buttons', async () => {
     await render(<Weight />);
     const field = screen.getByRole('adjustable', { name: 'Weight, kilograms' });
@@ -269,5 +295,18 @@ describe('NumberStepper', () => {
     await render(<Height />);
     await fireEvent.press(screen.getByRole('button', { name: 'Increase by 1 centimetre' }));
     expect(screen.getByTestId('height.input')).toHaveDisplayValue('171');
+  });
+});
+
+describe('SheetTextInput', () => {
+  it("tints the caret and selection with the accent (iOS .tint(lpRust)); a caller's colour wins", async () => {
+    await render(
+      <>
+        <SheetTextInput testID="plain" />
+        <SheetTextInput testID="own" cursorColor={colors.destructive} />
+      </>,
+    );
+    expect(screen.getByTestId('plain').props).toMatchObject({ cursorColor: colors.rust, selectionColor: colors.rust3 });
+    expect(screen.getByTestId('own').props.cursorColor).toBe(colors.destructive);
   });
 });

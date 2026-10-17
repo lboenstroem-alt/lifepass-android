@@ -19,15 +19,33 @@
 //   showToast(t('health.saved_offline'), { kind: 'meal' });              // MealToastCenter
 //   showToast(t('food.added'), { action: { label: t('plan.undo'), onPress: undo } });
 //
-// One at a time: a new toast replaces the current one, as on iOS. TalkBack
-// hears every toast as it appears (iOS posts the same announcement). A toast
-// with an action also honours Android's "Time to take action" setting, so a
-// member who asked for more time gets it before the Undo disappears.
-// `durationMs` overrides the kind's time.
+// One at a time: a new toast replaces the current one, as on iOS.
+//
+// TALKBACK hears every toast as it appears. iOS announces only the meal toasts
+// (MealToastCenter.show posts an announcement; HealthToast posts none, and
+// VoiceOver may never reach it before it goes). Android announces the health
+// ones too, on purpose: a toast is gone in seconds, and a TalkBack user would
+// otherwise never learn their data changed on another device. A toast with an
+// action also honours Android's "Time to take action" setting, so a member who
+// asked for more time gets it before the Undo disappears. `durationMs`
+// overrides the kind's time.
+//
+// AN ACTION BELONGS TO ITS TOAST. Once a toast is no longer the current one
+// (its time ran out, a newer one replaced it, or sign-out cleared it with
+// resetUiKit) its button does nothing, even during the 200 ms fade-out, and
+// the fading toast takes no touches: iOS removes the button with the toast,
+// so an Undo can never run for a toast that has gone, or for the member who
+// signed out.
+//
+// THE KEYBOARD. iOS draws its toasts inside the keyboard's safe area, so a
+// "Food added" with Undo shown while the food search field is focused sits
+// above the keyboard. With edge to edge on, Android never shrinks the window
+// for the keyboard, so the host lifts the toast by the keyboard's height
+// itself; otherwise the Undo would be drawn under the keyboard, out of reach.
 //
 // The app shell mounts one ToastHost (in UiKitProvider) above the tab bar.
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useReduceMotion } from '../../hooks/useReduceMotion';
@@ -102,10 +120,29 @@ export type ToastHostProps = {
   bottomOffset?: number;
 };
 
+/**
+ * The soft keyboard's height while it is up, else 0. Android sends only the
+ * "did" events; the height is measured from the bottom of the screen, so it
+ * includes the navigation bar.
+ */
+function useKeyboardHeight(): number {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const shown = Keyboard.addListener('keyboardDidShow', (event) => setHeight(event.endCoordinates.height));
+    const hidden = Keyboard.addListener('keyboardDidHide', () => setHeight(0));
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, []);
+  return height;
+}
+
 export function ToastHost({ bottomOffset }: ToastHostProps) {
   const toast = current.use();
   const insets = useSafeAreaInsets();
   const reduceMotion = useReduceMotion();
+  const keyboardHeight = useKeyboardHeight();
   const progress = useRef(new Animated.Value(0)).current;
   const [shown, setShown] = useState<ToastItem | null>(toast);
 
@@ -147,14 +184,19 @@ export function ToastHost({ bottomOffset }: ToastHostProps) {
   const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [reduceMotion ? 0 : 24, 0] });
   const row = shown.kind === 'meal';
   const offset = shown.bottomOffset ?? bottomOffset ?? TOAST_BOTTOM_OFFSET[shown.kind];
+  // Above the keyboard while it is up (it covers the navigation bar inset).
+  const lift = Math.max(insets.bottom, keyboardHeight);
+  // Fading out (gone from the store, or replaced): it takes no more touches.
+  const live = toast !== null && toast.id === shown.id;
 
   return (
     <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, styles.layer]}>
       <Animated.View
+        pointerEvents={live ? 'auto' : 'none'}
         style={[
           styles.toast,
           row ? styles.row : styles.plain,
-          { marginBottom: offset + insets.bottom, opacity: progress, transform: [{ translateY }] },
+          { marginBottom: offset + lift, opacity: progress, transform: [{ translateY }] },
         ]}
         testID="toast"
       >
@@ -170,9 +212,11 @@ export function ToastHost({ bottomOffset }: ToastHostProps) {
         {shown.action ? (
           <Pressable
             onPress={() => {
-              const action = shown.action;
-              if (current.get()?.id === shown.id) current.set(null);
-              action?.onPress();
+              // Only the toast on screen answers: one that timed out, was
+              // replaced or was cleared at sign-out is fading and does nothing.
+              if (current.get()?.id !== shown.id) return;
+              current.set(null);
+              shown.action?.onPress();
             }}
             accessibilityRole="button"
             accessibilityLabel={shown.action.label}

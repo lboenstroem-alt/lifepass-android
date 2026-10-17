@@ -172,4 +172,9 @@ describe('PrimaryButton (iOS LPPrimaryButton)', () => {
     await render(<PrimaryButton title="Confirm" onPress={jest.fn()} tone="action" shape="booking" testID="cta" />);
     expect(screen.getByTestId('cta')).toHaveStyle({ borderRadius: 12, minHeight: 48, paddingVertical: 14, elevation: 0 });
   });
+
+  it("takes ConfirmSheet's flat geometry: radius 14, 52 tall, no shadow", async () => {
+    await render(<PrimaryButton title="End plan" onPress={jest.fn()} tone="destructive" shape="flat" testID="cta" />);
+    expect(screen.getByTestId('cta')).toHaveStyle({ borderRadius: 14, minHeight: 52, elevation: 0, shadowOpacity: 0 });
+  });
 });

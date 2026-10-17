@@ -3,8 +3,9 @@
  * appear, gone after their time, with an optional action.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { AccessibilityInfo, StyleSheet } from 'react-native';
+import { AccessibilityInfo, DeviceEventEmitter, StyleSheet } from 'react-native';
 
+import { resetUiKit } from '../reset';
 import { ACTION_TOAST_MS, MEAL_TOAST_MS, TOAST_MS, ToastHost, dismissToast, showToast } from '../Toast';
 
 const announce = AccessibilityInfo.announceForAccessibility as jest.Mock;
@@ -122,5 +123,61 @@ describe('the two iOS toasts', () => {
     await act(async () => showToast('Removed', { kind: 'health', action: { label: 'Undo', onPress: jest.fn() } }));
     expect(toastStyle().minHeight).toBe(44);
     expect(ACTION_TOAST_MS).toBe(MEAL_TOAST_MS);
+  });
+});
+
+describe('an action belongs to its toast', () => {
+  it('a toast cleared at sign-out takes no press while it fades, and never runs its Undo', async () => {
+    const undo = jest.fn();
+    await render(<ToastHost />);
+    await act(async () => showToast('Food added', { action: { label: 'Undo', onPress: undo } }));
+    // Sign-out: the UI kit's cleaner drops the toast; it is still fading out.
+    await act(async () => resetUiKit());
+    const button = screen.getByRole('button', { name: 'Undo' });
+    expect(screen.getByTestId('toast').props.pointerEvents).toBe('none');
+    // Even a press that reaches the button does nothing.
+    await act(async () => button.props.onPress?.());
+    await fireEvent.press(button);
+    expect(undo).not.toHaveBeenCalled();
+  });
+
+  it('a toast whose time ran out does not run its action during the fade', async () => {
+    const undo = jest.fn();
+    await render(<ToastHost />);
+    await act(async () => showToast('Food added', { action: { label: 'Undo', onPress: undo } }));
+    await advance(MEAL_TOAST_MS);
+    const button = screen.queryByRole('button', { name: 'Undo' });
+    if (button) await act(async () => button.props.onPress?.());
+    expect(undo).not.toHaveBeenCalled();
+  });
+
+  it("a replaced toast's action does nothing; the new one's runs", async () => {
+    const first = jest.fn();
+    const second = jest.fn();
+    await render(<ToastHost />);
+    await act(async () => showToast('Removed', { action: { label: 'Undo', onPress: first } }));
+    await act(async () => showToast('Added', { action: { label: 'Undo', onPress: second } }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Undo' }));
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the keyboard', () => {
+  const marginBottom = () => (StyleSheet.flatten(screen.getByTestId('toast').props.style) as { marginBottom: number }).marginBottom;
+
+  it('a toast shown while the keyboard is up sits above it, and drops back when it goes', async () => {
+    await render(<ToastHost />);
+    await act(async () => showToast('Food added', { kind: 'meal' }));
+    expect(marginBottom()).toBe(96);
+    await act(async () => {
+      DeviceEventEmitter.emit('keyboardDidShow', { endCoordinates: { height: 300, screenX: 0, screenY: 340, width: 320 } });
+    });
+    // iOS: 96 pt above the keyboard's top, inside its safe area.
+    expect(marginBottom()).toBe(96 + 300);
+    await act(async () => {
+      DeviceEventEmitter.emit('keyboardDidHide', { endCoordinates: { height: 0, screenX: 0, screenY: 640, width: 320 } });
+    });
+    expect(marginBottom()).toBe(96);
   });
 });

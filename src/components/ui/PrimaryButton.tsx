@@ -12,6 +12,8 @@
 //   'booking'      the booking flows' Confirm (BookingFlowView.primaryButton,
 //                  ClassBookingSheet.confirmButton): 14 pt vertical padding
 //                  (about 48 tall), radius 12, no shadow
+//   'flat'         a plain filled RoundedRectangle(14), 52 tall, NO shadow
+//                  (Plan's ConfirmSheet confirm, PlanView.swift ConfirmSheet)
 //
 // DISABLED. iOS callers dim a refused accent button to 40 % (the check-in's
 // Save). The 'action' tone does NOT: iOS 2.5.4 draws a disabled booking
@@ -37,7 +39,7 @@ import { colors, radius } from '../../theme';
 import LPText from './LPText';
 
 export type PrimaryButtonTone = 'accent' | 'action' | 'destructive';
-export type PrimaryButtonShape = 'primary' | 'booking';
+export type PrimaryButtonShape = 'primary' | 'booking' | 'flat';
 
 export type PrimaryButtonProps = {
   title: string;
@@ -84,7 +86,7 @@ export default function PrimaryButton({
   const readableDisabled = tone === 'action' && disabled && !loading;
   const fill = readableDisabled ? READABLE_DISABLED.fill : FILL[tone];
   const labelColor = readableDisabled ? READABLE_DISABLED.label : colors.onAccent;
-  const flat = shape === 'booking' || readableDisabled;
+  const flat = shape !== 'primary' || readableDisabled;
   return (
     <Pressable
       testID={testID}

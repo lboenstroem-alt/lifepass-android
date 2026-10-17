@@ -7,6 +7,21 @@
 // and state. Colours and faces come from src/theme; large text and reduce
 // motion from src/hooks/useA11ySize and src/hooks/useReduceMotion; haptics
 // from src/lib/haptics.
+//
+// TESTING A SHEET. jest.setup.ts maps '@gorhom/bottom-sheet' to the library's
+// own mock, which draws NO footer: under it a Sheet's `footer` (the money line,
+// Confirm) and ConfirmSheet's Confirm and Cancel are not rendered, so a test
+// cannot find or press them, and a close never reports `onDismiss` (it ends on
+// the Sheet's 800 ms fallback). Until jest.setup.ts points every suite at the
+// kit's stand-in (contract request to F0), every test file that renders a
+// Sheet or ConfirmSheet, directly or through a screen, must opt in itself,
+// as src/components/ui/__tests__/Sheet.test.tsx does:
+//
+//   import { bottomSheetMock } from '<relative path>/components/ui/testing/bottomSheetMock';
+//   jest.mock('@gorhom/bottom-sheet', () =>
+//     require('<relative path>/components/ui/testing/bottomSheetMock').bottomSheetModule,
+//   );
+//   beforeEach(() => bottomSheetMock.reset());
 export { default as LPText } from './LPText';
 export type { LPTextProps } from './LPText';
 export { default as Kicker } from './Kicker';
@@ -22,7 +37,7 @@ export { default as Sheet, SHEET_CLOSE_FALLBACK_MS, useSheetOpen } from './Sheet
 export type { SheetProps } from './Sheet';
 export { default as SheetTextInput, useInSheet } from './SheetTextInput';
 export { Dialog, DialogHost, showDialog, dismissAllDialogs, orderButtons } from './Dialog';
-export type { DialogButton, DialogButtonRole, DialogOptions, DialogProps } from './Dialog';
+export type { DialogButton, DialogButtonRole, DialogOptions, DialogPresentation, DialogProps } from './Dialog';
 export { default as ConfirmSheet } from './ConfirmSheet';
 export type { ConfirmSheetProps } from './ConfirmSheet';
 export { ToastHost, showToast, dismissToast, TOAST_MS, MEAL_TOAST_MS, ACTION_TOAST_MS, TOAST_BOTTOM_OFFSET } from './Toast';
@@ -42,8 +57,10 @@ export { default as SegmentedControl } from './SegmentedControl';
 export type { Segment, SegmentedControlProps } from './SegmentedControl';
 export { default as NumberStepper } from './NumberStepper';
 export type { NumberStepperProps } from './NumberStepper';
+// parseDecimal / parseInteger are F1's (src/i18n/format), re-exported here.
 export {
   parseDecimal,
+  parseInteger,
   parseWholeNumber,
   formatDecimalInput,
   stepText,

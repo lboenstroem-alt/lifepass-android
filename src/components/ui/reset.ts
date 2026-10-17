@@ -9,11 +9,11 @@
 // a meal toast with "Food diary" or "Undo", would be shown to the next
 // person to pick up the phone.
 //
-// NOT WIRED YET. Nothing calls this until the sign-out registry registers it
-// (contract request to F3: `registerSignOutCleaner('ui-kit', () =>
-// resetUiKit())`, from src/app/registrations.ts or a register file F3
-// gives the UI kit). Sheets need nothing here: they belong to screens, which
-// the navigator unmounts on sign-out.
+// WIRED in src/app/registrations.ts (`registerSignOutCleaner('ui-kit', () =>
+// resetUiKit())`), so every sign-out runs it; do not register it a second
+// time. Sheets need nothing here: they belong to screens, which the navigator
+// unmounts on sign-out. A toast that is still fading out when this runs keeps
+// no working button (Toast.tsx, AN ACTION BELONGS TO ITS TOAST).
 import { dismissAllDialogs } from './Dialog';
 import { dismissToast } from './Toast';
 

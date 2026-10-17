@@ -72,6 +72,16 @@ it('confirm closes the sheet, then runs the action (as iOS)', async () => {
   expect(order).toEqual(['close', 'confirm']);
 });
 
+it("draws Confirm as iOS's flat fill: radius 14, 52 tall, no shadow (not LPPrimaryButton's)", async () => {
+  await renderConfirm().view;
+  expect(screen.getByRole('button', { name: 'End plan' })).toHaveStyle({
+    borderRadius: 14,
+    minHeight: 52,
+    elevation: 0,
+    shadowOpacity: 0,
+  });
+});
+
 it('Cancel only closes', async () => {
   const { order, view } = renderConfirm();
   await view;
