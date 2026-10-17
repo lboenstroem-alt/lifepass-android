@@ -8,7 +8,7 @@ import { act, renderHook } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../api/testing';
-import { decodeVenue, venueToApi } from '../../api/venues';
+import { decodeVenue, venueToApi, type VenueQuery } from '../../api/venues';
 import { registeredHookIds, runSignOutCleaners } from '../../app/signOut';
 import { setCurrentLanguage } from '../../i18n';
 import { browseOrder, browseOrderWithin } from '../../lib/browseOrder';
@@ -130,6 +130,22 @@ it('a search is sent trimmed', async () => {
   expect(list.getState().query).toEqual({ search: 'sky', city: 'Reykjavík' });
   expect(list.getState().catalog).toEqual([]); // a real search never replaces the catalogue
   expect(normaliseQuery({ search: null, category: 'Gym' })).toEqual({ category: 'Gym' });
+});
+
+/**
+ * A list is always one full page (iOS VenueListViewModel: limit 100, always).
+ * A short page passed in anyway (the Coach asks the API for 20) must never
+ * become the catalogue that every later search is ordered within.
+ */
+it('a list never loads a short page', async () => {
+  const list = createVenueListStore({ session: createBrowseSession({ seed: 1 }) });
+  api.on('GET', '/venues', page(catalog));
+  const short: VenueQuery = { limit: 20 };
+  await list.getState().load(short);
+  expect(api.sent('/venues').query).toEqual({ limit: '100' });
+  expect(list.getState().catalog).toHaveLength(catalog.length);
+  expect(list.getState().query).toEqual({});
+  expect(normaliseQuery({ search: ' sky ', limit: 20 } as VenueQuery)).toEqual({ search: 'sky' });
 });
 
 /** Typing fast: an older answer arriving after a newer one never lands. */

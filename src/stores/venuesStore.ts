@@ -33,11 +33,20 @@ import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import { errorMessage } from '../api/errorFormatter';
-import { fetchVenues, type VenueQuery } from '../api/venues';
+import { fetchVenues, VENUE_PAGE_LIMIT, type VenueQuery } from '../api/venues';
 import { registerSignOutCleaner } from '../app/signOut';
 import { browseOrderWithin } from '../lib/browseOrder';
 import type { Venue } from '../types/venue';
 import { browseSession, type BrowseSessionStore } from './browseSession';
+
+/**
+ * What a list loads: the filters, never a page size. A list is always one
+ * full page (`VENUE_PAGE_LIMIT`), as iOS VenueListViewModel always fetches
+ * 100: an unfiltered short page would become the catalogue every later
+ * search is ordered within. A caller that wants fewer (the Coach's 20) calls
+ * `fetchVenues` itself.
+ */
+export type VenueListQuery = Omit<VenueQuery, 'limit'>;
 
 export interface VenueListState {
   /** The last unsearched, unfiltered fetch: what a search is ordered within. */
@@ -54,7 +63,7 @@ export interface VenueListState {
    */
   readonly error: string | null;
   /** The filters of the last load that landed, as sent (`normaliseQuery`). */
-  readonly query: VenueQuery;
+  readonly query: VenueListQuery;
   /** The browse session this list is ordered by. */
   readonly session: BrowseSessionStore;
 
@@ -63,7 +72,7 @@ export interface VenueListState {
    * the catalogue). Only the latest load lands: an older answer arriving
    * late is dropped.
    */
-  load(query?: VenueQuery): Promise<void>;
+  load(query?: VenueListQuery): Promise<void>;
   /** The loaded venues in the browse order (see the file comment). */
   ordered(): Venue[];
   /** Forgets everything (sign-out): the next member's prices are their own. */
@@ -80,16 +89,22 @@ export type VenueListStore = StoreApi<VenueListState>;
 /**
  * The query as it is sent: the search trimmed, and a search of nothing but
  * spaces left out, so it is no search at all (iOS MapViewModel.loadVenues:
- * trimmed, and empty means no `q` and the catalogue is refreshed).
+ * trimmed, and empty means no `q` and the catalogue is refreshed). A page
+ * size passed in anyway (an object typed as `VenueQuery`) is dropped: a list
+ * is always a full page (`VenueListQuery`).
  */
-export function normaliseQuery(query: VenueQuery): VenueQuery {
-  const { search, ...rest } = query;
+export function normaliseQuery(query: VenueListQuery): VenueListQuery {
+  const { search, category, city } = query;
   const trimmed = search?.trim();
-  return trimmed ? { ...rest, search: trimmed } : rest;
+  return {
+    ...(trimmed ? { search: trimmed } : {}),
+    ...(category !== undefined ? { category } : {}),
+    ...(city !== undefined ? { city } : {}),
+  };
 }
 
 /** True when a query narrows the list (a search, a category or a city). */
-export function isFilteredQuery(query: VenueQuery): boolean {
+export function isFilteredQuery(query: VenueListQuery): boolean {
   return !!query.search?.trim() || !!query.category || !!query.city;
 }
 
@@ -113,7 +128,7 @@ export function createVenueListStore(options: VenueListOptions = {}): VenueListS
       const mine = ++latest;
       set({ isLoading: true });
       try {
-        const rows = await fetch(query);
+        const rows = await fetch({ ...query, limit: VENUE_PAGE_LIMIT });
         if (mine !== latest) return;
         set({
           ...(isFilteredQuery(query) ? {} : { catalog: rows }),
