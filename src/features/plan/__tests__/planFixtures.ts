@@ -9,6 +9,7 @@ import { todayServerDay } from '../../../i18n/format';
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
 import { resetIntentStoreForTests } from '../../../stores/intentStore';
 import { setAnalyticsObserver, type AnalyticsEvent, type AnalyticsParams } from '../../../lib/analytics';
+import { forgetIntroCollapse } from '../intro/introCollapse';
 import { resetPlanBridgesForTests } from '../shell/bridges';
 import { resetPlanShell } from '../shell/planShell';
 
@@ -93,6 +94,7 @@ export function freshPlan(): void {
   resetIntentStoreForTests();
   resetPlanBridgesForTests();
   resetPlanShell();
+  forgetIntroCollapse();
   setAnalyticsObserver(null);
 }
 
