@@ -27,6 +27,7 @@
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
+import { fixtureArg } from '../dev/fixtures';
 import { distanceMeters, type Coordinate } from '../lib/geo';
 import { MAX_SEED, randomSeed } from '../lib/browseOrder';
 
@@ -107,12 +108,15 @@ export function createBrowseSession(options: BrowseSessionOptions): BrowseSessio
 }
 
 /**
- * A fixed seed for a development build (`EXPO_PUBLIC_LP_BROWSE_SEED=<n>`), for
- * screenshots and device QA; never in a release build. The Android twin of
- * iOS's DEBUG `-LPBrowseSeed <n>`.
+ * A fixed seed for a development build, for screenshots and device QA; never
+ * in a release build. The Android twin of iOS's DEBUG `-LPBrowseSeed <n>`,
+ * through F0's fixture switch like every other iOS launch argument:
+ * `EXPO_PUBLIC_FIXTURE="browseSeed=42"` (src/dev/fixtures.ts, which answers
+ * nothing in release). Digits only, at most `MAX_SEED`; anything else is
+ * ignored and the seed is drawn as usual. A fixed seed is never redrawn.
  */
-export function debugFixedSeed(raw: string | undefined = process.env.EXPO_PUBLIC_LP_BROWSE_SEED): number | null {
-  if (!__DEV__ || raw === undefined) return null;
+export function debugFixedSeed(raw: string | null = fixtureArg('browseSeed')): number | null {
+  if (!__DEV__ || raw === null) return null;
   const value = raw.trim();
   if (!/^\d+$/.test(value)) return null;
   const seed = Number(value);

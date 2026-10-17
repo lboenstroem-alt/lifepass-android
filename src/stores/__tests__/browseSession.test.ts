@@ -3,6 +3,7 @@
  * browseOrder.test.ts holds those): the debug seed and the store's shape.
  */
 import { renderHook, act } from '@testing-library/react-native';
+import { setDev, setEnv } from '@test/harness';
 
 import { MAX_SEED } from '../../lib/browseOrder';
 import { translate } from '../../i18n';
@@ -13,16 +14,48 @@ import {
   launchSeed,
   sortLabelKey,
   useBrowseSession,
+  VISIT_GAP_MS,
 } from '../browseSession';
 
+type BrowseSessionModule = typeof import('../browseSession');
+
 it('a development build can fix the seed; a bad value is ignored', () => {
-  expect(debugFixedSeed(undefined)).toBeNull();
+  expect(debugFixedSeed(null)).toBeNull();
+  expect(debugFixedSeed()).toBeNull(); // no fixture switch
   expect(debugFixedSeed('42')).toBe(42);
   expect(debugFixedSeed(' 7 ')).toBe(7);
   expect(debugFixedSeed('4294967295')).toBe(MAX_SEED);
   expect(debugFixedSeed('4294967296')).toBeNull();
   expect(debugFixedSeed('-1')).toBeNull();
   expect(debugFixedSeed('seven')).toBeNull();
+  expect(debugFixedSeed('')).toBeNull(); // a bare `browseSeed` flag
+});
+
+/**
+ * The iOS `-LPBrowseSeed 42` is F0's fixture switch `browseSeed=42`, as every
+ * other launch argument is: a screenshot run or device QA gets the same venue
+ * order every time, and it holds across a new visit.
+ */
+it('a browseSeed fixture fixes the launch seed, and it is never redrawn', () => {
+  setEnv({ EXPO_PUBLIC_FIXTURE: 'state=active-plan,browseSeed=42' });
+  expect(debugFixedSeed()).toBe(42);
+  jest.isolateModules(() => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fresh = require('../browseSession') as BrowseSessionModule;
+    expect(fresh.launchSeed).toBe(42);
+    const session = fresh.browseSession.getState();
+    expect(session.seed).toBe(42);
+    session.didEnterBackground(0);
+    expect(session.didBecomeActive(2 * VISIT_GAP_MS, null)).toBe(false);
+    expect(fresh.browseSession.getState().seed).toBe(42);
+  });
+});
+
+it('a release build ignores the seed switch', () => {
+  setEnv({ EXPO_PUBLIC_FIXTURE: 'browseSeed=42' });
+  setDev(false);
+  expect(debugFixedSeed()).toBeNull();
+  expect(debugFixedSeed('42')).toBeNull();
 });
 
 it('the launch seed is an unsigned 32-bit integer and the shared session starts with it', () => {

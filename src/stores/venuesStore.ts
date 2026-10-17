@@ -22,9 +22,10 @@
 // (`resolvedSurchargePrice`: a member or pass price), so a list must not
 // outlive them. iOS drops it with the signed-in view that owns it; here a
 // store outlives its screen, so it is reset by a sign-out cleaner:
-//   - the shared `venuesStore`: `resetVenuesStore`, registered by the app's
-//     registry (src/app/registrations.ts, F3; F6 contract request, not wired
-//     until F3 merges);
+//   - the shared `venuesStore`: `resetVenuesStore`, registered below as
+//     'venues.list' when this module loads. F6 has no feature folder, so it
+//     registers from its own module as src/app/signOut.ts asks of a
+//     foundation package; a list that was never imported holds nothing.
 //   - a list a screen makes for itself (Explore): that screen's package
 //     registers its own `reset()` in its `src/features/<area>/register.ts`.
 import { useMemo } from 'react';
@@ -32,10 +33,20 @@ import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import { errorMessage } from '../api/errorFormatter';
-import { fetchVenues, type VenueQuery } from '../api/venues';
+import { fetchVenues, VENUE_PAGE_LIMIT, type VenueQuery } from '../api/venues';
+import { registerSignOutCleaner } from '../app/signOut';
 import { browseOrderWithin } from '../lib/browseOrder';
 import type { Venue } from '../types/venue';
 import { browseSession, type BrowseSessionStore } from './browseSession';
+
+/**
+ * What a list loads: the filters, never a page size. A list is always one
+ * full page (`VENUE_PAGE_LIMIT`), as iOS VenueListViewModel always fetches
+ * 100: an unfiltered short page would become the catalogue every later
+ * search is ordered within. A caller that wants fewer (the Coach's 20) calls
+ * `fetchVenues` itself.
+ */
+export type VenueListQuery = Omit<VenueQuery, 'limit'>;
 
 export interface VenueListState {
   /** The last unsearched, unfiltered fetch: what a search is ordered within. */
@@ -52,7 +63,7 @@ export interface VenueListState {
    */
   readonly error: string | null;
   /** The filters of the last load that landed, as sent (`normaliseQuery`). */
-  readonly query: VenueQuery;
+  readonly query: VenueListQuery;
   /** The browse session this list is ordered by. */
   readonly session: BrowseSessionStore;
 
@@ -61,7 +72,7 @@ export interface VenueListState {
    * the catalogue). Only the latest load lands: an older answer arriving
    * late is dropped.
    */
-  load(query?: VenueQuery): Promise<void>;
+  load(query?: VenueListQuery): Promise<void>;
   /** The loaded venues in the browse order (see the file comment). */
   ordered(): Venue[];
   /** Forgets everything (sign-out): the next member's prices are their own. */
@@ -78,16 +89,22 @@ export type VenueListStore = StoreApi<VenueListState>;
 /**
  * The query as it is sent: the search trimmed, and a search of nothing but
  * spaces left out, so it is no search at all (iOS MapViewModel.loadVenues:
- * trimmed, and empty means no `q` and the catalogue is refreshed).
+ * trimmed, and empty means no `q` and the catalogue is refreshed). A page
+ * size passed in anyway (an object typed as `VenueQuery`) is dropped: a list
+ * is always a full page (`VenueListQuery`).
  */
-export function normaliseQuery(query: VenueQuery): VenueQuery {
-  const { search, ...rest } = query;
+export function normaliseQuery(query: VenueListQuery): VenueListQuery {
+  const { search, category, city } = query;
   const trimmed = search?.trim();
-  return trimmed ? { ...rest, search: trimmed } : rest;
+  return {
+    ...(trimmed ? { search: trimmed } : {}),
+    ...(category !== undefined ? { category } : {}),
+    ...(city !== undefined ? { city } : {}),
+  };
 }
 
 /** True when a query narrows the list (a search, a category or a city). */
-export function isFilteredQuery(query: VenueQuery): boolean {
+export function isFilteredQuery(query: VenueListQuery): boolean {
   return !!query.search?.trim() || !!query.category || !!query.city;
 }
 
@@ -111,7 +128,7 @@ export function createVenueListStore(options: VenueListOptions = {}): VenueListS
       const mine = ++latest;
       set({ isLoading: true });
       try {
-        const rows = await fetch(query);
+        const rows = await fetch({ ...query, limit: VENUE_PAGE_LIMIT });
         if (mine !== latest) return;
         set({
           ...(isFilteredQuery(query) ? {} : { catalog: rows }),
@@ -158,12 +175,15 @@ export const venuesStore: VenueListStore = createVenueListStore();
 
 /**
  * Sign-out cleaner for the shared list: venue prices are resolved for the
- * member who asked. To be registered as 'venues.list' in
- * src/app/registrations.ts (see the file comment).
+ * member who asked, so the next member never sees them, nor an answer that
+ * was still on the way for the one who left.
  */
 export function resetVenuesStore(): void {
   venuesStore.getState().reset();
 }
+
+// Every sign-out, forced ones after a 401 included, runs the cleaners.
+registerSignOutCleaner('venues.list', () => resetVenuesStore());
 
 /** React: a slice of the shared list (or of `store`). */
 export function useVenueList<T>(selector: (state: VenueListState) => T, store: VenueListStore = venuesStore): T {

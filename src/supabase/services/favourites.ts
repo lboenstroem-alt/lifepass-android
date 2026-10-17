@@ -60,8 +60,9 @@ function adaptFavouriteVenue(f: FavouriteVenue): AppVenue {
     description: f.description ?? '',
     address: f.address ?? '',
     city: f.city ?? '',
-    latitude: 0,
-    longitude: 0,
+    // The favourites payload has no position: none, never 0,0 (F6 LegacyVenue).
+    latitude: null,
+    longitude: null,
     imageUrl: f.imageUrl ?? '',
     classification: 'basic',
     category: f.categories ?? [],
@@ -75,7 +76,8 @@ function adaptFavouriteVenue(f: FavouriteVenue): AppVenue {
     totalReviews: 0,
     activities: [],
     reviews: [],
-    inBundle: f.inBundle ?? true,
+    // A missing marker is premium, never "Included" (iOS Venue.inBundle defaults to false).
+    inBundle: f.inBundle ?? false,
   };
 }
 

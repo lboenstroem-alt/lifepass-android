@@ -14,6 +14,21 @@
 //    than Expo's status (`permissionMeaning` below): an "Only this time"
 //    grant that ran out is undecided again, as an expired "Allow Once" is on
 //    iOS, and is asked about again.
+//  - Location switched off on the phone reads as `denied`, as iOS reads
+//    Location Services switched off (CLAuthorizationStatus.denied covers
+//    "disabled globally in Settings"): no dialog, no fix, no distance order,
+//    and the Explore banner shows. Android reports the permission as granted
+//    with the toggle off, so the toggle is read with it
+//    (`hasServicesEnabledAsync`, which never prompts) and `selectLocationOffReason`
+//    says which of the two the banner's Open should fix.
+//  - A fix never brings up a dialog either: expo-location would show Google
+//    Play services' "Turn on location" dialog for a fix while the network
+//    provider is off (`mayShowUserSettingsDialog` defaults to true on
+//    Android), and a fix is asked for on reads. CoreLocation never does; a
+//    phone with location off just has no fix, silently.
+//  - A screenshot or fixture run (`EXPO_PUBLIC_FIXTURE` with `state=`) never
+//    shows the dialog over the screen under test (iOS
+//    `ScreenshotFixtures.suppressesSystemPrompts`).
 //  - About 100 m accuracy (Balanced), which the 3 km band and the map dot
 //    need; an approximate grant (Android 12+) still counts as granted, as a
 //    reduced-accuracy grant does on iOS.
@@ -35,15 +50,23 @@
 // (./browseSession), which holds the bands still. The location never leaves
 // the phone for ordering.
 import * as Location from 'expo-location';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AppState, Linking, type AppStateStatus } from 'react-native';
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
+import { hasFixture } from '../dev/fixtures';
 import { REYKJAVIK_CENTRE, type Coordinate } from '../lib/geo';
 import { browseSession, type BrowseSessionStore } from './browseSession';
 
 /** The three answers. A restricted device reads as `denied`. */
 export type LocationPermission = 'undetermined' | 'granted' | 'denied';
+
+/**
+ * Why location is off: the member refused the app (fixed in the app's
+ * settings) or location is switched off for the whole phone (fixed in the
+ * phone's location settings).
+ */
+export type LocationOffReason = 'permission' | 'services';
 
 /** A position fix. */
 export interface LocationFix extends Coordinate {
@@ -59,6 +82,12 @@ export interface PermissionSnapshot {
   readonly canAskAgain: boolean;
   /** Android 12+: the member allowed approximate location only. */
   readonly approximate: boolean;
+  /**
+   * Whether location is switched on for the phone (Android's location
+   * toggle; read with the permission, never prompting). Absent reads as on:
+   * only a definite "off" may take location away.
+   */
+  readonly servicesEnabled?: boolean;
 }
 
 /** The platform calls the store makes (expo-location in the app; fakes in tests). */
@@ -84,6 +113,8 @@ export interface LocationState {
   /** Expo's raw `canAskAgain` (Android: whether it would show a rationale). */
   readonly canAskAgain: boolean;
   readonly approximate: boolean;
+  /** Whether location is switched on for the phone, as last read. Off makes `permission` read `denied`. */
+  readonly servicesEnabled: boolean;
   /** The last fresh fix. Read through the selectors below. */
   readonly currentLocation: LocationFix | null;
 
@@ -114,17 +145,57 @@ export function selectEffectiveLocation(state: Pick<LocationState, 'currentLocat
 }
 
 /**
- * Location is off: the member said no. The Explore banner ("Location is off",
+ * Location is off: the member said no, or location is switched off for the
+ * phone (both are iOS `.denied`). The Explore banner ("Location is off",
  * Open) shows while this holds; it appears as soon as "Don't allow" is chosen
- * and goes once location is allowed in Settings (re-read on return). A grant
- * that ran out is not a no (see `permissionMeaning`), so it shows no banner.
+ * and goes once location is allowed or switched on again (re-read on
+ * return). A grant that ran out is not a no (see `permissionMeaning`), so it
+ * shows no banner.
  */
 export function selectLocationOff(state: Pick<LocationState, 'permission' | 'permissionKnown'>): boolean {
   return state.permissionKnown && state.permission === 'denied';
 }
 
 /**
+ * Why location is off (null while it is not), so the banner's Open goes where
+ * it can be fixed (`openLocationSettings`). Location switched off for the
+ * phone comes first: allowing the app changes nothing until it is on.
+ */
+export function selectLocationOffReason(
+  state: Pick<LocationState, 'permission' | 'permissionKnown' | 'servicesEnabled'>,
+): LocationOffReason | null {
+  if (!selectLocationOff(state)) return null;
+  return state.servicesEnabled ? 'permission' : 'services';
+}
+
+/**
+ * The banner's Open (iOS opens the Settings app at LifePass): the phone's
+ * location settings when location is switched off, the app's own settings
+ * page when the member refused it. Never a dialog of its own; the store
+ * re-reads both when the app comes back (`startLocationLifecycle`).
+ */
+export async function openLocationSettings(reason: LocationOffReason | null): Promise<void> {
+  if (reason === 'services') {
+    try {
+      await Linking.sendIntent('android.settings.LOCATION_SOURCE_SETTINGS');
+      return;
+    } catch {
+      // No location settings screen on this phone: the app's page instead.
+    }
+  }
+  try {
+    await Linking.openSettings();
+  } catch {
+    // Nothing to open: the banner stays, as it would on iOS.
+  }
+}
+
+/**
  * What an Android permission read means, in iOS's terms.
+ *
+ * Location switched off for the phone is `denied`, whatever the permission
+ * (iOS `.denied` covers "disabled globally in Settings"): nothing is asked
+ * and no fix counts until it is on again, when the permission reads as it is.
  *
  * Expo reports every permission it has asked for and does not hold as
  * `denied` (expo-modules-core PermissionsService: asked before, not granted,
@@ -148,6 +219,7 @@ export function selectLocationOff(state: Pick<LocationState, 'permission' | 'per
  * show the dialog for (canAskAgain) is never re-asked.
  */
 export function permissionMeaning(snapshot: PermissionSnapshot, lastAnswer: LocationPermission | null): LocationPermission {
+  if (snapshot.servicesEnabled === false) return 'denied';
   if (snapshot.permission !== 'denied' || snapshot.canAskAgain) return snapshot.permission;
   return lastAnswer === 'denied' ? 'denied' : 'undetermined';
 }
@@ -155,13 +227,20 @@ export function permissionMeaning(snapshot: PermissionSnapshot, lastAnswer: Loca
 /** expo-location, as the store needs it. */
 export const expoLocationPlatform: LocationPlatform = {
   async getPermission() {
-    return snapshotOf(await Location.getForegroundPermissionsAsync());
+    const [response, servicesEnabled] = await Promise.all([Location.getForegroundPermissionsAsync(), servicesOn()]);
+    return snapshotOf(response, servicesEnabled);
   },
   async requestPermission() {
-    return snapshotOf(await Location.requestForegroundPermissionsAsync());
+    const response = await Location.requestForegroundPermissionsAsync();
+    return snapshotOf(response, await servicesOn());
   },
   async currentFix() {
-    const fix = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    // Never the "Turn on location" dialog (see the file comment): with the
+    // network provider off this fails, or finds a GPS fix, without a word.
+    const fix = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+      mayShowUserSettingsDialog: false,
+    });
     return {
       latitude: fix.coords.latitude,
       longitude: fix.coords.longitude,
@@ -171,7 +250,20 @@ export const expoLocationPlatform: LocationPlatform = {
   },
 };
 
-function snapshotOf(response: Location.LocationPermissionResponse): PermissionSnapshot {
+/**
+ * Whether location is switched on for the phone (GPS or network provider on).
+ * Never prompts. A read that fails, or answers nothing, counts as on: only a
+ * definite "off" takes location away.
+ */
+async function servicesOn(): Promise<boolean> {
+  try {
+    return (await Location.hasServicesEnabledAsync()) !== false;
+  } catch {
+    return true;
+  }
+}
+
+function snapshotOf(response: Location.LocationPermissionResponse, servicesEnabled: boolean): PermissionSnapshot {
   const permission: LocationPermission =
     response.status === Location.PermissionStatus.GRANTED
       ? 'granted'
@@ -182,6 +274,7 @@ function snapshotOf(response: Location.LocationPermissionResponse): PermissionSn
     permission,
     canAskAgain: response.canAskAgain,
     approximate: permission === 'granted' && response.android?.accuracy === 'coarse',
+    servicesEnabled,
   };
 }
 
@@ -191,6 +284,14 @@ export interface LocationStoreOptions {
   readonly session?: BrowseSessionStore;
   readonly now?: () => number;
   readonly fixTimeoutMs?: number;
+  /**
+   * True while the system dialog must not show (iOS DEBUG
+   * `ScreenshotFixtures.suppressesSystemPrompts`). Default: a fixture run,
+   * `EXPO_PUBLIC_FIXTURE` with `state=` (always false in a release build).
+   */
+  readonly suppressPrompts?: () => boolean;
+  /** Runs at the start of every action (the shared store starts the app's lifecycle with it). */
+  readonly onUse?: () => void;
 }
 
 export type LocationStore = StoreApi<LocationState>;
@@ -200,6 +301,7 @@ const INITIAL = {
   permissionKnown: false,
   canAskAgain: true,
   approximate: false,
+  servicesEnabled: true,
   currentLocation: null as LocationFix | null,
 };
 
@@ -209,6 +311,8 @@ export function createLocationStore(options: LocationStoreOptions = {}): Locatio
   const session = options.session ?? browseSession;
   const now = options.now ?? Date.now;
   const fixTimeoutMs = options.fixTimeoutMs ?? FIX_TIMEOUT_MS;
+  const suppressPrompts = options.suppressPrompts ?? (() => hasFixture('state'));
+  const onUse = options.onUse ?? (() => undefined);
 
   // One of each at a time: a second caller joins the one in flight.
   let fixInFlight: Promise<void> | null = null;
@@ -223,12 +327,14 @@ export function createLocationStore(options: LocationStoreOptions = {}): Locatio
     /** Records a permission read; true when it newly allows location. */
     const apply = (snapshot: PermissionSnapshot): boolean => {
       const before = get();
-      const becameGranted = snapshot.permission === 'granted' && (before.permission !== 'granted' || !before.permissionKnown);
+      const permission = permissionMeaning(snapshot, lastAnswer);
+      const becameGranted = permission === 'granted' && (before.permission !== 'granted' || !before.permissionKnown);
       set({
-        permission: permissionMeaning(snapshot, lastAnswer),
+        permission,
         permissionKnown: true,
         canAskAgain: snapshot.canAskAgain,
         approximate: snapshot.approximate,
+        servicesEnabled: snapshot.servicesEnabled !== false,
       });
       tellSession();
       return becameGranted;
@@ -267,15 +373,19 @@ export function createLocationStore(options: LocationStoreOptions = {}): Locatio
       ...INITIAL,
 
       async refreshPermission() {
+        onUse();
         if (await readPermission()) await requestFix();
       },
 
       async requestLocation() {
+        onUse();
         await readPermission();
         // Undetermined includes a lapsed one-time grant (`permissionMeaning`):
         // Android shows the dialog again for it, and for a no it keeps it
-        // answers `denied` at once, without one.
-        if (get().permission === 'undetermined') {
+        // answers `denied` at once, without one. Location switched off for
+        // the phone reads `denied`, so it is not asked about, as on iOS.
+        // A fixture run reads and refreshes, but never covers its screen.
+        if (get().permission === 'undetermined' && !suppressPrompts()) {
           if (!promptInFlight) {
             promptInFlight = (async () => {
               try {
@@ -295,6 +405,7 @@ export function createLocationStore(options: LocationStoreOptions = {}): Locatio
       },
 
       async refreshIfAuthorized() {
+        onUse();
         if (get().permission === 'granted') await requestFix();
       },
     };
@@ -318,8 +429,14 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
   });
 }
 
-/** The app's location store. */
-export const locationStore: LocationStore = createLocationStore();
+/**
+ * The app's location store. Its first use starts the app's lifecycle
+ * (`ensureLocationLifecycle`), so whichever screen asks first (Explore, Home,
+ * Coach, classes) brings the background/active wiring up with it, as iOS has
+ * it from the app root; the root also starts it at launch
+ * (`startLocationAtLaunch`).
+ */
+export const locationStore: LocationStore = createLocationStore({ onUse: () => ensureLocationLifecycle() });
 
 /** React: a slice of the shared store (or of `store`). */
 export function useLocationStore<T>(selector: (state: LocationState) => T, store: LocationStore = locationStore): T {
@@ -345,33 +462,16 @@ export interface LifecycleOptions {
   readonly now?: () => number;
 }
 
+/** The shared stores' wiring, while it runs: its stop. */
 let stopShared: (() => void) | null = null;
 
-/**
- * Starts the app-wide wiring, once (iOS LifePassApp's scene-phase handler and
- * the location manager's authorization callback):
- *   - the permission is read now, without prompting;
- *   - 'background' stamps the browse session's visit clock;
- *   - 'active' asks the session whether a new visit begins (30 minutes or
- *     more away), and if so refreshes the fix when location is allowed; and
- *     it re-reads the permission, so a member back from Settings sees the
- *     banner go and their position come in.
- * Idempotent for the shared stores: a second call returns the same stop.
- * Meant to start at the app root through `startLocationAtLaunch` (F6 contract
- * request to F4, not wired yet). Until it is, the only caller is the legacy
- * Home hook (src/hooks/useLocation.ts), so nothing runs before Home mounts:
- * whoever replaces that hook (HOME-1) keeps a call until the root has one.
- */
-export function startLocationLifecycle(options: LifecycleOptions = {}): () => void {
-  const shared = !options.location && !options.session && !options.appState;
-  if (shared && stopShared) return stopShared;
-
-  const appState = options.appState ?? AppState;
-  const location = options.location ?? locationStore;
-  const session = options.session ?? browseSession;
-  const now = options.now ?? Date.now;
-
-  void location.getState().refreshPermission();
+/** Wires `appState` to the stores (no reads of its own); returns the unwiring. */
+function wireLifecycle(
+  appState: AppStateLike,
+  location: LocationStore,
+  session: BrowseSessionStore,
+  now: () => number,
+): () => void {
   const subscription = appState.addEventListener('change', (next) => {
     if (next === 'background') {
       session.getState().didEnterBackground(now());
@@ -384,12 +484,56 @@ export function startLocationLifecycle(options: LifecycleOptions = {}): () => vo
         .then(() => (newVisit ? location.getState().refreshIfAuthorized() : undefined));
     }
   });
+  return () => subscription.remove();
+}
 
+/**
+ * The shared stores' wiring, started if it is not running; returns its stop.
+ * Reads nothing: the shared store calls it at the start of every action,
+ * which does its own read.
+ */
+export function ensureLocationLifecycle(now: () => number = Date.now): () => void {
+  if (stopShared) return stopShared;
+  const unwire = wireLifecycle(AppState, locationStore, browseSession, now);
   const stop = () => {
-    subscription.remove();
-    if (shared && stopShared === stop) stopShared = null;
+    unwire();
+    if (stopShared === stop) stopShared = null;
   };
-  if (shared) stopShared = stop;
+  stopShared = stop;
+  return stop;
+}
+
+/**
+ * Starts the app-wide wiring (iOS LifePassApp's scene-phase handler and the
+ * location manager's authorization callback):
+ *   - the permission is read now, without prompting;
+ *   - 'background' stamps the browse session's visit clock;
+ *   - 'active' asks the session whether a new visit begins (30 minutes or
+ *     more away), and if so refreshes the fix when location is allowed; and
+ *     it re-reads the permission and the location toggle, so a member back
+ *     from Settings sees the banner go and their position come in.
+ * Once for the shared stores: their first use starts it too (see
+ * `locationStore`), and a call while it runs returns the same stop and reads
+ * nothing. The app root starts it at launch through `startLocationAtLaunch`.
+ */
+export function startLocationLifecycle(options: LifecycleOptions = {}): () => void {
+  const shared = !options.location && !options.session && !options.appState;
+  if (shared) {
+    if (stopShared) return stopShared;
+    // Wired before the read, so the read's own first use finds it running.
+    const stop = ensureLocationLifecycle(options.now);
+    void locationStore.getState().refreshPermission();
+    return stop;
+  }
+
+  const location = options.location ?? locationStore;
+  const stop = wireLifecycle(
+    options.appState ?? AppState,
+    location,
+    options.session ?? browseSession,
+    options.now ?? Date.now,
+  );
+  void location.getState().refreshPermission();
   return stop;
 }
 
@@ -405,8 +549,9 @@ export function startLocationLifecycle(options: LifecycleOptions = {}): () => vo
  * and after that this only refreshes the fix when location is allowed.
  * Returns the lifecycle's stop (the same one on a second call).
  *
- * The app root calls it once, in a mount effect, whichever tab opens first.
- * That call is F4's (App.tsx); until it lands this is called from nowhere.
+ * The app root calls it once, in a mount effect, whichever tab opens first
+ * (F4's App.tsx; a contract item of F4's). The lifecycle does not wait for
+ * it: the shared store's first use starts that part anyway.
  */
 export function startLocationAtLaunch(options: LifecycleOptions = {}): () => void {
   const stop = startLocationLifecycle(options);
