@@ -13,7 +13,7 @@ import { setEnv } from '@test/harness';
 import { MerchantInfo } from '../../../config/merchantInfo';
 import { setCurrentLanguage } from '../../../i18n';
 import { resetSocialProviderSettingsForTests } from '../providerSettings';
-import { resumeSocialSignIn, signInWithSocialProvider, useSocialSignInStore } from '../social';
+import { resumeSocialSignIn, signInWithSocialProvider, useSocialSignInBusy, useSocialSignInStore } from '../social';
 import SocialSignInButtons from '../SocialSignInButtons';
 
 // expo-font (behind @expo/vector-icons) imports expo-asset, which npm left
@@ -216,6 +216,35 @@ describe('tapping', () => {
 
     await act(() => useSocialSignInStore.setState({ busy: false }));
     expect(screen.getByTestId('auth.google')).toHaveProp('accessibilityState', { disabled: false, busy: false });
+  });
+
+  it('while the screen’s email sign-in runs the block is disabled and dimmed too (iOS: one isLoading)', async () => {
+    serverHas({ apple: true, google: true });
+    const view = await render(<SocialSignInButtons divider="above" disabled />);
+    await screen.findByTestId('auth.google');
+    for (const id of ['auth.apple', 'auth.google']) {
+      // Disabled, but not "busy": no provider sign-in of ours is on its way.
+      expect(screen.getByTestId(id)).toHaveProp('accessibilityState', { disabled: true, busy: false });
+    }
+    expect(screen.getByTestId('auth.social')).toHaveStyle({ opacity: 0.6 });
+    await fireEvent.press(screen.getByTestId('auth.apple'));
+    expect(signIn).not.toHaveBeenCalled();
+
+    await view.rerender(<SocialSignInButtons divider="above" disabled={false} />);
+    await fireEvent.press(screen.getByTestId('auth.apple'));
+    expect(signIn).toHaveBeenCalledWith('apple');
+  });
+
+  it('tells the email form while a provider sign-in runs (useSocialSignInBusy)', async () => {
+    const seen: boolean[] = [];
+    function EmailForm() {
+      seen.push(useSocialSignInBusy());
+      return null;
+    }
+    await render(<EmailForm />);
+    await act(() => useSocialSignInStore.setState({ busy: true }));
+    await act(() => useSocialSignInStore.setState({ busy: false }));
+    expect(seen).toEqual([false, true, false]);
   });
 
   it('the terms line opens the Terms and the Privacy Policy', async () => {

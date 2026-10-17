@@ -19,7 +19,8 @@
  * Under the buttons: the failure line (`auth.social_failed`; a cancel says
  * nothing), then the Terms and Privacy line with links. An account made here
  * has no Terms checkbox, so the notice sits where the tap is. While a sign-in
- * runs the whole block is disabled at 0.6 opacity.
+ * runs (a provider one, or the screen's email one passed in as `disabled`)
+ * the whole block is disabled at 0.6 opacity, as iOS's one `isLoading` does.
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -40,13 +41,20 @@ import {
   visibleSocialProviders,
   type SocialProviders,
 } from './providerSettings';
-import { resumeSocialSignIn, signInWithSocialProvider, useSocialSignInStore, type SocialProvider } from './social';
+import { resumeSocialSignIn, signInWithSocialProvider, useSocialSignInBusy, type SocialProvider } from './social';
 
 /** Where the "or" divider goes: above the buttons (Log in) or below them (Sign up). */
 export type SocialDividerPlacement = 'above' | 'below';
 
 export interface SocialSignInButtonsProps {
   readonly divider: SocialDividerPlacement;
+  /**
+   * The screen's email sign-in or sign-up is running (optional; F4's slot
+   * signature still holds). iOS disables and dims this block on the screen's
+   * one `isLoading`, so a provider sign-in cannot start while the password
+   * one is on its way; the other direction is `useSocialSignInBusy()`.
+   */
+  readonly disabled?: boolean;
 }
 
 /** iOS `SocialSignInButtons.buttonHeight` and `.cornerRadius`. */
@@ -76,11 +84,13 @@ function termsKey(providers: SocialProviders): string {
   return providers.apple ? 'auth.social_terms_apple' : 'auth.social_terms_google';
 }
 
-export default function SocialSignInButtons({ divider }: SocialSignInButtonsProps) {
+export default function SocialSignInButtons({ divider, disabled = false }: SocialSignInButtonsProps) {
   const { t } = useT();
   const [providers, setProviders] = useState<SocialProviders>(initialProviders);
   const [failed, setFailed] = useState(false);
-  const busy = useSocialSignInStore((s) => s.busy);
+  // `running`: a provider sign-in of ours; `busy`: that, or the email form's.
+  const running = useSocialSignInBusy();
+  const busy = running || disabled;
 
   useEffect(() => {
     let alive = true;
@@ -130,6 +140,7 @@ export default function SocialSignInButtons({ divider }: SocialSignInButtonsProp
           testID="auth.apple"
           label={t('auth.continue_apple')}
           disabled={busy}
+          running={running}
           onPress={() => start('apple')}
           style={styles.apple}
           labelStyle={styles.appleLabel}
@@ -142,6 +153,7 @@ export default function SocialSignInButtons({ divider }: SocialSignInButtonsProp
           testID="auth.google"
           label={t('auth.continue_google')}
           disabled={busy}
+          running={running}
           onPress={() => start('google')}
           style={styles.google}
           labelStyle={styles.googleLabel}
@@ -168,13 +180,15 @@ interface ProviderButtonProps {
   readonly testID: string;
   readonly label: string;
   readonly disabled: boolean;
+  /** A provider sign-in is on its way (TalkBack says busy; a button disabled by the email form is not). */
+  readonly running: boolean;
   readonly onPress: () => void;
   readonly style: StyleProp<ViewStyle>;
   readonly labelStyle: StyleProp<TextStyle>;
   readonly logo: ReactNode;
 }
 
-function ProviderButton({ testID, label, disabled, onPress, style, labelStyle, logo }: ProviderButtonProps) {
+function ProviderButton({ testID, label, disabled, running, onPress, style, labelStyle, logo }: ProviderButtonProps) {
   return (
     <Pressable
       testID={testID}
@@ -182,7 +196,7 @@ function ProviderButton({ testID, label, disabled, onPress, style, labelStyle, l
       disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ disabled, busy: disabled }}
+      accessibilityState={{ disabled, busy: running }}
       style={({ pressed }) => [styles.button, style, pressed && !disabled && styles.pressed]}
     >
       <View {...hiddenFromAccessibility}>{logo}</View>

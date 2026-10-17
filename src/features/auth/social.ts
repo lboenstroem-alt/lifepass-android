@@ -137,6 +137,18 @@ interface SocialSignInState {
 
 export const useSocialSignInStore = create<SocialSignInState>(() => ({ busy: false }));
 
+/**
+ * Whether a Google or Apple sign-in is running, for the email form beside
+ * the buttons (CONTRACT for AUTH-1's Log in and Sign up). iOS keeps ONE
+ * `isLoading` for the whole screen: while the provider's page is open, the
+ * email Sign in / Create account button is disabled too, so the two sign-ins
+ * never race each other to `handleSignIn`. The other direction is
+ * `SocialSignInButtons`' `disabled` prop.
+ */
+export function useSocialSignInBusy(): boolean {
+  return useSocialSignInStore((state) => state.busy);
+}
+
 // ---------------------------------------------------------------------------
 // The links
 
