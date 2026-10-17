@@ -43,7 +43,8 @@
  * Icelandic); else the device's. A signed-out phone always follows the
  * device, whoever was signed in last. Kept in step with src/i18n's
  * `currentLanguage` on every change, so text built outside React (errors,
- * notifications) speaks it too.
+ * notifications) speaks it too, and the device's is read again on every
+ * return to the foreground.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
@@ -467,7 +468,9 @@ export const useAppStore = create<AppStore>()((set, get) => {
     // phone, a session that lapsed without a sign-out): nothing of theirs
     // stays on screen. The member is compared as well as the profile: when
     // their profile never loaded (offline, a failed read) but their plan
-    // did, the next member must not be shown that plan.
+    // did, the next member must not be shown that plan. Nor the Kenni nudge
+    // armed for the last member's fresh account: this member's own profile
+    // decides it again below.
     const otherMember =
       (current.userId !== null && current.userId !== userId) ||
       (current.profile !== null && current.profile.id !== userId);
@@ -475,7 +478,14 @@ export const useAppStore = create<AppStore>()((set, get) => {
       session: session ?? (current.userId === userId ? current.session : null),
       userId,
       ...(otherMember
-        ? { profile: null, profileReadAt: null, subscription: null, subscriptionLoaded: false, healthAccessOverride: null }
+        ? {
+            profile: null,
+            profileReadAt: null,
+            subscription: null,
+            subscriptionLoaded: false,
+            healthAccessOverride: null,
+            pendingKennitalaPrompt: false,
+          }
         : {}),
     });
     await runSignInHooks({ userId, restoredSession });
@@ -622,6 +632,11 @@ export const useAppStore = create<AppStore>()((set, get) => {
     appStateListener = AppState.addEventListener('change', (next) => {
       if (next === 'active') {
         void supabase.auth.startAutoRefresh();
+        // The phone's language may have changed in Settings meanwhile. On
+        // Android that recreates the activity but keeps this JS runtime, so
+        // nothing else would re-read it (iOS relaunches the app). A member
+        // whose profile or cached account language decides is unaffected.
+        syncDerived(get());
         const { isAuthenticated, isLoading, profile } = get();
         if (isAuthenticated && !isLoading && profile) {
           void runActivationHooks({ memberId: profile.id, trigger: 'foreground' });
@@ -682,22 +697,26 @@ export const useAppStore = create<AppStore>()((set, get) => {
           await hydrateCachedAccountLanguage();
           startAuthListener();
           startForegroundWatch();
-          if (applyFixture()) return;
-          const session = await restoreSession();
-          if (!session) {
-            set({ isAuthenticated: false });
-            return;
+          // No `return` in here: it would skip the late sign-in below, which
+          // matters most when launch found no session at all.
+          if (!applyFixture()) {
+            const session = await restoreSession();
+            if (session) {
+              generation += 1;
+              await signedIn(session, wireId(session.user.id), true);
+            } else {
+              set({ isAuthenticated: false });
+            }
           }
-          generation += 1;
-          await signedIn(session, wireId(session.user.id), true);
         } catch (error) {
           track('service_error', { op: 'bootstrap', error: errorDescription(error) });
         } finally {
           bootstrapping = false;
           set({ isLoading: false });
         }
-        // Launch decided without it (the link's session was stored after the
-        // read, say): it is a sign-in like any other.
+        // Launch decided without it (an auth link that cold-started a
+        // signed-out phone, the link's session stored after the read): it is
+        // a sign-in like any other. Never over a development fixture.
         const late = signInDuringLaunch;
         signInDuringLaunch = null;
         const state = get();
