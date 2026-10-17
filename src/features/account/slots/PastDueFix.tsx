@@ -18,8 +18,6 @@ import { colors, radius } from '../../../theme';
 import { fixPastDuePayment, useCopayBusy } from '../copay/copayFlows';
 import '../copay/register';
 
-const WHITE = '#FFFFFF';
-
 export default function PastDueFix() {
   const { t } = useT();
   const pastDue = useAppStore((state) => isSubscriptionPastDue(state.subscription));
@@ -38,7 +36,7 @@ export default function PastDueFix() {
       style={({ pressed }) => [styles.button, (pressed || retrying) && styles.dimmed]}
       testID="account.pastDue.fix"
     >
-      <LPText size={12} weight="semibold" color={WHITE}>
+      <LPText size={12} weight="semibold" color={colors.onAccent}>
         {label}
       </LPText>
     </Pressable>

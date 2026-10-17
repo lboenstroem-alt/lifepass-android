@@ -24,8 +24,6 @@ import { activationCta } from './copayFlows';
 /** The only `blocked` value iOS knows: a live personal plan holds activation until it ends. */
 export const BLOCKED_BY_EXISTING_SUBSCRIPTION = 'existing_subscription';
 
-const WHITE = '#FFFFFF';
-
 export interface CompanyPlanCardProps {
   readonly context: CompanyPlanContext | null;
   /** An activation is running: the CTA reads "Processing…" and does nothing. */
@@ -65,7 +63,7 @@ export default function CompanyPlanCard({ context, activating, onActivate, onVer
             style={({ pressed }) => [styles.cta, (pressed || activating) && styles.dimmed]}
             testID="copay.banner.activate"
           >
-            <LPText size={13} weight="semibold" color={WHITE}>
+            <LPText size={13} weight="semibold" color={colors.onAccent}>
               {cta}
             </LPText>
           </Pressable>
@@ -90,7 +88,7 @@ export default function CompanyPlanCard({ context, activating, onActivate, onVer
           style={({ pressed }) => [styles.cta, pressed && styles.dimmed]}
           testID="copay.banner.verify"
         >
-          <LPText size={13} weight="semibold" color={WHITE}>
+          <LPText size={13} weight="semibold" color={colors.onAccent}>
             {cta}
           </LPText>
         </Pressable>
@@ -110,7 +108,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.ink2,
     borderRadius: radius.card,
     borderWidth: 1,
-    borderColor: 'rgba(71,133,194,0.4)',
+    borderColor: 'rgba(71,133,194,0.4)', // colors.rust (#4785C2) at 40 %
   },
   // iOS: 13 pt semibold white on rust, padding 14 by 9, a capsule.
   cta: {
