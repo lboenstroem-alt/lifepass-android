@@ -26,7 +26,9 @@
  * - One auth listener for the life of the app: SIGNED_OUT runs
  *   `handleSignOut` (once), USER_UPDATED re-reads the profile, a refreshed
  *   token replaces the session. A SIGNED_IN that nobody announced (an auth
- *   link, the first build's sign-in screens) runs `handleSignIn`.
+ *   link, the first build's sign-in screens) runs `handleSignIn`. A refresh
+ *   that brings back the session of a member who signed out ends it again
+ *   (`signedOutMember`).
  *
  * Each sign-in and sign-out starts a new GENERATION: an answer that arrives
  * after the member it was read for has left is dropped, so one member's
@@ -307,6 +309,20 @@ let signInFlight: SignInFlight | null = null;
 /** The member whose first-profile activation hooks have run this sign-in. */
 let activatedFor: string | null = null;
 
+/**
+ * The member who last signed out in this run, until they sign in again.
+ *
+ * WHY. supabase-js retries a failing token refresh for up to 30 s, and a
+ * refresh that answers AFTER the session was removed saves it back
+ * (`_callRefreshToken` stores whatever it gets, then says TOKEN_REFRESHED).
+ * A member who signs out offline with an expired token, and gets a signal
+ * again within that window, would find their session back on the phone: the
+ * next person to open the app would be signed in as them. supabase-swift
+ * fails at the first failure, so iOS has no such window. A refreshed session
+ * for this member, while they are not the one signed in, is ended again.
+ */
+let signedOutMember: string | null = null;
+
 let authListener: { unsubscribe(): void } | null = null;
 let appStateListener: NativeEventSubscription | null = null;
 
@@ -414,6 +430,8 @@ export const useAppStore = create<AppStore>()((set, get) => {
   async function signedIn(session: Session | null, userId: string, restoredSession: boolean, flight?: SignInFlight) {
     const mine = generation;
     const current = get();
+    // Signed in again: a refreshed session of theirs is theirs once more.
+    if (signedOutMember === userId) signedOutMember = null;
     // A different member than the one whose profile is in hand (their
     // session lapsed without a sign-out): nothing of theirs stays on screen.
     const otherMember = current.profile !== null && current.profile.id !== userId;
@@ -497,9 +515,22 @@ export const useAppStore = create<AppStore>()((set, get) => {
         if (session && state.userId === wireId(session.user.id)) set({ session });
         if (state.isAuthenticated) await state.loadProfile();
         return;
-      case 'TOKEN_REFRESHED':
-        if (session && state.userId === wireId(session.user.id)) set({ session });
+      case 'TOKEN_REFRESHED': {
+        if (!session) return;
+        const refreshed = wireId(session.user.id);
+        if (state.userId === refreshed) {
+          set({ session });
+          return;
+        }
+        // A refresh that was still retrying when this member signed out has
+        // saved their session back (see `signedOutMember`): end it again, on
+        // the server too, as the sign-out meant. If another member has signed
+        // in since, the session the phone now holds is not theirs either, and
+        // the SIGNED_OUT this fires signs them out rather than leave them
+        // reading someone else's account.
+        if (!bootstrapping && refreshed === signedOutMember) await endSession();
         return;
+      }
       case 'SIGNED_IN': {
         if (!session) return;
         if (bootstrapping) {
@@ -663,6 +694,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
       generation += 1;
       signInFlight = null;
       activatedFor = null;
+      if (memberId !== null) signedOutMember = memberId;
       set({
         session: null,
         userId: null,
@@ -822,6 +854,7 @@ export function resetAppStoreForTests(): void {
   signInDuringLaunch = null;
   signInFlight = null;
   activatedFor = null;
+  signedOutMember = null;
   kennitalaPromptBlockers.clear();
   useAppStore.setState({ ...initialState, language: deviceLanguage() });
 }

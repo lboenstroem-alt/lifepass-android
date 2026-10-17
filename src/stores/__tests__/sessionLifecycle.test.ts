@@ -386,6 +386,83 @@ describe('sign-out', () => {
     expect(await readStoredSession(SUPABASE_STORAGE_KEY)).toBeNull();
   });
 
+  describe('a refresh that answers after the member signed out', () => {
+    /**
+     * What a refresh supabase-js was still retrying does when it finally
+     * answers (offline with an expired token, it retries for 30 s): the SDK's
+     * `_callRefreshToken` saves the session it got and says TOKEN_REFRESHED.
+     * `setSession` with an expired token runs exactly that path.
+     */
+    async function lateRefresh(userId: string): Promise<void> {
+      authHost.on('POST', '/auth/v1/token', Reply.json(200, sessionJSON(userId, 7200, 'refresh-late')));
+      const expired = sessionJSON(userId, -60);
+      await supabase.auth.setSession({ access_token: expired.access_token, refresh_token: expired.refresh_token });
+    }
+
+    /** Settles until `check` holds, or gives up after enough turns for a sign-out round trip. */
+    async function eventually(check: () => Promise<boolean>): Promise<void> {
+      for (let i = 0; i < 50 && !(await check()); i += 1) await settle(1);
+    }
+
+    const noStoredSession = async () => (await readStoredSession(SUPABASE_STORAGE_KEY)) === null;
+
+    async function signedInThenOut(): Promise<void> {
+      await signedIn();
+      authHost.on('POST', '/auth/v1/logout', Reply.empty(204));
+      await store().signOut();
+      await settle(10);
+      expect(await noStoredSession()).toBe(true);
+    }
+
+    it('does not bring their session back', async () => {
+      let runs = 0;
+      unregister.push(registerSignOutCleaner('test.count', () => void (runs += 1)));
+      await signedInThenOut();
+      expect(runs).toBe(1);
+
+      await lateRefresh(MEMBER_A);
+      await eventually(noStoredSession);
+      expect(await noStoredSession()).toBe(true);
+      expect(store().isAuthenticated).toBe(false);
+      expect(store().userId).toBeNull();
+      // Ended on the server too, as the sign-out meant, and wiped only once.
+      expect(authHost.sentAll('/auth/v1/logout', 'POST')).toHaveLength(2);
+      expect(runs).toBe(1);
+    });
+
+    it('leaves the session of the same member signing in again alone', async () => {
+      await signedInThenOut();
+      authHost.on('GET', '/auth/v1/user', Reply.json(200, sessionJSON(MEMBER_A, 3600).user));
+      const again = sessionJSON(MEMBER_A, 3600, 'refresh-again');
+      await supabase.auth.setSession({ access_token: again.access_token, refresh_token: again.refresh_token });
+      await settle(10);
+      expect(store().isAuthenticated).toBe(true);
+
+      await lateRefresh(MEMBER_A);
+      await settle(20);
+      expect(store().isAuthenticated).toBe(true);
+      expect((await readStoredSession(SUPABASE_STORAGE_KEY))?.refresh_token).toBe('refresh-late');
+      expect(store().session?.refresh_token).toBe('refresh-late');
+      expect(authHost.sentAll('/auth/v1/logout', 'POST')).toHaveLength(1);
+    });
+
+    it("signs out a member who signed in meanwhile rather than leave them on the last member's session", async () => {
+      await signedInThenOut();
+      api.on('GET', '/profile', Reply.ok(profileJSON({ id: MEMBER_B, kennitalaVerified: true })));
+      authHost.on('GET', '/auth/v1/user', Reply.json(200, sessionJSON(MEMBER_B, 3600).user));
+      const b = sessionJSON(MEMBER_B, 3600, 'refresh-b');
+      await supabase.auth.setSession({ access_token: b.access_token, refresh_token: b.refresh_token });
+      await settle(10);
+      expect(store().userId).toBe(MEMBER_B);
+
+      await lateRefresh(MEMBER_A);
+      await eventually(async () => !store().isAuthenticated && (await noStoredSession()));
+      expect(store().isAuthenticated).toBe(false);
+      expect(store().profile).toBeNull();
+      expect(await noStoredSession()).toBe(true);
+    });
+  });
+
   it('the pre-sign-out hooks run while the session still stands', async () => {
     await signedIn();
     let sessionDuringHook: unknown = null;
