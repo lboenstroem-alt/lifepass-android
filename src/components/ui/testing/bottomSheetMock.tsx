@@ -20,7 +20,11 @@
 //   so a screen test needs no provider to reach a sheet's content.
 // - RECORDS the props each modal rendered with (`bottomSheetMock.modals`).
 //
-// Use it in a test file (until jest.setup.ts points every suite at it):
+// jest.setup.ts still maps every suite to the library's mock (a contract
+// request to F0 asks it to map them here and call `bottomSheetMock.reset()`
+// in a global beforeEach). Until that lands, a test file that renders a Sheet
+// or ConfirmSheet MUST opt in itself, or the footer (Confirm, Cancel, the
+// money line) is never rendered:
 //
 //   jest.mock('@gorhom/bottom-sheet', () =>
 //     require('<relative path>/components/ui/testing/bottomSheetMock').bottomSheetModule,

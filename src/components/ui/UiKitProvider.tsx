@@ -10,7 +10,7 @@
 // It MUST be mounted before any screen opens a <Sheet>: without
 // BottomSheetModalProvider the library throws on the first sheet, and
 // showDialog / showToast draw nothing (they only warn in development).
-// Until F4 mounts it in App.tsx (contract request), nothing does.
+// App.tsx (the F4 shell) mounts the one instance; do not mount a second.
 //
 // - GestureHandlerRootView: bottom sheets are gesture-driven.
 // - BottomSheetModalProvider: the host every <Sheet> renders into. Its portal
@@ -28,7 +28,8 @@
 // - DialogHost: draws showDialog(), above everything (its own window).
 //
 // Both hosts outlive a sign-out (they sit above the navigator); resetUiKit()
-// (./reset.ts) clears them and must be registered as a sign-out cleaner.
+// (./reset.ts) clears them, and src/app/registrations.ts registers it as a
+// sign-out cleaner.
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import type { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';

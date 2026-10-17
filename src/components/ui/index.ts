@@ -7,6 +7,21 @@
 // and state. Colours and faces come from src/theme; large text and reduce
 // motion from src/hooks/useA11ySize and src/hooks/useReduceMotion; haptics
 // from src/lib/haptics.
+//
+// TESTING A SHEET. jest.setup.ts maps '@gorhom/bottom-sheet' to the library's
+// own mock, which draws NO footer: under it a Sheet's `footer` (the money line,
+// Confirm) and ConfirmSheet's Confirm and Cancel are not rendered, so a test
+// cannot find or press them, and a close never reports `onDismiss` (it ends on
+// the Sheet's 800 ms fallback). Until jest.setup.ts points every suite at the
+// kit's stand-in (contract request to F0), every test file that renders a
+// Sheet or ConfirmSheet, directly or through a screen, must opt in itself,
+// as src/components/ui/__tests__/Sheet.test.tsx does:
+//
+//   import { bottomSheetMock } from '<relative path>/components/ui/testing/bottomSheetMock';
+//   jest.mock('@gorhom/bottom-sheet', () =>
+//     require('<relative path>/components/ui/testing/bottomSheetMock').bottomSheetModule,
+//   );
+//   beforeEach(() => bottomSheetMock.reset());
 export { default as LPText } from './LPText';
 export type { LPTextProps } from './LPText';
 export { default as Kicker } from './Kicker';

@@ -1,7 +1,14 @@
 // DEV ONLY: every UI kit piece on one scrolling page, for visual checks on an
-// emulator (font scale 2.0, Remove animations, TalkBack, Icelandic). Nothing
-// here ships: the app shell mounts it only in a dev build, and its words are
-// sample text, not member copy (src/dev is outside the copy rules).
+// emulator (font scale 2.0, Remove animations, TalkBack, Icelandic): the real
+// gorhom footer slot, the keyboard lift, the backdrop and busy lock, and
+// TalkBack focus, none of which Jest can show. Its words are sample text, not
+// member copy (src/dev is outside the copy rules).
+//
+// NOT REACHABLE YET. No route, deep link or launch switch opens this screen.
+// Contract request to F4: register a root route (e.g. `DevUiKit`) only when
+// `__DEV__`, reachable through a dev-only link such as `lifepass://dev/ui-kit`
+// that the deep-link router handles only when `__DEV__` (or a dev fixture
+// switch). A release bundle must never contain the route.
 import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
