@@ -11,6 +11,7 @@ import {
   createLocationStore,
   expoLocationPlatform,
   MAX_FIX_AGE_MS,
+  permissionMeaning,
   selectEffectiveLocation,
   selectGrantedLocation,
   selectLocationOff,
@@ -34,21 +35,42 @@ const NOW = 1_790_000_000_000;
 const reykjavikFix: LocationFix = { latitude: 64.1466, longitude: -21.9426, accuracy: 35, timestamp: NOW - 1_000 };
 const akureyriFix: LocationFix = { latitude: 65.6839, longitude: -18.0906, accuracy: 35, timestamp: NOW - 1_000 };
 
-/** A phone: what the permission is, what the dialog answers, what fix it gives. */
+/**
+ * Where Android keeps the permission, and what Expo reads for each
+ * (expo-modules-core PermissionsService: asked before and not granted reads
+ * `denied`; `canAskAgain` is Android's "show a rationale"):
+ *  - unasked:        undetermined
+ *  - granted:        granted
+ *  - refused:        denied, canAskAgain. The member said no; Android would
+ *                    still show the dialog.
+ *  - refusedForGood: denied, not canAskAgain. A second no ("Don't ask again"
+ *                    before Android 11): a request answers at once, no dialog.
+ *  - lapsed:         denied, not canAskAgain. An "Only this time" grant that
+ *                    ran out, or a dialog closed unanswered: a request shows
+ *                    the dialog again.
+ */
+type AndroidPermission = 'unasked' | 'granted' | 'refused' | 'refusedForGood' | 'lapsed';
+
+/** A phone: where the permission is, what the dialog answers, what fix it gives. */
 class FakePhone implements LocationPlatform {
-  permission: LocationPermission = 'undetermined';
-  /** What the member taps in the dialog. */
-  answer: LocationPermission = 'granted';
+  state: AndroidPermission = 'unasked';
+  /** What the member does with the dialog. */
+  answer: 'granted' | 'denied' | 'dismissed' = 'granted';
   approximate = false;
   fix: LocationFix | Error = reykjavikFix;
   reads = 0;
+  /** Calls to `requestPermission`. */
+  requests = 0;
+  /** Dialogs the member actually saw. */
   prompts = 0;
   fixes = 0;
 
   private snapshot(): PermissionSnapshot {
+    const permission: LocationPermission =
+      this.state === 'unasked' ? 'undetermined' : this.state === 'granted' ? 'granted' : 'denied';
     return {
-      permission: this.permission,
-      canAskAgain: this.permission !== 'denied',
+      permission,
+      canAskAgain: this.state !== 'refusedForGood' && this.state !== 'lapsed',
       approximate: this.approximate,
     };
   }
@@ -59,9 +81,16 @@ class FakePhone implements LocationPlatform {
   }
 
   async requestPermission() {
-    this.prompts += 1;
-    // Android shows the dialog only while it still may.
-    if (this.permission === 'undetermined') this.permission = this.answer;
+    this.requests += 1;
+    // Android shows the dialog unless it holds the permission or keeps a no.
+    if (this.state !== 'granted' && this.state !== 'refusedForGood') {
+      this.prompts += 1;
+      if (this.answer === 'granted') this.state = 'granted';
+      else if (this.answer === 'denied') this.state = this.state === 'refused' ? 'refusedForGood' : 'refused';
+      // Closing it unanswered changes nothing Android keeps, but Expo now
+      // counts it as asked.
+      else if (this.state === 'unasked') this.state = 'lapsed';
+    }
     return this.snapshot();
   }
 
@@ -115,10 +144,101 @@ it('a member who said no is never asked again', async () => {
   await store.getState().requestLocation();
   await store.getState().requestLocation();
   expect(phone.prompts).toBe(1);
+  expect(phone.requests).toBe(1);
   expect(phone.fixes).toBe(0);
   expect(selectGrantedLocation(store.getState())).toBeNull();
   expect(selectLocationOff(store.getState())).toBe(true); // the Explore banner shows
   expect(session.getState().origin).toBeNull();
+
+  // The next launch (a new store on the same phone): still never asked.
+  const relaunched = setup(phone).store;
+  await relaunched.getState().requestLocation();
+  expect(phone.requests).toBe(1);
+  expect(selectLocationOff(relaunched.getState())).toBe(true);
+});
+
+/**
+ * An "Only this time" grant that ran out is not a no. Expo reads it as
+ * `denied`, but iOS reads an expired "Allow Once" as not determined and asks
+ * again; so does Android, which still shows the dialog for it.
+ */
+it('a lapsed one-time grant is asked about again, with no banner meanwhile', async () => {
+  const phone = new FakePhone();
+  phone.state = 'lapsed';
+  const { store, session } = setup(phone);
+
+  await store.getState().refreshPermission();
+  expect(store.getState().permission).toBe('undetermined');
+  expect(selectLocationOff(store.getState())).toBe(false);
+  expect(phone.requests).toBe(0); // a read still never asks
+
+  await store.getState().requestLocation();
+  expect(phone.prompts).toBe(1);
+  expect(selectGrantedLocation(store.getState())).toEqual(reykjavikFix);
+  expect(session.getState().origin).toEqual(reykjavikFix);
+
+  // It runs out again while the app is away: undecided, not off, and asked again.
+  phone.state = 'lapsed';
+  await store.getState().refreshPermission();
+  expect(store.getState().permission).toBe('undetermined');
+  expect(selectLocationOff(store.getState())).toBe(false);
+  expect(selectGrantedLocation(store.getState())).toBeNull();
+  expect(session.getState().origin).toBeNull();
+  await store.getState().requestLocation();
+  expect(phone.prompts).toBe(2);
+});
+
+/**
+ * A no Android keeps reads exactly like a lapsed grant. Asking tells them
+ * apart without a dialog: one silent request a launch, then never again.
+ */
+it('a no Android keeps costs one silent request a launch, never a dialog', async () => {
+  const phone = new FakePhone();
+  phone.state = 'refusedForGood';
+  const { store } = setup(phone);
+  await store.getState().requestLocation();
+  await store.getState().requestLocation();
+  expect(phone.requests).toBe(1);
+  expect(phone.prompts).toBe(0);
+  expect(selectLocationOff(store.getState())).toBe(true);
+
+  // Re-reading on return from the background keeps it a no.
+  await store.getState().refreshPermission();
+  expect(selectLocationOff(store.getState())).toBe(true);
+  await store.getState().requestLocation();
+  expect(phone.requests).toBe(1);
+});
+
+/** A dialog closed without an answer is a no for this launch, and asked about at the next. */
+it('a dialog closed unanswered is asked about once a launch', async () => {
+  const phone = new FakePhone();
+  phone.answer = 'dismissed';
+  const { store } = setup(phone);
+  await store.getState().requestLocation();
+  await store.getState().requestLocation();
+  expect(phone.prompts).toBe(1);
+  expect(selectLocationOff(store.getState())).toBe(true);
+
+  const relaunched = setup(phone).store;
+  await relaunched.getState().requestLocation();
+  expect(phone.prompts).toBe(2);
+});
+
+it('what a read means, in iOS terms', () => {
+  const read = (permission: LocationPermission, canAskAgain: boolean): PermissionSnapshot => ({
+    permission,
+    canAskAgain,
+    approximate: false,
+  });
+  expect(permissionMeaning(read('granted', true), null)).toBe('granted');
+  expect(permissionMeaning(read('undetermined', true), null)).toBe('undetermined');
+  // A no Android would still show the dialog for: a no, never re-asked.
+  expect(permissionMeaning(read('denied', true), null)).toBe('denied');
+  expect(permissionMeaning(read('denied', true), 'granted')).toBe('denied');
+  // Android will not say which: undecided until a request says no.
+  expect(permissionMeaning(read('denied', false), null)).toBe('undetermined');
+  expect(permissionMeaning(read('denied', false), 'granted')).toBe('undetermined');
+  expect(permissionMeaning(read('denied', false), 'denied')).toBe('denied');
 });
 
 it('two callers at once share one dialog', async () => {
@@ -129,7 +249,7 @@ it('two callers at once share one dialog', async () => {
 
 it('a fix older than a minute is ignored', async () => {
   const phone = new FakePhone();
-  phone.permission = 'granted';
+  phone.state = 'granted';
   phone.fix = { ...reykjavikFix, timestamp: NOW - MAX_FIX_AGE_MS };
   const { store, session } = setup(phone);
   await store.getState().refreshIfAuthorized();
@@ -145,7 +265,7 @@ it('a fix older than a minute is ignored', async () => {
 
 it('a failed fix is silent', async () => {
   const phone = new FakePhone();
-  phone.permission = 'granted';
+  phone.state = 'granted';
   phone.fix = new Error('Current location is unavailable');
   const { store } = setup(phone);
   await expect(store.getState().requestLocation()).resolves.toBeUndefined();
@@ -156,7 +276,7 @@ it('a fix that never comes stops being waited for', async () => {
   jest.useFakeTimers();
   try {
     const phone = new FakePhone();
-    phone.permission = 'granted';
+    phone.state = 'granted';
     const pending = new Promise<LocationFix>(() => undefined);
     phone.currentFix = () => pending;
     const session = createBrowseSession({ seed: 7 });
@@ -186,7 +306,7 @@ it('a revoked permission takes the fix out of the browse order', async () => {
   await store.getState().requestLocation();
   expect(session.getState().origin).toEqual(reykjavikFix);
 
-  phone.permission = 'denied';
+  phone.state = 'refused'; // "Don't allow" in Settings
   await store.getState().refreshPermission();
   expect(selectGrantedLocation(store.getState())).toBeNull();
   expect(session.getState().origin).toBeNull();
@@ -249,7 +369,7 @@ describe('the lifecycle', () => {
   /** The member turns location on in Settings and comes back: the banner goes and the fix comes in. */
   it('coming back from Settings re-reads the permission', async () => {
     const phone = new FakePhone();
-    phone.permission = 'denied';
+    phone.state = 'refused'; // "Don't allow" in Settings
     const session = createBrowseSession({ seed: 7 });
     const location = createLocationStore({ platform: phone, session, now: () => NOW });
     const appState = fakeAppState();
@@ -257,7 +377,7 @@ describe('the lifecycle', () => {
     await flush();
     expect(selectLocationOff(location.getState())).toBe(true);
 
-    phone.permission = 'granted';
+    phone.state = 'granted';
     appState.emit('background');
     appState.emit('active');
     await flush();
@@ -271,7 +391,7 @@ describe('the lifecycle', () => {
 
   it('half an hour away is a new visit with a fresh fix; less is not', async () => {
     const phone = new FakePhone();
-    phone.permission = 'granted';
+    phone.state = 'granted';
     let clock = NOW;
     const draws = [1001];
     const session = createBrowseSession({ seed: 7, drawSeed: () => draws.shift() ?? 0 });
@@ -326,7 +446,7 @@ describe('the lifecycle', () => {
 
   it('launch with location allowed brings the first fix to the browse order', async () => {
     const phone = new FakePhone();
-    phone.permission = 'granted';
+    phone.state = 'granted';
     const session = createBrowseSession({ seed: 7 });
     const location = createLocationStore({ platform: phone, session, now: () => NOW });
     const stop = startLocationAtLaunch({ appState: fakeAppState(), location, session, now: () => NOW });

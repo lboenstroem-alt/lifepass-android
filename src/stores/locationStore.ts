@@ -6,10 +6,14 @@
 //    `getForegroundPermissionsAsync` and is safe anywhere (the app coming back
 //    from Settings, a list ordering itself). Only `requestLocation()` can show
 //    the system dialog, and only while the member has not decided yet: once
-//    they have, it never asks again (as iOS, which cannot ask twice; Android
-//    could, and that would be nagging). Callers are the places iOS asks from:
-//    app launch (`startLocationAtLaunch`), an Explore visit, Home, Coach
-//    "near me", classes "Near me".
+//    they have said no, it never asks again (as iOS, which cannot ask twice;
+//    Android could, and that would be nagging). Callers are the places iOS
+//    asks from: app launch (`startLocationAtLaunch`), an Explore visit, Home,
+//    Coach "near me", classes "Near me".
+//  - "Not decided yet" is read as iOS reads it, which on Android takes more
+//    than Expo's status (`permissionMeaning` below): an "Only this time"
+//    grant that ran out is undecided again, as an expired "Allow Once" is on
+//    iOS, and is asked about again.
 //  - About 100 m accuracy (Balanced), which the 3 km band and the map dot
 //    need; an approximate grant (Android 12+) still counts as granted, as a
 //    reduced-accuracy grant does on iOS.
@@ -38,7 +42,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 import { REYKJAVIK_CENTRE, type Coordinate } from '../lib/geo';
 import { browseSession, type BrowseSessionStore } from './browseSession';
 
-/** Expo's three answers. A restricted device reads as `denied`. */
+/** The three answers. A restricted device reads as `denied`. */
 export type LocationPermission = 'undetermined' | 'granted' | 'denied';
 
 /** A position fix. */
@@ -73,10 +77,11 @@ export const MAX_FIX_AGE_MS = 60_000;
 export const FIX_TIMEOUT_MS = 15_000;
 
 export interface LocationState {
-  /** The permission as last read. */
+  /** The permission as last read, as iOS would report it (`permissionMeaning`). */
   readonly permission: LocationPermission;
   /** Whether the permission has been read since launch (before that, nothing is known). */
   readonly permissionKnown: boolean;
+  /** Expo's raw `canAskAgain` (Android: whether it would show a rationale). */
   readonly canAskAgain: boolean;
   readonly approximate: boolean;
   /** The last fresh fix. Read through the selectors below. */
@@ -111,10 +116,40 @@ export function selectEffectiveLocation(state: Pick<LocationState, 'currentLocat
 /**
  * Location is off: the member said no. The Explore banner ("Location is off",
  * Open) shows while this holds; it appears as soon as "Don't allow" is chosen
- * and goes once location is allowed in Settings (re-read on return).
+ * and goes once location is allowed in Settings (re-read on return). A grant
+ * that ran out is not a no (see `permissionMeaning`), so it shows no banner.
  */
 export function selectLocationOff(state: Pick<LocationState, 'permission' | 'permissionKnown'>): boolean {
   return state.permissionKnown && state.permission === 'denied';
+}
+
+/**
+ * What an Android permission read means, in iOS's terms.
+ *
+ * Expo reports every permission it has asked for and does not hold as
+ * `denied` (expo-modules-core PermissionsService: asked before, not granted,
+ * reads DENIED), so `denied` alone cannot tell a member who said no from one
+ * whose "Only this time" grant ran out. iOS can: an expired "Allow Once" is
+ * `.notDetermined` again, and `requestLocation()` asks again. Android's
+ * `canAskAgain` (its "show a rationale" flag) splits the reads in two:
+ *  - denied, canAskAgain: the member said no, and Android would still show
+ *    the dialog (a first "Don't allow", or "Don't allow" in Settings). That is
+ *    iOS `.denied`: never asked again.
+ *  - denied, not canAskAgain: either a no Android itself will no longer ask
+ *    about (a second "Don't allow"; "Don't ask again" before Android 11), or
+ *    a case where nobody said no and Android WILL ask again: a one-time grant
+ *    that ran out, a dialog closed without an answer, a permission reset for
+ *    an unused app. The read cannot tell these apart; asking can, and costs
+ *    the first kind nothing (Android answers `denied` at once, with no
+ *    dialog). So it means undetermined until this process has asked and been
+ *    told no (`lastAnswer`), and is then a no until the app is next started.
+ * Nothing is stored between launches: each launch's one request (silent for
+ * a no Android keeps) settles it again, and a no that Android would still
+ * show the dialog for (canAskAgain) is never re-asked.
+ */
+export function permissionMeaning(snapshot: PermissionSnapshot, lastAnswer: LocationPermission | null): LocationPermission {
+  if (snapshot.permission !== 'denied' || snapshot.canAskAgain) return snapshot.permission;
+  return lastAnswer === 'denied' ? 'denied' : 'undetermined';
 }
 
 /** expo-location, as the store needs it. */
@@ -178,6 +213,8 @@ export function createLocationStore(options: LocationStoreOptions = {}): Locatio
   // One of each at a time: a second caller joins the one in flight.
   let fixInFlight: Promise<void> | null = null;
   let promptInFlight: Promise<void> | null = null;
+  // What the last request answered in this process (see `permissionMeaning`).
+  let lastAnswer: LocationPermission | null = null;
 
   return createStore<LocationState>()((set, get) => {
     /** The browse order's bands follow the granted fix, told rather than observed. */
@@ -188,7 +225,7 @@ export function createLocationStore(options: LocationStoreOptions = {}): Locatio
       const before = get();
       const becameGranted = snapshot.permission === 'granted' && (before.permission !== 'granted' || !before.permissionKnown);
       set({
-        permission: snapshot.permission,
+        permission: permissionMeaning(snapshot, lastAnswer),
         permissionKnown: true,
         canAskAgain: snapshot.canAskAgain,
         approximate: snapshot.approximate,
@@ -235,11 +272,16 @@ export function createLocationStore(options: LocationStoreOptions = {}): Locatio
 
       async requestLocation() {
         await readPermission();
+        // Undetermined includes a lapsed one-time grant (`permissionMeaning`):
+        // Android shows the dialog again for it, and for a no it keeps it
+        // answers `denied` at once, without one.
         if (get().permission === 'undetermined') {
           if (!promptInFlight) {
             promptInFlight = (async () => {
               try {
-                apply(await platform.requestPermission());
+                const answer = await platform.requestPermission();
+                lastAnswer = answer.permission;
+                apply(answer);
               } catch {
                 // The dialog could not be shown: nothing changes.
               } finally {
@@ -315,8 +357,10 @@ let stopShared: (() => void) | null = null;
  *     it re-reads the permission, so a member back from Settings sees the
  *     banner go and their position come in.
  * Idempotent for the shared stores: a second call returns the same stop.
- * The app root starts it through `startLocationAtLaunch`; the legacy Home
- * hook (src/hooks/useLocation.ts) starts it too until HOME-1 replaces it.
+ * Meant to start at the app root through `startLocationAtLaunch` (F6 contract
+ * request to F4, not wired yet). Until it is, the only caller is the legacy
+ * Home hook (src/hooks/useLocation.ts), so nothing runs before Home mounts:
+ * whoever replaces that hook (HOME-1) keeps a call until the root has one.
  */
 export function startLocationLifecycle(options: LifecycleOptions = {}): () => void {
   const shared = !options.location && !options.session && !options.appState;
@@ -360,6 +404,9 @@ export function startLocationLifecycle(options: LifecycleOptions = {}): () => vo
  * has decided: the dialog shows only while the permission is undetermined,
  * and after that this only refreshes the fix when location is allowed.
  * Returns the lifecycle's stop (the same one on a second call).
+ *
+ * The app root calls it once, in a mount effect, whichever tab opens first.
+ * That call is F4's (App.tsx); until it lands this is called from nowhere.
  */
 export function startLocationAtLaunch(options: LifecycleOptions = {}): () => void {
   const stop = startLocationLifecycle(options);
