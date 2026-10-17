@@ -13,7 +13,9 @@
 //   "Later").
 //
 // Nothing else of AUTH-1's is per member: the "reset requested" marker
-// belongs to the phone (it is written while signed out) and lasts an hour.
+// belongs to the phone (it is written while signed out) and lasts an hour,
+// and the list of auth links already tried (./spentLinks.ts) holds only
+// hashes of links that stay spent whoever signs in next.
 import { registerSignOutCleaner } from '../../app/signOut';
 
 import { endPasswordRecovery, installRecoveryBlocker } from './recovery';

@@ -109,6 +109,26 @@ describe('with the sign-in stubbed', () => {
       expect(handleSignIn).toHaveBeenCalledTimes(1);
       expect(authHost.sentAll('/auth/v1/user', 'GET')).toHaveLength(1);
     });
+
+    it('handed back again after Android restarted the app is left alone', async () => {
+      const link = tokenLink('lifepass://auth/callback', '&type=signup');
+      await handleAuthCallback(link);
+      // A new process: Recents recreates the Activity with the link that started it.
+      resetAuthCallbackForTests();
+      await handleAuthCallback(link);
+      expect(handleSignIn).toHaveBeenCalledTimes(1);
+      expect(authHost.sentAll('/auth/v1/user', 'GET')).toHaveLength(1);
+      expect(store().deepLinkError).toBeNull();
+    });
+
+    it('that failed, handed back again, does not raise its banner again', async () => {
+      const link = 'lifepass://auth/callback#error=access_denied&error_code=otp_expired';
+      await handleAuthCallback(link);
+      store().setDeepLinkError(null);
+      resetAuthCallbackForTests();
+      await handleAuthCallback(link);
+      expect(store().deepLinkError).toBeNull();
+    });
   });
 
   describe('a password-reset link', () => {
@@ -161,6 +181,16 @@ describe('with the sign-in stubbed', () => {
       expect(handleSignIn).not.toHaveBeenCalled();
       expect(store().pendingPasswordRecovery).toBe(false);
       expect(store().deepLinkError).toBe(t('auth.deeplink_err_recovery'));
+    });
+
+    it('handed back again after Android restarted the app does not ask again', async () => {
+      const link = tokenLink('lifepass://auth/callback?type=recovery', '&type=recovery');
+      await handleAuthCallback(link);
+      useAppStore.setState({ pendingPasswordRecovery: false });
+      resetAuthCallbackForTests();
+      await handleAuthCallback(link);
+      expect(store().pendingPasswordRecovery).toBe(false);
+      expect(handleSignIn).toHaveBeenCalledTimes(1);
     });
 
     it('that failed after a marker says so too', async () => {

@@ -30,12 +30,18 @@
  * when the link already says `type=recovery`), the marker is always read,
  * so a reset link consumes it and a later confirmation link within the hour
  * is not mistaken for a reset.
+ *
+ * Each link is tried once per phone (./spentLinks.ts): Android hands the
+ * link that started the app back again when it reopens from Recents after a
+ * process death, and a second exchange could revoke the session the first
+ * one made.
  */
 import { t } from '../../i18n';
 import { useAppStore } from '../../stores/appStore';
 import { consumeRecoveryRequested, exchangeAuthLink } from '../../supabase/services/auth';
 
 import { beginPasswordRecovery } from './recovery';
+import { claimAuthLink } from './spentLinks';
 
 /** Links being handled now: the same link delivered twice (launch and event) is handled once. */
 const inFlight = new Map<string, Promise<void>>();
@@ -52,6 +58,8 @@ export function handleAuthCallback(url: string): Promise<void> {
 }
 
 async function handle(url: string): Promise<void> {
+  // Already tried on this phone: a replay of the launch link. Nothing to do, nothing to say.
+  if (!(await claimAuthLink(url))) return;
   const saysRecovery = url.includes('type=recovery');
   const markerSaysRecovery = await consumeRecoveryRequested();
   let isRecovery = saysRecovery || markerSaysRecovery;
