@@ -1,12 +1,16 @@
 /**
  * Loads every feature's session hooks (`src/features/<area>/register.ts`)
- * once, at startup, so each sign-in hook, sign-out cleaner and activation
+ * once, so each sign-in hook, sign-out cleaner, profile-read and activation
  * hook is in place before the first sign-in or sign-out (src/app/signOut.ts).
  *
- * Imported by the app store (src/stores/appStore.ts), which every screen
- * reaches. A register file may import the app store, but must not CALL it
- * while it loads (only inside its hooks): the store is still loading at that
- * moment.
+ * Nobody imports this file at load. `loadRegistrations()` in ./signOut.ts
+ * requires it the first time a hook is about to run (the app store's launch
+ * calls it first thing), when every module has finished loading. So a
+ * register file, and anything it imports (src/health, F4's intent store),
+ * may use the app store while it loads: read it, subscribe to it, register a
+ * Kenni blocker. Even so, pass hooks as functions that call what they
+ * import (`(context) => wipe(context)`), not the imported value itself: a
+ * value read while two modules import each other can still be undefined.
  *
  * A new feature folder adds its line here (F3 owns this file; ask for the
  * line in a contract request). Health Connect is not built (owner decision),

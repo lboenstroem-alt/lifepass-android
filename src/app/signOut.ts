@@ -25,6 +25,13 @@
  *   behind. With no id at all, cleaners still run and remove whatever they
  *   can without one.
  *
+ * - PROFILE-READ HOOKS run after EVERY successful `GET /profile`, with the
+ *   profile, before the app store's read is done (iOS `AppState.loadProfile`
+ *   ends with `await health.reconcile(profile:)`): the profile is where the
+ *   phone learns that tracking was switched off on the web, or that a Kenni
+ *   verification made the member a minor, and what the phone holds is
+ *   reconciled here. Awaited (the launch screen waits for them), so they do
+ *   local work only; network work goes in the background.
  * - ACTIVATION HOOKS run once a member's profile has loaded for the first
  *   time this session, and again every time the app comes back to the
  *   foreground with a member signed in: the workout and meal outboxes flush
@@ -32,14 +39,23 @@
  *   item carries its own Idempotency-Key).
  *
  * Where to register: each feature in its own `src/features/<area>/register.ts`
- * (pre-created, imported by ./registrations.ts at startup). A foundation
- * package with no feature folder (navigation intents, the health store, the
- * payment in-flight records) registers from its own module, which the app
- * imports at startup anyway.
+ * (pre-created, listed in ./registrations.ts). A foundation package with no
+ * feature folder (navigation intents, the health store, the payment
+ * in-flight records) registers from its own module, which the app imports
+ * at startup anyway.
+ *
+ * WHEN THE REGISTER FILES LOAD. Not when the app store loads: a register
+ * file (or anything it imports, such as src/health) that touched the store
+ * at load would find it half-built and crash the app at startup. They load
+ * the first time anything here runs (`loadRegistrations`; the store's
+ * launch calls it first thing), when every module has finished loading, so
+ * a register file may use the store, subscribe to it, or register a Kenni
+ * blocker while it loads.
  *
  * Never registered: the installation id (it identifies the phone, not the
  * member, and survives sign-out on purpose).
  */
+import type { Profile } from '../api/profile';
 
 export interface SignInContext {
   /** The member's id (lower case). */
@@ -63,8 +79,16 @@ export interface ActivationContext {
   readonly trigger: 'profile' | 'foreground';
 }
 
+export interface ProfileReadContext {
+  /** The member the profile is (lower case; `profiles.id` is the auth user id). */
+  readonly memberId: string;
+  /** The profile just read, as the app store now holds it. */
+  readonly profile: Profile;
+}
+
 export type SignInHook = (context: SignInContext) => void | Promise<void>;
 export type ActivationHook = (context: ActivationContext) => void | Promise<void>;
+export type ProfileReadHook = (context: ProfileReadContext) => void | Promise<void>;
 export type PreSignOutHook = (context: SignOutContext) => void | Promise<void>;
 export type SignOutCleaner = (context: SignOutContext) => void | Promise<void>;
 
@@ -75,7 +99,31 @@ const signInHooks = new Map<string, SignInHook>();
 const preSignOutHooks = new Map<string, PreSignOutHook>();
 const signOutCleaners = new Map<string, SignOutCleaner>();
 const activationHooks = new Map<string, ActivationHook>();
+const profileReadHooks = new Map<string, ProfileReadHook>();
 const signedOutListeners = new Set<(context: SignOutContext) => void>();
+
+let registrationsLoaded = false;
+
+/**
+ * Loads ./registrations.ts (every feature's register file), once. Called by
+ * everything below that runs or lists hooks, and by the app store's launch:
+ * by then every module has finished loading (see the file comment).
+ */
+export function loadRegistrations(): void {
+  if (registrationsLoaded) return;
+  registrationsLoaded = true;
+  // A require at first use, not an import: an import would load the register
+  // files while their importers (the app store among them) are still loading.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('./registrations');
+  } catch (error) {
+    // One feature's broken register file must not stop launch or a sign-out.
+    // The suite loads every register file (src/stores/__tests__), so this is
+    // a development error, shown loudly there.
+    if (__DEV__ && process.env.NODE_ENV !== 'test') console.error('[signOut] loading the register files failed', error);
+  }
+}
 
 function register<T>(registry: Map<string, T>, id: string, hook: T): () => void {
   registry.set(id, hook);
@@ -109,6 +157,14 @@ export function registerActivationHook(id: string, hook: ActivationHook): () => 
 }
 
 /**
+ * Runs after every successful profile read, with the profile (local work
+ * only: the launch screen waits for it). Returns an unregister.
+ */
+export function registerProfileReadHook(id: string, hook: ProfileReadHook): () => void {
+  return register(profileReadHooks, id, hook);
+}
+
+/**
  * Tells a mounted screen the member has signed out (iOS posts
  * `coachSessionsForgotten` for an open Coach screen), after the cleaners ran.
  * Returns an unsubscribe.
@@ -126,12 +182,15 @@ export function registeredHookIds(): {
   preSignOut: string[];
   signOut: string[];
   activation: string[];
+  profileRead: string[];
 } {
+  loadRegistrations();
   return {
     signIn: [...signInHooks.keys()].sort(),
     preSignOut: [...preSignOutHooks.keys()].sort(),
     signOut: [...signOutCleaners.keys()].sort(),
     activation: [...activationHooks.keys()].sort(),
+    profileRead: [...profileReadHooks.keys()].sort(),
   };
 }
 
@@ -156,6 +215,7 @@ function settle<C>(kind: string, id: string, hook: (context: C) => void | Promis
  * the sign-in.
  */
 export async function runSignInHooks(context: SignInContext): Promise<void> {
+  loadRegistrations();
   await Promise.all([...signInHooks].map(([id, hook]) => settle('sign-in hook', id, hook, context)));
 }
 
@@ -164,6 +224,7 @@ export async function runSignInHooks(context: SignInContext): Promise<void> {
  * goes ahead after that whatever they are still doing.
  */
 export async function runPreSignOutHooks(context: SignOutContext, budgetMs = PRE_SIGN_OUT_BUDGET_MS): Promise<void> {
+  loadRegistrations();
   if (preSignOutHooks.size === 0) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<void>((resolve) => {
@@ -183,6 +244,7 @@ export async function runPreSignOutHooks(context: SignOutContext, budgetMs = PRE
  * to prevent.
  */
 export async function runSignOutCleaners(context: SignOutContext): Promise<void> {
+  loadRegistrations();
   await Promise.all([...signOutCleaners].map(([id, cleaner]) => settle('sign-out cleaner', id, cleaner, context)));
   for (const listener of [...signedOutListeners]) {
     try {
@@ -195,5 +257,12 @@ export async function runSignOutCleaners(context: SignOutContext): Promise<void>
 
 /** Every activation hook, together; one that fails does not stop the others. */
 export async function runActivationHooks(context: ActivationContext): Promise<void> {
+  loadRegistrations();
   await Promise.all([...activationHooks].map(([id, hook]) => settle('activation hook', id, hook, context)));
+}
+
+/** Every profile-read hook, together; one that fails does not stop the others or the read. */
+export async function runProfileReadHooks(context: ProfileReadContext): Promise<void> {
+  loadRegistrations();
+  await Promise.all([...profileReadHooks].map(([id, hook]) => settle('profile-read hook', id, hook, context)));
 }
