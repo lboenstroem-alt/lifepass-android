@@ -112,7 +112,7 @@ export default function HomeScreen() {
       .filter((v) => v.id !== hero?.id && !!v.latitude && !!v.longitude)
       .map((v) => ({
         venue: v,
-        meters: haversineMeters(origin.latitude, origin.longitude, v.latitude, v.longitude),
+        meters: haversineMeters(origin.latitude, origin.longitude, v.latitude as number, v.longitude as number),
       }))
       .sort((a, b) => a.meters - b.meters)
       .slice(0, 3);

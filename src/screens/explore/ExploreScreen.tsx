@@ -33,7 +33,7 @@ import {
 import PricePill from '../../components/PricePill';
 import Kicker from '../../components/Kicker';
 import Wordmark from '../../components/Wordmark';
-import type { Venue } from '../../types/venue';
+import type { LegacyVenue as Venue } from '../../types/venue';
 import { isPremium, isBoutique } from '../../types/venue';
 
 type Nav = NativeStackNavigationProp<ExploreStackParamList>;

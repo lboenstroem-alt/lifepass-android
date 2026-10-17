@@ -5,7 +5,7 @@
 import { StyleSheet, TouchableOpacity, View, Image } from 'react-native';
 import Mapbox, { MapView, Camera, MarkerView } from '@rnmapbox/maps';
 import { colors } from '../theme';
-import type { Venue } from '../types/venue';
+import type { LegacyVenue as Venue } from '../types/venue';
 
 // Public access token (pk.…). Inlined at build time from the environment; loading
 // tiles simply fails to a blank map if it's unset — it does NOT crash.

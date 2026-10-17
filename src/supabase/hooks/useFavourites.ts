@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Venue as AppVenue } from '../../types/venue';
+import type { LegacyVenue as AppVenue } from '../../types/venue';
 import {
   fetchFavouriteVenues,
   addFavouriteVenue,

@@ -8,7 +8,7 @@
 //   POST   /favourites  { venueId | activityId }
 //   DELETE /favourites?venueId=…  (or ?activityId=…)
 import { apiGet, apiPost, apiDelete } from '../../api/client';
-import type { Venue as AppVenue } from '../../types/venue';
+import type { LegacyVenue as AppVenue } from '../../types/venue';
 
 // A favourited venue as the API returns it — leaner than a full Venue
 // (no coordinates or walk-in flags): name/city/image + the in-bundle/

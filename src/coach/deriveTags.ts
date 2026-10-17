@@ -1,5 +1,5 @@
 import type { Booking } from '../types/booking';
-import type { Venue } from '../types/venue';
+import type { LegacyVenue as Venue } from '../types/venue';
 import type { ActivityTag } from '../data/mockCoach';
 
 // ─── Keyword → ActivityTag mapping ───────────────────────────────────────────
