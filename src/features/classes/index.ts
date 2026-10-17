@@ -21,3 +21,7 @@ export {
 export { chipCopy, classFeedChip, type ClassFeedChip } from './model/chip';
 export { feedEntries, passesClientFilters, distanceKm, type FeedEntry } from './feed/clientFilters';
 export { FEATURED_CATEGORIES, isoDay, lookAheadWindow, startOfIsoDay } from './feed/days';
+// The month calendar on the venue's calendar (Reykjavík days, a min/max
+// range), for any screen that needs a day picker like the full schedule's.
+export { default as DayCalendar, type DayCalendarProps } from './ui/DayCalendar';
+export type { DayRange } from './feed/days';
