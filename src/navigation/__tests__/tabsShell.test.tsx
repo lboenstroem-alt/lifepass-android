@@ -81,9 +81,9 @@ jest.mock('../../screens/venue/VenueDetailScreen', () => {
   return { __esModule: true, default: LegacyVenue };
 });
 jest.mock('../../screens/booking/BookingFlowScreen', () => require('./standIn').standInScreen('LegacyBooking'));
-jest.mock('../../screens/auth/OnboardingScreen', () => require('./standIn').standInScreen('Onboarding'));
-jest.mock('../../screens/auth/LoginScreen', () => require('./standIn').standInScreen('Login'));
-jest.mock('../../screens/auth/SignUpScreen', () => require('./standIn').standInScreen('SignUp'));
+jest.mock('../../features/auth/screens/OnboardingScreen', () => require('./standIn').standInScreen('Onboarding'));
+jest.mock('../../features/auth/screens/LoginScreen', () => require('./standIn').standInScreen('Login'));
+jest.mock('../../features/auth/screens/SignUpScreen', () => require('./standIn').standInScreen('SignUp'));
 jest.mock('../../components/KenniVerificationModal', () => {
   const { Text: MockText } = require('react-native');
   return {

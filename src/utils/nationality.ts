@@ -51,7 +51,7 @@ export function nationalityFromEmail(email: string): string | null {
  * `COUNTRY_OPTIONS` exactly. `code` is the ISO alpha-2 value; an empty
  * selection means "unset" (nationality omitted at signup).
  */
-export const COUNTRY_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
+export const COUNTRY_OPTIONS: readonly { code: string; label: string }[] = [
   { code: 'IS', label: 'Iceland' },
   { code: 'AU', label: 'Australia' },
   { code: 'AT', label: 'Austria' },

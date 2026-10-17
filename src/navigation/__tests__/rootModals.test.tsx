@@ -26,9 +26,9 @@ jest.mock('../../screens/bookings/BookingsScreen', () => require('./standIn').st
 jest.mock('../../screens/account/AccountScreen', () => require('./standIn').standInScreen('LegacyAccount'));
 jest.mock('../../screens/venue/VenueDetailScreen', () => require('./standIn').standInScreen('LegacyVenue'));
 jest.mock('../../screens/booking/BookingFlowScreen', () => require('./standIn').standInScreen('LegacyBooking'));
-jest.mock('../../screens/auth/OnboardingScreen', () => require('./standIn').standInScreen('Onboarding'));
-jest.mock('../../screens/auth/LoginScreen', () => require('./standIn').standInScreen('Login'));
-jest.mock('../../screens/auth/SignUpScreen', () => require('./standIn').standInScreen('SignUp'));
+jest.mock('../../features/auth/screens/OnboardingScreen', () => require('./standIn').standInScreen('Onboarding'));
+jest.mock('../../features/auth/screens/LoginScreen', () => require('./standIn').standInScreen('Login'));
+jest.mock('../../features/auth/screens/SignUpScreen', () => require('./standIn').standInScreen('SignUp'));
 jest.mock('../../components/KenniVerificationModal', () => ({ __esModule: true, default: () => null }));
 // The classes sheet's page refuses a booking: its next steps, from a root modal.
 jest.mock('../../features/classes/ClassesDiscoveryModalScreen', () => {
