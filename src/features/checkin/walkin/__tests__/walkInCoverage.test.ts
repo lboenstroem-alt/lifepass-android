@@ -17,7 +17,7 @@ import { api, Reply } from '@test/server';
 import { balanceAfter, coverageLine } from '../../../../copy/passCopy';
 import { translate } from '../../../../i18n';
 import { decodeWalkInResult } from '../service';
-import { isWalkInIdle } from '../store';
+import { consentContext, isWalkInIdle } from '../store';
 import {
   consentGuestAmountIsk,
   consentOwnAmountIsk,
@@ -25,7 +25,6 @@ import {
   walkInConsentMessage,
   walkInConsentTitle,
 } from '../consentCopy';
-import { consentContext } from '../store';
 
 import {
   ADULT_GUEST,
