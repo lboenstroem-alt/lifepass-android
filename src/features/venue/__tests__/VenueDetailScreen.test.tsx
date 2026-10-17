@@ -4,7 +4,7 @@
  * Directions, the inline reviews, share, the heart, and the load-failed and
  * "Heads up" states, in English and Icelandic.
  */
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
+import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
 import { Linking, ScrollView, Share } from 'react-native';
 
@@ -28,7 +28,14 @@ jest.mock('../../favourites', () => ({
 
 stubApiClientPerTest();
 
-const en = (key: string, params?: Record<string, string | number>) => translate(key, 'en', params);
+// The whole page renders in every test. On a busy machine (many suites in
+// parallel) one render can outlast RNTL's 1 s wait and Jest's 5 s test limit,
+// which failed these tests with nothing wrong in the page. Slack for both, for
+// this file only; a real failure still fails, just later.
+configure({ asyncUtilTimeout: 10_000 });
+jest.setTimeout(60_000);
+
+const en =(key: string, params?: Record<string, string | number>) => translate(key, 'en', params);
 const is = (key: string, params?: Record<string, string | number>) => translate(key, 'is', params);
 
 type Listener = () => void;
