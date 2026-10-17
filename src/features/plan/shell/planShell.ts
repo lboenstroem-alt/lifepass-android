@@ -589,15 +589,37 @@ export async function countPlanVisit(): Promise<void> {
     return;
   }
   try {
+    const rawVisits = await AsyncStorage.getItem(planVisitsKey(profileId));
+    const seen = Number.parseInt(rawVisits ?? '0', 10) || 0;
+    if (seen < VISITS_NEVER_AGAIN) await AsyncStorage.setItem(planVisitsKey(profileId), String(seen + 1));
+  } catch {
+    // Not counted: the decision below reads what is there.
+  }
+  await evaluateBookingsHint();
+}
+
+/**
+ * Decides the hint for the member on screen WITHOUT counting a visit. iOS
+ * computes it live, so on a cold launch whose first appearance came before
+ * the profile, the hint shows once the profile arrives, and that appearance
+ * was never counted (iOS `countPlanVisit` needs the profile too).
+ */
+export async function evaluateBookingsHint(): Promise<void> {
+  const profileId = useAppStore.getState().profile?.id ?? null;
+  if (!profileId) {
+    set({ bookingsHintFor: null });
+    return;
+  }
+  try {
     const [upgraded, opened, rawVisits] = await Promise.all([
       AsyncStorage.getItem(UPGRADED_FROM_PROFILE_TAB_KEY),
       AsyncStorage.getItem(profileOpenedKey(profileId)),
       AsyncStorage.getItem(planVisitsKey(profileId)),
     ]);
-    const seen = Number.parseInt(rawVisits ?? '0', 10) || 0;
-    const visits = seen < VISITS_NEVER_AGAIN ? seen + 1 : seen;
-    if (visits !== seen) await AsyncStorage.setItem(planVisitsKey(profileId), String(visits));
+    const visits = Number.parseInt(rawVisits ?? '0', 10) || 0;
     const shows = upgraded === 'true' && opened !== 'true' && visits <= BOOKINGS_HINT_VISITS;
+    // The member may have changed while storage answered.
+    if (useAppStore.getState().profile?.id !== profileId) return;
     set({ bookingsHintFor: shows ? profileId : null });
   } catch {
     set({ bookingsHintFor: null });

@@ -69,6 +69,7 @@ import {
   clearLocalPlanSheets,
   consumePendingPlanAction,
   deliverParkedPlanAction,
+  evaluateBookingsHint,
   finishPlanScroll,
   movePlanWeek,
   openPlanMealCapture,
@@ -150,6 +151,17 @@ export default function PlanScreen({ navigation }: TabRootProps<'PlanMain'>) {
     lastLanguage.current = appLanguage;
     if (focused) runPlanTask();
   }, [appLanguage, focused]);
+
+  // The profile arrived after this appearance (a cold launch onto Plan): the
+  // bookings hint is decided for the member now on screen, without counting
+  // another visit.
+  const profileId = useAppStore((s) => s.profile?.id ?? null);
+  const lastProfileId = useRef(profileId);
+  useEffect(() => {
+    if (lastProfileId.current === profileId) return;
+    lastProfileId.current = profileId;
+    if (focused) void evaluateBookingsHint();
+  }, [profileId, focused]);
 
   // An action parked while Plan is already the tab on screen (a notification tap).
   useEffect(() => {

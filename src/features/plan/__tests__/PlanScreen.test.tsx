@@ -284,3 +284,18 @@ describe('a parked notification action', () => {
     expect(useHealthStore.getState().today?.review).not.toBeNull();
   });
 });
+
+describe('a cold launch onto Plan', () => {
+  it('decides the bookings hint once the profile arrives, without counting another visit', async () => {
+    useAppStore.setState({ isAuthenticated: true, isLoading: false, userId: 'x', profile: null });
+    await AsyncStorage.setItem(UPGRADED_FROM_PROFILE_TAB_KEY, 'true');
+    await renderPlan();
+    expect(screen.queryByText(en('plan.where_bookings'))).toBeNull();
+    await act(async () => {
+      signIn(memberProfile({ access: 'not_member', consent: false }));
+      await settle();
+    });
+    expect(screen.getByText(en('plan.where_bookings'))).toBeOnTheScreen();
+    expect(await AsyncStorage.getItem(`nav.profileHint.${useAppStore.getState().profile!.id}.planVisits`)).toBeNull();
+  });
+});
