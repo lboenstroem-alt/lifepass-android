@@ -17,12 +17,18 @@ import { stubApiClientPerTest } from '../../api/testing';
 import {
   onSignedOut,
   PRE_SIGN_OUT_BUDGET_MS,
+  PROFILE_READ_HOOK_BUDGET_MS,
   registeredHookIds,
   registerPreSignOutHook,
+  registerProfileReadHook,
   registerSignInHook,
   registerSignOutCleaner,
   runPreSignOutHooks,
+  runProfileReadHooks,
   runSignInHooks,
+  runSignOutCleaners,
+  SIGN_IN_HOOK_BUDGET_MS,
+  SIGN_OUT_CLEANER_BUDGET_MS,
 } from '../../app/signOut';
 import { REGISTERED_FEATURE_AREAS } from '../../app/registrations';
 import { COACH_SESSIONS_KEY, COACH_SESSIONS_OWNER_KEY } from '../../features/coach/register';
@@ -189,6 +195,61 @@ describe('the registry', () => {
       await jest.advanceTimersByTimeAsync(1);
       await run;
       expect(finished).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // A hook that never settles (a native call that never answers) must not
+  // keep the launch screen up, a member on the sign-in screen, or a sign-out
+  // unfinished (the next member's Sign out would join it and do nothing).
+  it.each([
+    [
+      'sign-in hooks',
+      SIGN_IN_HOOK_BUDGET_MS,
+      () => registerSignInHook('test.hung', () => new Promise<void>(() => undefined)),
+      () => runSignInHooks({ userId: MEMBER_A, restoredSession: false }),
+    ],
+    [
+      'profile-read hooks',
+      PROFILE_READ_HOOK_BUDGET_MS,
+      () => registerProfileReadHook('test.hung', () => new Promise<void>(() => undefined)),
+      () => runProfileReadHooks({ memberId: MEMBER_A, profile: decodeProfile(profileJSON()) }),
+    ],
+    [
+      'sign-out cleaners',
+      SIGN_OUT_CLEANER_BUDGET_MS,
+      () => registerSignOutCleaner('test.hung', () => new Promise<void>(() => undefined)),
+      () => runSignOutCleaners({ memberId: MEMBER_A }),
+    ],
+  ])('the %s that never settle hold things up for their budget only', async (_kind, budget, hang, run) => {
+    jest.useFakeTimers();
+    try {
+      let finished = false;
+      unregister.push(hang());
+      const running = run().then(() => {
+        finished = true;
+      });
+      await jest.advanceTimersByTimeAsync(budget - 1);
+      expect(finished).toBe(false);
+      await jest.advanceTimersByTimeAsync(1);
+      await running;
+      expect(finished).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a cleaner still running at the budget does not keep a Coach screen from hearing of the sign-out', async () => {
+    jest.useFakeTimers();
+    try {
+      const heard: (string | null)[] = [];
+      unregister.push(registerSignOutCleaner('test.hung', () => new Promise<void>(() => undefined)));
+      unregister.push(onSignedOut(({ memberId }) => void heard.push(memberId)));
+      const running = runSignOutCleaners({ memberId: MEMBER_A });
+      await jest.advanceTimersByTimeAsync(SIGN_OUT_CLEANER_BUDGET_MS);
+      await running;
+      expect(heard).toEqual([MEMBER_A]);
     } finally {
       jest.useRealTimers();
     }
