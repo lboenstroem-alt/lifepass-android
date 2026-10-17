@@ -20,6 +20,7 @@
  * return link, or the tab simply closed) the verified confirm, because the
  * way the page closed proves nothing. The summary is read again after it.
  * "Opening…" shows until the page is up; a page that could not open says so.
+ * A setup the rail settles after process death (its recovery) re-reads too.
  *
  * Remove card takes two taps: the first arms "Tap again to remove", the
  * second removes and re-reads. It fails closed: an error means the card is
@@ -34,7 +35,7 @@ import { fetchBillingSummary, removeCard, type BillingSummary } from '../../../a
 import { isCancellation } from '../../../api/errors';
 import { announce, Kicker, LPText } from '../../../components/ui';
 import { useT } from '../../../i18n';
-import { cardSetupOnHostedPage } from '../../../payments';
+import { cardSetupOnHostedPage, registerPaymentOutcomePresenter } from '../../../payments';
 import { useAppStore } from '../../../stores/appStore';
 import { colors, radius } from '../../../theme';
 import { billingView, removeFailureKey, type BillingRow } from '../billing/billingModel';
@@ -88,6 +89,12 @@ export default function BillingSection() {
       void loadBilling();
     }, [loadBilling]),
   );
+
+  // A card setup the money rail settled for a page this section no longer
+  // holds (the recovery after Android closed the app behind the Custom Tab):
+  // the rail tells the card-setup presenter, which says nothing, and the
+  // section, while it is on screen, reads the summary again.
+  useEffect(() => registerPaymentOutcomePresenter('card_setup', () => void loadBilling()), [loadBilling]);
 
   // The Custom Tab coming up sends the app to the background: from then on
   // the button no longer says "Opening…" (iOS's cover hides the button, and

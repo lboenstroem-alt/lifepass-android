@@ -11,6 +11,8 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { setCurrentLanguage } from '../../../../i18n';
+import { recoverPayments } from '../../../../payments/coldStartRecovery';
+import { saveInflight } from '../../../../payments/inflight';
 import { freshPaymentsPerTest, MEMBER_A, signIn, storedRecords } from '../../../../payments/__tests__/paymentsHarness';
 import { navigationRef, renderInScreen, settle } from '../../billing/__tests__/screenHarness';
 import BillingSection from '../BillingSection';
@@ -303,5 +305,23 @@ describe('adding or replacing the card', () => {
     await settle();
     expect(screen.getByTestId('billing.card.add')).not.toBeDisabled();
     expect(api.sentAll('/billing/payment-methods/confirm')).toHaveLength(1);
+  });
+
+  it('a setup the recovery settles after Android closed the app behind the page is read again here', async () => {
+    api.on('GET', '/billing/summary', Reply.ok(companyCovered()));
+    await show();
+    expect(rowText('card')).toBe('Payment card | No card on file');
+
+    await saveInflight({ rail: 'card_setup', memberId: MEMBER_A });
+    api.on('POST', '/billing/payment-methods/confirm', Reply.ok({ card: { brand: 'visa', last4: '4242' } }));
+    api.on('GET', '/billing/summary', Reply.ok(companyCovered(CARD)));
+    await act(async () => {
+      await recoverPayments(MEMBER_A, 'launch');
+    });
+    await settle();
+
+    expect(api.sentAll('/billing/payment-methods/confirm')).toHaveLength(1);
+    expect(rowText('card')).toBe('Payment card | Visa ···· 4242');
+    expect(await storedRecords(MEMBER_A)).toEqual([]);
   });
 });
