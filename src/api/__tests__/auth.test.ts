@@ -32,7 +32,7 @@ import {
 } from '@test/server';
 
 import { supabase } from '../../supabase/lib/client';
-import { createAuthFetch, type RefreshTrouble } from '../authFetch';
+import { createAuthFetch, knownRefreshTrouble, resetRefreshTrouble, type RefreshTrouble } from '../authFetch';
 import {
   createApiClient,
   RefreshRefusedError,
@@ -88,11 +88,13 @@ function troubleFeed() {
 
 const never = <T>() => new Promise<T>(() => undefined);
 
-// A spy left behind by a failing test must not change the next one, and
-// NetInfo's answer is the mock's default again.
+// A spy left behind by a failing test must not change the next one,
+// NetInfo's answer is the mock's default again, and no failed refresh from
+// one test stands in the next.
 afterEach(() => {
   jest.restoreAllMocks();
   netInfo({ isConnected: true, isInternetReachable: true });
+  resetRefreshTrouble();
 });
 
 describe('APIClientAuthTests (iOS)', () => {
@@ -382,6 +384,47 @@ describe('the wait on the session', () => {
     expect(session.revoked).toBe(0);
   });
 
+  it('a call that starts while a refresh is known to be failing fails at once, without asking for the token', async () => {
+    const token = jest.fn(never<string | null>);
+    let known: RefreshTrouble | null = 'failing';
+    const session = createStubApiClient({ token, knownRefreshTrouble: () => known });
+    const { error, ms } = await timedFailure(session.client.get('/profile', undefined, { timeoutMs: 5000 }));
+    expect((error as TransportError).transport).toBe('network');
+    expect(ms).toBeLessThan(1000);
+    expect(token).not.toHaveBeenCalled();
+
+    // Unreachable on a phone NetInfo says is offline reads as offline.
+    known = 'unreachable';
+    const offline = createStubApiClient({ token, knownRefreshTrouble: () => known, isDeviceOffline: async () => true });
+    expect(((await failure(offline.client.get('/profile'))) as TransportError).transport).toBe('offline');
+
+    // An optional route goes out without a token.
+    api.on('GET', '/attractions', Reply.ok([]));
+    await offline.client.get('/attractions', undefined, { auth: 'optional' });
+    expect(api.sent('/attractions').headers.authorization).toBeUndefined();
+    expect(token).not.toHaveBeenCalled();
+
+    // Once the refresh has answered, calls ask for the token again.
+    known = null;
+    api.on('GET', '/profile', Reply.ok({ id: 'p1' }));
+    token.mockImplementation(async () => 'test-token');
+    await expect(session.client.get('/profile')).resolves.toEqual({ id: 'p1' });
+  });
+
+  it('after a 401, a refresh that started failing meanwhile rethrows the 401 at once', async () => {
+    api.on('GET', '/profile', Reply.problem(401, 'authentication_required'));
+    // Nothing known when the token was read; failing by the time the 401 came.
+    let asked = 0;
+    const session = createStubApiClient({
+      refreshedToken: never,
+      knownRefreshTrouble: () => (asked++ === 0 ? null : 'failing'),
+    });
+    const { error, ms } = await timedFailure(session.client.get('/profile', undefined, { timeoutMs: 5000 }));
+    expect((error as ProblemError).status).toBe(401);
+    expect(ms).toBeLessThan(1000);
+    expect(session.revoked).toBe(0);
+  });
+
   it('calls that find the session revoked together end it once', async () => {
     api.on('GET', '/:what', Reply.problem(401, 'authentication_required'));
     let finish: () => void = () => undefined;
@@ -398,6 +441,7 @@ describe('the wait on the session', () => {
       isDeviceDisconnected: async () => false,
       isDeviceOffline: async () => false,
       onRefreshTrouble: () => () => undefined,
+      knownRefreshTrouble: () => null,
     });
     const all = Promise.all(['/a', '/b', '/c'].map((path) => failure(app.get(path))));
     await sleep(50);
@@ -734,6 +778,32 @@ describe('through Supabase with the auth fetch', () => {
     expect(api.requests).toHaveLength(0);
 
     expect(await endpoint.recover(client)).toBe(freshToken);
+    expect(events).not.toContain('SIGNED_OUT');
+  });
+
+  it('a second call inside the same failing retry window fails at once too, without another attempt', async () => {
+    const client = wrappedClient();
+    const events = await signIn(client, jwt(60));
+    const endpoint = refreshEndpoint(() => Reply.fail(), freshToken);
+    const app = createApiClient(supabaseSessionDeps(client));
+
+    expect(((await failure(app.get('/profile'))) as TransportError).transport).toBe('network');
+    const attempts = authHost.sentAll('/auth/v1/token').length;
+    expect(knownRefreshTrouble()).toBe('unreachable');
+
+    // supabase-js is sleeping before its next attempt, holding its lock: the
+    // next call does not queue for that attempt.
+    const { error, ms } = await timedFailure(app.get('/profile', undefined, { timeoutMs: 5000 }));
+    expect((error as TransportError).transport).toBe('network');
+    expect(ms).toBeLessThan(100);
+    expect(authHost.sentAll('/auth/v1/token')).toHaveLength(attempts);
+    expect(api.requests).toHaveLength(0);
+
+    // The auth server is back: the refresh answers and calls go through.
+    expect(await endpoint.recover(client)).toBe(freshToken);
+    expect(knownRefreshTrouble()).toBeNull();
+    api.on('GET', '/profile', Reply.ok({ id: user.id }));
+    await expect(app.get('/profile')).resolves.toEqual({ id: user.id });
     expect(events).not.toContain('SIGNED_OUT');
   });
 });

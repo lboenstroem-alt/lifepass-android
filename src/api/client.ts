@@ -20,10 +20,12 @@
  *     routes can run for minutes server-side), and honours the caller's
  *     AbortSignal. The steps are reading the session token, the request, a
  *     refresh after a 401 and the resend, as iOS gives each its own timeout.
- *   - Fails at once on a phone with no network, before the auth SDK is
- *     touched: supabase-js would otherwise spend about 25 s retrying the
- *     refresh of an expired token first (iOS fails at once with
- *     `notConnectedToInternet`).
+ *   - Fails at once on a phone with no network (NetInfo says so, and a fresh
+ *     read confirms it), before the auth SDK is touched: supabase-js would
+ *     otherwise spend about 25 s retrying the refresh of an expired token
+ *     first (iOS fails at once with `notConnectedToInternet`). Likewise a
+ *     call that starts while the SDK is retrying a refresh known to be
+ *     failing fails at once, as it would on iOS.
  *   - Recovers from one 401: refreshes the session once and resends a request
  *     that is safe to send twice (a GET, or a write carrying an
  *     Idempotency-Key). A refresh the auth server REFUSES, or a second 401,
@@ -54,7 +56,7 @@ import {
 import { env } from '../config/env';
 import { supabase } from '../supabase/lib/client';
 
-import { onRefreshTrouble, type RefreshTrouble } from './authFetch';
+import { knownRefreshTrouble, onRefreshTrouble, type RefreshTrouble } from './authFetch';
 import { deviceDisconnected, deviceOffline } from './connectivity';
 import {
   ApiError,
@@ -232,6 +234,12 @@ export interface ApiClientDeps {
    * fails at the first failure instead of riding out supabase-js's retries.
    */
   readonly onRefreshTrouble?: (listener: (trouble: RefreshTrouble) => void) => () => void;
+  /**
+   * The trouble of a refresh supabase-js is still retrying, or null
+   * (./authFetch `knownRefreshTrouble`). A call that starts meanwhile fails
+   * at once rather than queueing behind the SDK's lock for its next attempt.
+   */
+  readonly knownRefreshTrouble?: () => RefreshTrouble | null;
   readonly defaultTimeoutMs?: number;
 }
 
@@ -462,6 +470,7 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
   const isDeviceOffline = deps.isDeviceOffline ?? deviceOffline;
   const isDeviceDisconnected = deps.isDeviceDisconnected ?? deviceDisconnected;
   const subscribeTrouble = deps.onRefreshTrouble ?? onRefreshTrouble;
+  const knownTrouble = deps.knownRefreshTrouble ?? knownRefreshTrouble;
   const defaultTimeoutMs = deps.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   // Read per call so a test that installs its own fetch reaches the client.
   const fetchImpl = (...args: Parameters<typeof fetch>) => (deps.fetch ?? fetch)(...args);
@@ -602,7 +611,9 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
     }
     let waited: AuthWait<string | null>;
     try {
-      waited = await waitForAuth(accessToken, options.timeoutMs, options.signal);
+      // A refresh the SDK is still retrying, known to be failing: the token
+      // read would only queue behind it for the next attempt.
+      waited = await waitForAuth(accessToken, options.timeoutMs, options.signal, knownTrouble());
     } catch (error) {
       // An expired token that could not be refreshed because the phone is
       // offline: that member is offline, not signed out, and "Please sign
@@ -639,7 +650,12 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
     let waited: AuthWait<string | null>;
     try {
       const shared = refreshOnce();
-      waited = await waitForAuth(() => shared.result, options.timeoutMs, options.signal, shared.trouble);
+      waited = await waitForAuth(
+        () => shared.result,
+        options.timeoutMs,
+        options.signal,
+        shared.trouble ?? knownTrouble(),
+      );
     } catch (error) {
       if (error instanceof RefreshRefusedError) {
         await endSession();

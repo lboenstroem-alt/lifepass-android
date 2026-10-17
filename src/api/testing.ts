@@ -43,6 +43,8 @@ export interface StubApiClientOptions {
   readonly isDeviceDisconnected?: () => Promise<boolean>;
   /** Failed-refresh reports (./authFetch). Default none: the stub session never refreshes through Supabase. */
   readonly onRefreshTrouble?: ApiClientDeps['onRefreshTrouble'];
+  /** A refresh known to be failing when a call starts (./authFetch). Default none. */
+  readonly knownRefreshTrouble?: ApiClientDeps['knownRefreshTrouble'];
   /** The default ceiling, for timeout tests. */
   readonly defaultTimeoutMs?: number;
 }
@@ -72,6 +74,7 @@ export function createStubApiClient(options: StubApiClientOptions = {}): StubApi
     isDeviceOffline: options.isDeviceOffline ?? (async () => false),
     isDeviceDisconnected: options.isDeviceDisconnected ?? (async () => false),
     onRefreshTrouble: options.onRefreshTrouble ?? (() => () => undefined),
+    knownRefreshTrouble: options.knownRefreshTrouble ?? (() => null),
     defaultTimeoutMs: options.defaultTimeoutMs,
   });
   return {

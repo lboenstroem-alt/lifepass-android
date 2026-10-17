@@ -38,7 +38,10 @@ export {
 export {
   AUTH_REQUEST_TIMEOUT_MS,
   createAuthFetch,
+  knownRefreshTrouble,
   onRefreshTrouble,
+  REFRESH_RETRY_GAP_MS,
+  resetRefreshTrouble,
   type AuthFetchOptions,
   type RefreshTrouble,
 } from './authFetch';

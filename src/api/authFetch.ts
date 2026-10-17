@@ -23,6 +23,9 @@
  *    long; iOS fails at the first failure. The API client listens while it
  *    waits on the session and stops at the first failed attempt: offline or
  *    "network error" for a token read, the original 401 after a refresh.
+ *    A call that STARTS while those retries are known to be failing
+ *    (`knownRefreshTrouble`) fails at once too, instead of queueing on the
+ *    lock for the SDK's next attempt.
  *
  * 3. Every request to the auth server has a ceiling (60 s, the URLSession
  *    default supabase-swift rides). React Native's fetch has none, and a
@@ -45,7 +48,44 @@ export function onRefreshTrouble(listener: TroubleListener): () => void {
   };
 }
 
+/**
+ * How long after a failed refresh attempt the SDK may still be retrying it.
+ * supabase-js waits 200 ms, then twice as long each time, up to 12.8 s
+ * between two attempts inside its 30 s window; the margin is the next
+ * attempt's own answer. Past this, with no attempt out, the SDK has given up
+ * and the next session read starts afresh.
+ */
+export const REFRESH_RETRY_GAP_MS = 15_000;
+
+/** The last failed refresh attempt, until a refresh answers or the SDK has stopped retrying. */
+let latest: { readonly trouble: RefreshTrouble; readonly at: number } | null = null;
+/** Refresh requests on the way now. */
+let refreshesInFlight = 0;
+
+/**
+ * The trouble of the refresh supabase-js is retrying right now, or null. Set
+ * by every failed attempt; cleared by a refresh (or any token grant) that
+ * answers, and by the SDK having stopped: no attempt out and none failed for
+ * `REFRESH_RETRY_GAP_MS`. While it is set, a session read would only queue
+ * behind the SDK's lock for an attempt that will fail like the last one, so
+ * the API client fails the call at once, as iOS fails each call at the first
+ * failure.
+ */
+export function knownRefreshTrouble(now: number = Date.now()): RefreshTrouble | null {
+  if (!latest) return null;
+  if (refreshesInFlight > 0 || now - latest.at < REFRESH_RETRY_GAP_MS) return latest.trouble;
+  latest = null;
+  return null;
+}
+
+/** Forgets the last failed refresh. For tests. */
+export function resetRefreshTrouble(): void {
+  latest = null;
+  refreshesInFlight = 0;
+}
+
 function report(trouble: RefreshTrouble): void {
+  latest = { trouble, at: Date.now() };
   for (const listener of [...listeners]) {
     try {
       listener(trouble);
@@ -84,6 +124,11 @@ export function isRefreshTokenUrl(url: string): boolean {
   return /^[a-z]+:\/\/[^/]+\/auth\/v1\/token\?(?:[^#]*&)?grant_type=refresh_token(?:[&#]|$)/i.test(url);
 }
 
+/** Any token grant (`/auth/v1/token?...`): a refresh, a sign-in, a code exchange. */
+function isTokenUrl(url: string): boolean {
+  return /^[a-z]+:\/\/[^/]+\/auth\/v1\/token(?:[?#]|$)/i.test(url);
+}
+
 /** A refresh answer the SDK would wrongly end the session on. */
 function endsSessionWrongly(status: number): boolean {
   return status === 429 || (status >= 500 && !SDK_KEEPS_SESSION.has(status));
@@ -108,6 +153,12 @@ export function createAuthFetch(options: AuthFetchOptions = {}): typeof fetch {
     const timer =
       Number.isFinite(timeoutMs) && timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
 
+    if (refresh) {
+      // A trouble left from a retry loop the SDK has since given up on must
+      // not stand for this new attempt while it is out.
+      knownRefreshTrouble();
+      refreshesInFlight += 1;
+    }
     let response: Response;
     try {
       response = await base(input, { ...init, signal: controller.signal });
@@ -115,12 +166,17 @@ export function createAuthFetch(options: AuthFetchOptions = {}): typeof fetch {
       if (refresh) report('unreachable');
       throw error;
     } finally {
+      if (refresh) refreshesInFlight = Math.max(0, refreshesInFlight - 1);
       if (timer !== undefined) clearTimeout(timer);
       outer?.removeEventListener('abort', onOuterAbort);
     }
 
+    const failing = response.status >= 500 || response.status === 429;
+    // The auth server answered a refresh (a session, or a refusal: either
+    // way the SDK stops retrying), or issued a session some other way.
+    if ((refresh && !failing) || (isTokenUrl(url) && response.ok)) latest = null;
     if (!refresh) return response;
-    if (response.status >= 500 || response.status === 429) report('failing');
+    if (failing) report('failing');
     if (!endsSessionWrongly(response.status)) return response;
     const text = await response.text().catch(() => '');
     return new Response(text || null, {
