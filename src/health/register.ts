@@ -17,8 +17,11 @@
  * - A LANGUAGE CHANGE: the other remembered dates go, their server copy is
  *   in the old language.
  *
- * Loaded with every feature's register file (src/app/registrations.ts), so
- * the hooks are in place before the first sign-in or sign-out.
+ * Loaded with the session hooks, so they are in place before the first
+ * sign-in or sign-out: src/app/registrations.ts (F3's) lists this file as a
+ * SHARED_LAYERS entry, `health: () => require('../health/register')`, each
+ * loaded in its own try (F3 contract request; F7 does not edit that file).
+ * Until that line is in, nothing wipes health data at a sign-out.
  */
 import { registerActivationHook, registerProfileReadHook, registerSignOutCleaner } from '../app/signOut';
 import { useAppStore } from '../stores/appStore';

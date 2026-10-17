@@ -22,6 +22,9 @@ import { FeedbackKeys, ReminderKeys, WearableKeys } from '../localKeys';
 import * as localStore from '../localStore';
 import { resetHealthStoreForTests, useHealthStore } from '../store';
 import { registerHealthWipeHook, type HealthWipeContext } from '../wipe';
+// The app loads this with the session hooks: src/app/registrations.ts lists
+// it under SHARED_LAYERS (F3 contract request). Loaded here the same way.
+import '../register';
 
 stubApiClientPerTest();
 

@@ -12,9 +12,10 @@
  * account's: a headless run starts signed out in the phone's language, and
  * writing that would undo the very thing the key is for.
  *
- * Loaded with the session hooks (src/app/registrations.ts, a SHARED_LAYERS
- * entry: F3 contract request), which the app store's launch loads first
- * thing.
+ * Loaded with the session hooks, which the app store's launch loads first
+ * thing: src/app/registrations.ts (F3's) lists this file as a SHARED_LAYERS
+ * entry, `notifications: () => require('../notifications/register')` (F3
+ * contract request; F7 does not edit that file).
  */
 import { normaliseLang, type Lang } from '../i18n';
 import { useAppStore, type AppStoreState } from '../stores/appStore';
