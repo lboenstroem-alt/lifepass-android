@@ -10,7 +10,8 @@
  * - ./scheduler: `scheduleAt`, `removePending(prefix)`, `removeDelivered(prefix)`.
  * - ./permissions: `permissionStatus()`, `requestIfUndetermined()` (in
  *   context only, never at launch), `openNotificationSettings()`.
- * - ./cleanup: the `health.*` removal the local wipe runs.
+ * - ./cleanup: the `health.*` removal the local wipe runs, and the first
+ *   build's booking reminders removed at startup.
  *
  * `startNotifications()` runs once at startup (src/notifications/register.ts,
  * loaded with every session hook): the foreground handler and the channels.
@@ -19,6 +20,7 @@
 import * as Notifications from 'expo-notifications';
 
 import { ensureChannels } from './channels';
+import { removeLegacyBookingReminders } from './cleanup';
 
 export * from './channels';
 export * from './scheduler';
@@ -50,13 +52,14 @@ export function installForegroundHandler(): void {
 }
 
 /**
- * Startup: the foreground handler, then the channels in the app's language.
- * Never asks for permission (the first Android build asked here, before
- * sign-in, and a member who refused twice could never be asked again).
+ * Startup: the foreground handler, the channels in the app's language, and
+ * the first build's booking reminders removed (./cleanup.ts). Never asks for
+ * permission (the first Android build asked here, before sign-in, and a
+ * member who refused twice could never be asked again).
  */
-export function startNotifications(): Promise<void> {
+export async function startNotifications(): Promise<void> {
   installForegroundHandler();
-  return ensureChannels();
+  await Promise.all([ensureChannels(), removeLegacyBookingReminders()]);
 }
 
 /** Tests: the handler may be installed again. */

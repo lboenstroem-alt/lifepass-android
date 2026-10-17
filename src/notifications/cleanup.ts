@@ -18,3 +18,18 @@ export const HEALTH_NOTIFICATION_PREFIX = 'health.';
 export function removeAllHealthNotifications(): Promise<void> {
   return removeEverywhere(HEALTH_NOTIFICATION_PREFIX);
 }
+
+/**
+ * The first Android build's booking reminders (`booking-<id>-24h`,
+ * `booking-<id>-1h`). That build scheduled them with English copy and emoji
+ * ("Session tomorrow" with a wave), and the update removed the code that
+ * cancelled them, so those already scheduled would still fire: for bookings
+ * since cancelled, and after a sign-out. Nothing schedules them any more (the
+ * class reminders are iOS's `class-checkin-reminder-*`), so every startup
+ * removes whatever is left, pending or delivered.
+ */
+export const LEGACY_BOOKING_REMINDER = /^booking-.+-(24h|1h)$/;
+
+export function removeLegacyBookingReminders(): Promise<void> {
+  return removeEverywhere((identifier) => LEGACY_BOOKING_REMINDER.test(identifier));
+}

@@ -15,6 +15,7 @@ import {
   ensureChannels,
   FOREGROUND_BEHAVIOUR,
   HEALTH_NOTIFICATION_PREFIX,
+  LEGACY_BOOKING_REMINDER,
   NOTIFICATION_CHANNELS,
   NOTIFICATION_LANGUAGE_KEY,
   notificationLanguage,
@@ -55,6 +56,31 @@ describe('the foreground', () => {
     await startNotifications();
     expect(notificationsState.requestCount()).toBe(0);
     expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
+  });
+
+  it("starting up removes the first build's booking reminders, pending or delivered, and nothing else", async () => {
+    // What the first Android build scheduled (its own identifiers, no channel).
+    for (const identifier of ['booking-b1-24h', 'booking-b1-1h', 'booking-b2-1h']) {
+      await Notifications.scheduleNotificationAsync({
+        identifier,
+        content: { title: 'Session in 1 hour', body: 'Spin at Laugar starts soon.' },
+        trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: later(120) },
+      });
+    }
+    await notificationsState.fire('booking-b2-1h');
+    await scheduleAt('class-checkin-reminder-1760000000', later(), content, 'bookings');
+    await scheduleAt('health.weeklycheckin', later(), content, 'health');
+    await scheduleAt('booking-notes', later(), content, 'bookings');
+
+    await startNotifications();
+    expect(notificationsState.scheduled().map((n) => n.identifier).sort()).toEqual([
+      'booking-notes',
+      'class-checkin-reminder-1760000000',
+      'health.weeklycheckin',
+    ]);
+    expect(notificationsState.presented()).toEqual([]);
+    expect(LEGACY_BOOKING_REMINDER.test('booking-b1-24h')).toBe(true);
+    expect(LEGACY_BOOKING_REMINDER.test('booking-24h')).toBe(false);
   });
 });
 
