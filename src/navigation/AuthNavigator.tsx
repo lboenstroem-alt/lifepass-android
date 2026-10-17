@@ -1,7 +1,12 @@
+/**
+ * The signed-out screens (iOS OnboardingFlow): onboarding, log in, sign up.
+ * Owner of the screens: AUTH-1 (src/features/auth/screens).
+ */
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import OnboardingScreen from '../screens/auth/OnboardingScreen';
-import LoginScreen from '../screens/auth/LoginScreen';
-import SignUpScreen from '../screens/auth/SignUpScreen';
+
+import LoginScreen from '../features/auth/screens/LoginScreen';
+import OnboardingScreen from '../features/auth/screens/OnboardingScreen';
+import SignUpScreen from '../features/auth/screens/SignUpScreen';
 import type { AuthStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
