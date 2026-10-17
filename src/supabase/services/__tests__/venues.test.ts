@@ -2,6 +2,9 @@
  * The legacy venue reads the pre-parity screens still use: built from the API
  * model, so they too get no stock photo and no 0,0 position.
  */
+import * as fs from 'fs';
+import * as path from 'path';
+
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../api/testing';
@@ -83,4 +86,22 @@ describe('reads', () => {
     expect((await fetchVenueById(ID.toUpperCase())).id).toBe(ID);
     await expect(fetchVenueById('00000000-0000-4000-8000-000000000000')).rejects.toThrow();
   });
+});
+
+/** A stock photo shown as a venue misrepresents it: none anywhere in the app's code. */
+it('no stock photo service is referenced anywhere in the app', () => {
+  const root = path.resolve(__dirname, '../../..');
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== '__tests__') walk(full);
+      } else if (/\.(ts|tsx)$/.test(entry.name) && /picsum\.photos/.test(fs.readFileSync(full, 'utf8'))) {
+        offenders.push(path.relative(root, full));
+      }
+    }
+  };
+  walk(root);
+  expect(offenders).toEqual([]);
 });
