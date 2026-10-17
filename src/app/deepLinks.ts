@@ -23,7 +23,11 @@
  *   what reaches here is a return the app was not waiting for in memory, a
  *   cold start after Android dropped the process behind the Custom Tab. A
  *   return is never a launch onto Explore: the member was elsewhere, so the
- *   launch filter presentation is cancelled first, whoever handles it.
+ *   launch filter presentation is cancelled first, whoever handles it. A
+ *   return that arrives before its rail has registered (the rail's module
+ *   loads later on a cold start) is kept, the last one per kind, and handed
+ *   to the rail when it registers (iOS parks the outcome on AppState until a
+ *   view takes it). Sign-out forgets it.
  *
  * Anything else is ignored.
  */
@@ -32,6 +36,7 @@ import { Linking } from 'react-native';
 import { parseWalkInQr, isVenueUuid } from '../checkin/walkInQrParser';
 import { handleAuthCallback } from '../features/auth/authCallback';
 import { useIntentStore } from '../stores/intentStore';
+import { registerSignOutCleaner } from './signOut';
 
 /** The custom scheme (app.json `scheme`). */
 export const APP_SCHEME = 'lifepass';
@@ -152,17 +157,41 @@ type ReturnHandler = (hostedReturn: HostedPageReturn) => void | Promise<void>;
 
 const returnHandlers = new Map<ReturnKind, ReturnHandler>();
 
+/** The last return of each kind that arrived with no rail registered, waiting for one. */
+const unhandledReturns = new Map<ReturnKind, HostedPageReturn>();
+
+function deliverReturn(handler: ReturnHandler, hostedReturn: HostedPageReturn): void {
+  try {
+    void Promise.resolve(handler(hostedReturn)).catch(() => undefined);
+  } catch {
+    // A failing rail must not take the router down with it.
+  }
+}
+
 /**
  * Takes the `kind` returns that reach the app as links (F8's cold-start
- * recovery). One handler per kind; registering again replaces it. Returns an
- * unregister.
+ * recovery). One handler per kind; registering again replaces it. A return
+ * that arrived before any handler did is delivered (once) on the next
+ * microtask, not inside this call. Returns an unregister.
  */
 export function registerReturnHandler(kind: ReturnKind, handler: ReturnHandler): () => void {
   returnHandlers.set(kind, handler);
+  if (unhandledReturns.has(kind)) {
+    void Promise.resolve().then(() => {
+      const waiting = unhandledReturns.get(kind);
+      // Still this rail's to take (not unregistered, replaced or signed out meanwhile).
+      if (!waiting || returnHandlers.get(kind) !== handler) return;
+      unhandledReturns.delete(kind);
+      deliverReturn(handler, waiting);
+    });
+  }
   return () => {
     if (returnHandlers.get(kind) === handler) returnHandlers.delete(kind);
   };
 }
+
+// A return parked for one member is never handed to the next member's rail.
+registerSignOutCleaner('nav.hostedPageReturns', () => unhandledReturns.clear());
 
 // ---------------------------------------------------------------------------
 // Routing
@@ -180,13 +209,8 @@ export function handleDeepLink(url: string | null | undefined): DeepLink {
     case 'return': {
       useIntentStore.getState().cancelExploreLaunchPresentation();
       const handler = returnHandlers.get(link.hostedReturn.kind);
-      if (handler) {
-        try {
-          void Promise.resolve(handler(link.hostedReturn)).catch(() => undefined);
-        } catch {
-          // A failing rail must not take the router down with it.
-        }
-      }
+      if (handler) deliverReturn(handler, link.hostedReturn);
+      else unhandledReturns.set(link.hostedReturn.kind, link.hostedReturn);
       break;
     }
     default:
@@ -195,30 +219,44 @@ export function handleDeepLink(url: string | null | undefined): DeepLink {
   return link;
 }
 
-/** The URL that cold-started the app, read once per process (a remount must not replay it). */
-let initialUrlRead = false;
+/**
+ * The last launch link handled in this process.
+ *
+ * WHY THE LAUNCH LINK IS READ AT EVERY START. On Android the JS runtime
+ * outlives the Activity: when Android destroys the Activity but keeps the
+ * process (back on the first screen on Android 11 and older, memory
+ * pressure, "Don't keep activities"), the next link starts a NEW Activity,
+ * the app remounts, and React Native delivers that link only through
+ * `getInitialURL` (the `url` event fires only for a link that reaches a
+ * running Activity). Reading it once per process would drop it: a poster
+ * link would open the app without reaching Scan, a payment return behind a
+ * Custom Tab would be lost. Only the same link again is skipped: a relaunch
+ * from Recents replays the Activity's original link.
+ */
+let lastLaunchUrl: string | null = null;
 
 /**
- * Listens for links for the life of the app: the one that started it, then
- * every one that arrives. Returns a stop.
+ * Listens for links for the life of the app: the one that started it (each
+ * time the app mounts, see `lastLaunchUrl`), then every one that arrives.
+ * Returns a stop.
  */
 export function startDeepLinks(): () => void {
   const subscription = Linking.addEventListener('url', ({ url }) => {
     handleDeepLink(url);
   });
-  if (!initialUrlRead) {
-    initialUrlRead = true;
-    Linking.getInitialURL()
-      .then((url) => {
-        handleDeepLink(url);
-      })
-      .catch(() => undefined);
-  }
+  Linking.getInitialURL()
+    .then((url) => {
+      if (!url || url === lastLaunchUrl) return;
+      lastLaunchUrl = url;
+      handleDeepLink(url);
+    })
+    .catch(() => undefined);
   return () => subscription.remove();
 }
 
 /** Back to a fresh process (tests). */
 export function resetDeepLinksForTests(): void {
-  initialUrlRead = false;
+  lastLaunchUrl = null;
   returnHandlers.clear();
+  unhandledReturns.clear();
 }

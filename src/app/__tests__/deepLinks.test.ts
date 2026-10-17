@@ -7,6 +7,7 @@ import { Linking } from 'react-native';
 import { api } from '@test/server';
 
 import { stubApiClientPerTest } from '../../api/testing';
+import { runSignOutCleaners } from '../signOut';
 import { resetIntentStoreForTests, useIntentStore } from '../../stores/intentStore';
 import {
   handleDeepLink,
@@ -111,7 +112,7 @@ describe('hosted-page returns', () => {
     expect(payments).toEqual([{ kind: 'payment', outcome: 'canceled', url: 'lifepass://payment-canceled' }]);
     expect(useIntentStore.getState().exploreLaunchPresentation).toBe(false);
 
-    // A card return with no rail registered is dropped quietly, still cancelling the presentation.
+    // A card return with no rail registered does not throw, and still cancels the presentation.
     useIntentStore.getState().setExploreLaunchPresentation(true);
     expect(() => handleDeepLink('lifepass://card-setup-success')).not.toThrow();
     expect(useIntentStore.getState().exploreLaunchPresentation).toBe(false);
@@ -119,6 +120,38 @@ describe('hosted-page returns', () => {
     unregister();
     handleDeepLink('lifepass://payment-success');
     expect(payments).toHaveLength(1);
+  });
+
+  it('one that arrives before its rail registers is handed to the rail when it does, once', async () => {
+    handleDeepLink('lifepass://card-setup-canceled');
+    handleDeepLink('lifepass://card-setup-success');
+    const cards: HostedPageReturn[] = [];
+    registerReturnHandler('cardSetup', (ret) => {
+      cards.push(ret);
+    });
+    // Not inside the registration itself.
+    expect(cards).toEqual([]);
+    await Promise.resolve();
+    // The last one of its kind.
+    expect(cards).toEqual([{ kind: 'cardSetup', outcome: 'success', url: 'lifepass://card-setup-success' }]);
+
+    // Taken: a rail that registers again is not handed it a second time.
+    registerReturnHandler('cardSetup', (ret) => {
+      cards.push(ret);
+    });
+    await Promise.resolve();
+    expect(cards).toHaveLength(1);
+  });
+
+  it('one still waiting at sign-out is never handed to the next member', async () => {
+    handleDeepLink('lifepass://payment-success');
+    await runSignOutCleaners({ memberId: 'member-a' });
+    const payments: HostedPageReturn[] = [];
+    registerReturnHandler('payment', (ret) => {
+      payments.push(ret);
+    });
+    await Promise.resolve();
+    expect(payments).toEqual([]);
   });
 
   it('a failing rail does not take the router down', () => {
@@ -151,13 +184,43 @@ describe('listening', () => {
     await Promise.resolve();
     expect(useIntentStore.getState().takeScanVenue()).toBe(VENUE);
 
-    // A remount does not replay the launch link.
+    // A remount with the same launch link (a relaunch from Recents) does not replay it.
     stop();
     startDeepLinks();
+    await Promise.resolve();
     await Promise.resolve();
     expect(useIntentStore.getState().pendingScanVenueId).toBeNull();
 
     listener?.({ url: 'lifepass://auth/callback?code=1' });
     expect(mockHandleAuthCallback).toHaveBeenCalledWith('lifepass://auth/callback?code=1');
+  });
+
+  it('a remount whose Activity was started by another link routes that link', async () => {
+    // Android destroyed the Activity and kept the process: the next link
+    // starts a new Activity, reached only through getInitialURL.
+    const OTHER = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
+    const initial = jest.spyOn(Linking, 'getInitialURL').mockResolvedValue(`lifepass://scan?v=${VENUE}`);
+    jest.spyOn(Linking, 'addEventListener').mockImplementation((() => ({ remove: jest.fn() })) as never);
+
+    const stop = startDeepLinks();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useIntentStore.getState().takeScanVenue()).toBe(VENUE);
+    stop();
+
+    initial.mockResolvedValue(`https://lifepass.is/scan?v=${OTHER}`);
+    startDeepLinks();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useIntentStore.getState().takeScanVenue()).toBe(OTHER);
+  });
+
+  it('no launch link is nothing to route', async () => {
+    jest.spyOn(Linking, 'getInitialURL').mockResolvedValue(null);
+    jest.spyOn(Linking, 'addEventListener').mockImplementation((() => ({ remove: jest.fn() })) as never);
+    startDeepLinks();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useIntentStore.getState().pendingScanVenueId).toBeNull();
   });
 });
