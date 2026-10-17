@@ -68,6 +68,7 @@ export default function GuestSheet() {
           {total > 0 ? (
             <LinkButton
               size={15}
+              underline={false}
               title={t('checkin.guests.just_me')}
               onPress={() => void walkInActions().skipGuests()}
               testID="walkin.guests.justMe"

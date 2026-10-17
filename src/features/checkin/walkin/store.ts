@@ -469,16 +469,20 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
 
     /**
      * The proof after the hosted page (or an earlier session that already
-     * checked this in): the preview's venue, the picked activity, now, no
-     * name (a payment session carries none, and no name is honest where the
-     * wrong one is not), the party the member paid for, no balance.
+     * checked this in): the preview's venue, now, no name (a payment session
+     * carries none, and no name is honest where the wrong one is not), the
+     * party the member paid for, no balance. The picked activity only after
+     * this attempt's own page: iOS names none for an earlier session's
+     * payment (`booking_payment_already_completed`).
      */
-    function showPaidProof(): void {
+    function showPaidProof(withActivity: boolean): void {
       const state = get();
       const activityId = attempt.pendingActivityId;
       set({
         successVenueName: state.preview?.venue.name ?? null,
-        successActivityName: state.pickerActivities.find((activity) => activity.id === activityId)?.name ?? null,
+        successActivityName: withActivity
+          ? (state.pickerActivities.find((activity) => activity.id === activityId)?.name ?? null)
+          : null,
         successTimestamp: deps.now(),
         successMemberShortName: null,
         successParty: confirmedParty(state),
@@ -707,7 +711,7 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         }
         case 'alreadyCompleted':
           // An earlier session already checked this in: the proof, paid.
-          showPaidProof();
+          showPaidProof(false);
           attempt.walkInKey = null;
           set({ pendingOffer: null });
           return;
@@ -792,7 +796,7 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
     async function applySettlement(settlement: PaySettlement): Promise<void> {
       switch (settlement.kind) {
         case 'fulfilled':
-          showPaidProof();
+          showPaidProof(true);
           attempt.walkInKey = null;
           set({ scannedVenueId: null, preview: null, pendingOffer: null });
           await deps.refreshCredits().catch(() => undefined);

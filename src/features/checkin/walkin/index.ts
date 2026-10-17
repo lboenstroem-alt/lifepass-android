@@ -13,9 +13,10 @@
  *
  * The flow itself is ./store (a port of iOS CheckInViewModel's walk-in half);
  * the calls are ./service; the consent words ./consentCopy; the refusals
- * ./refusals. src/features/checkin/register.ts should call
- * `registerWalkInHooks()` from ./register at startup (the host also does when
- * it mounts).
+ * ./refusals. src/features/checkin/register.ts (CHECKIN-1) should call
+ * `registerWalkInHooks()` at startup, so a walk-in F8 recovers after a cold
+ * start finds its presenter before the Scan tab opens (the host also
+ * registers when it mounts).
  */
 import { useMemo } from 'react';
 
@@ -23,6 +24,7 @@ import { isWalkInIdle, walkInStore } from './store';
 import { useWalkIn } from './useWalkIn';
 
 export { default as WalkInFlowHost } from './WalkInFlowHost';
+export { registerWalkInHooks } from './register';
 
 export interface StartWalkInOptions {
   /** The venue came from a link, not the camera: ask before checking in. */

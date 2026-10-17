@@ -36,8 +36,15 @@ export function SolidButton({ title, onPress, accessibilityHint, testID }: WalkI
   );
 }
 
-/** iOS: muted, underlined, centred; 13 to 15 pt. */
-export function LinkButton({ title, onPress, accessibilityHint, testID, size = 13 }: WalkInButtonProps & { size?: number }) {
+/** iOS: muted, centred, 13 to 15 pt; underlined unless `underline` is false (the guest sheet's Just me). */
+export function LinkButton({
+  title,
+  onPress,
+  accessibilityHint,
+  testID,
+  size = 13,
+  underline = true,
+}: WalkInButtonProps & { size?: number; underline?: boolean }) {
   return (
     <Pressable
       testID={testID}
@@ -47,7 +54,7 @@ export function LinkButton({ title, onPress, accessibilityHint, testID, size = 1
       accessibilityHint={accessibilityHint}
       style={({ pressed }) => [styles.link, pressed && styles.pressed]}
     >
-      <LPText size={size} weight={size >= 15 ? 'medium' : 'regular'} color={colors.mutedTextStrong} align="center" style={styles.underline}>
+      <LPText size={size} weight={size >= 15 ? 'medium' : 'regular'} color={colors.mutedTextStrong} align="center" style={underline ? styles.underline : undefined}>
         {title}
       </LPText>
     </Pressable>

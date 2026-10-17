@@ -618,6 +618,38 @@ describe('the pay rail, after the page', () => {
     expect(store.getState().payOutcome).toEqual({ kind: 'notPaid' });
   });
 
+  it("the proof after the page names the picked activity; an earlier session's payment names none", async () => {
+    api.on('GET', '/check-ins/walk-in/preview', Reply.ok(previewJSON({
+      charge: { kind: 'surcharge', amountIsk: 1500 },
+      activities: [{ id: YOGA_ID, name: 'Yoga' }, { id: SWIM_ID, name: 'Swim' }],
+    })));
+    api.on('POST', '/check-ins/walk-in', Reply.problem(402, 'no_payment_method_on_file'));
+    api.on('POST', '/bookings/payment-sessions', Reply.ok({
+      hasCard: false,
+      externalSessionId: 'kling_cs_4',
+      url: 'https://pay.kling.is/c/kling_cs_4',
+      amountIsk: 1500,
+    }));
+    api.on('POST', '/bookings/payment-sessions/confirm', Reply.ok({ status: 'fulfilled' }));
+    openAuthSession.mockResolvedValue(PAID_LINK);
+    const store = walkInStoreForTest();
+    await store.getState().startWalkIn(SKY_LAGOON_ID);
+    await store.getState().selectActivity({ id: SWIM_ID, name: 'Swim' });
+    await store.getState().acceptWalkInCharge();
+    expect(bodyOf(posts('/bookings/payment-sessions')[0]).activityId).toBe(SWIM_ID);
+    expect(store.getState().successActivityName).toBe('Swim');
+    store.getState().resetSuccess();
+
+    // iOS's already-completed leg sets no activity on the proof.
+    api.on('POST', '/bookings/payment-sessions', Reply.problem(409, 'booking_payment_already_completed'));
+    await store.getState().startWalkIn(SKY_LAGOON_ID);
+    await store.getState().selectActivity({ id: SWIM_ID, name: 'Swim' });
+    await store.getState().acceptWalkInCharge();
+    expect(store.getState().showSuccess).toBe(true);
+    expect(store.getState().successActivityName).toBeNull();
+    expect(store.getState().successVenueName).toBe('Sky Lagoon');
+  });
+
   it('the page is not idle while it is open', async () => {
     payRail();
     let close: (value: WebBrowser.WebBrowserAuthSessionResult) => void = () => undefined;
