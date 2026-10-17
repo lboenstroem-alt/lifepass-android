@@ -56,6 +56,7 @@ export {
   REFUND_SLOT_KEYS,
   refundBodyKey,
   refundBodyKeys,
+  walkInConfirmRefusalMessage,
   type PayCopyContext,
 } from './payOutcomeCopy';
 export {

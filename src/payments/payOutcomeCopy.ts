@@ -7,7 +7,7 @@
  * `payOutcomeTitle/payOutcomeMessage` and
  * `BookingPaymentService.refundBodyKeys`.
  */
-import { MemberRefusal } from '../api';
+import { MemberRefusal, ProblemError, refusalMessage } from '../api';
 import { currentLanguage, translate, type Lang } from '../i18n';
 
 import type { BookingPayOutcome } from './bookingPaymentSession';
@@ -133,4 +133,40 @@ export function confirmedBody(paid: boolean, classBooking: boolean, lang: Lang =
     ? translate(classBooking ? 'booking.reminder.inline_paid' : 'booking.reminder.inline_paid_booking', lang)
     : translate('booking.reminder.inline', lang);
   return `${translate('booking.confirmed_body', lang)}\n\n${line}`;
+}
+
+/** A venue with no usable drop-in price (iOS `confirmRefusal`'s first case). */
+const DROP_IN_PRICE_CODES: ReadonlySet<string> = new Set([
+  'topup_price_unset',
+  'topup_price_invalid',
+  'topup_price_below_payout',
+]);
+
+/**
+ * The door's words for a walk-in confirm the server refused (iOS
+ * `CheckInViewModel.confirmRefusal`), which differ from the refusal table in
+ * two places:
+ *
+ * - a venue with no usable drop-in price, reached through a race past the
+ *   preview: a member at a boutique the plan does not include
+ *   (`chargeReason` `boutique_not_included`) never used anything up, so the
+ *   truthful words are the membership ones; anyone else is out of check-ins;
+ * - a 429 with a code the table does not know is "checking in too quickly".
+ *
+ * Everything else is the table's, in the check-in context. The step (See
+ * plans, Try again) is the door's own to offer (CHECKIN-2).
+ */
+export function walkInConfirmRefusalMessage(error: unknown, chargeReason?: string | null): string {
+  if (error instanceof ProblemError) {
+    if (DROP_IN_PRICE_CODES.has(MemberRefusal.normalise(error.code))) {
+      return translate(
+        chargeReason === 'boutique_not_included' ? 'booking.err.boutique' : 'checkin.err.monthly_cap',
+        currentLanguage(),
+      );
+    }
+    if (error.status === 429 && !MemberRefusal.isKnown(error.code)) {
+      return translate('checkin.err.rate_limited', currentLanguage());
+    }
+  }
+  return refusalMessage(error, 'checkIn');
 }

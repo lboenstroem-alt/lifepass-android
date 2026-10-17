@@ -342,6 +342,20 @@ describe('a payment the app lost behind the page', () => {
     expect(screen.queryByText(lookup('error.server', 'en'))).toBeNull();
   });
 
+  it('a walk-in confirm that is refused reads in the door’s words, under the door’s title', async () => {
+    signIn();
+    await saveInflight(walkInAttempt());
+    killProcess();
+    launchedWith('lifepass://payment-success');
+    confirmReplies(Reply.problem(429, 'slow_down_please'));
+    await render(<DialogHost />);
+    await launch();
+    expect(screen.getByText(lookup('common.error_title', 'en'))).toBeTruthy();
+    expect(screen.getByText(lookup('checkin.err.rate_limited', 'en'))).toBeTruthy();
+    // The money is the server's to settle: the record waits for the next return.
+    expect(await storedRecords()).toHaveLength(1);
+  });
+
   it('a booking confirmed after process death gets its check-in reminders, before its start', async () => {
     notificationsState.setPermission('granted');
     // Two days out, so every reminder rung is still ahead.

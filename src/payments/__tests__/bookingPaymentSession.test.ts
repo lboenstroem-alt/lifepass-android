@@ -9,7 +9,7 @@
 import { requestBodyKeys } from '@test/contract';
 import { api, Reply, type StubReply } from '@test/server';
 
-import { isProblem, TransportError } from '../../api';
+import { HttpStatusError, isProblem, ProblemError, TransportError } from '../../api';
 import { expectSentToMatchContract, stubApiClientPerTest } from '../../api/testing';
 import { lookup } from '../../i18n';
 import {
@@ -23,7 +23,13 @@ import {
   type PaymentSessionInput,
   type PaySettlement,
 } from '../bookingPaymentSession';
-import { payOutcomeMessage, payOutcomeTitle, refundBodyKey, refundBodyKeys } from '../payOutcomeCopy';
+import {
+  payOutcomeMessage,
+  payOutcomeTitle,
+  refundBodyKey,
+  refundBodyKeys,
+  walkInConfirmRefusalMessage,
+} from '../payOutcomeCopy';
 import { NO_WAITS, setPaymentTimingForTests } from '../timing';
 
 stubApiClientPerTest();
@@ -494,5 +500,37 @@ describe('the refund words (MemberRefusalTests)', () => {
     expect(payOutcomeMessage({ kind: 'refunded', reason: 'trial_visits_spent' }, 'slot', 'en')).toBe(
       `${lookup('refusal.trial_spent', 'en')} ${lookup('booking.pay.refunded_generic_body', 'en')}`,
     );
+  });
+});
+
+describe('the door’s words for a refused confirm (MemberRefusalTests)', () => {
+  const problem = (status: number, slug: string) =>
+    new ProblemError({ type: `https://lifepass.is/problems/${slug}`, title: slug, status }, status);
+
+  it('keeps its check-in words (testTheScannersConfirmRefusalKeepsItsCheckInWords)', () => {
+    expect(walkInConfirmRefusalMessage(problem(429, 'rate_limited'))).toBe(lookup('checkin.err.rate_limited', 'en'));
+    // A 429 the table does not know is still "too quickly" at the door.
+    expect(walkInConfirmRefusalMessage(problem(429, 'slow_down_please'))).toBe(lookup('checkin.err.rate_limited', 'en'));
+    expect(walkInConfirmRefusalMessage(problem(409, 'topup_price_unset'), 'boutique_not_included')).toBe(
+      lookup('booking.err.boutique', 'en'),
+    );
+    // With no charge reason (the in-flight recovery knows none), out of check-ins.
+    for (const code of ['topup_price_unset', 'topup_price_invalid', 'topup_price_below_payout']) {
+      expect(walkInConfirmRefusalMessage(problem(409, code))).toBe(lookup('checkin.err.monthly_cap', 'en'));
+    }
+    expect(walkInConfirmRefusalMessage(problem(409, 'check_in_voided'))).toBe(lookup('refusal.voided', 'en'));
+  });
+
+  it('a declined card and an earlier payment read as the table says (testADeclinedTopUpReadsLikeADeclinedSurcharge)', () => {
+    for (const code of ['topup_charge_failed', 'surcharge_charge_failed', 'charge_capture_failed']) {
+      expect(walkInConfirmRefusalMessage(problem(402, code))).toBe(lookup('refusal.payment_failed', 'en'));
+    }
+    expect(walkInConfirmRefusalMessage(problem(409, 'walk_in_capture_unresolved'))).toBe(
+      lookup('refusal.earlier_payment', 'en'),
+    );
+  });
+
+  it('a gateway page is our failure, never its status code (testAStatusWithNoProblemBodyNeverShowsItsCode)', () => {
+    expect(walkInConfirmRefusalMessage(new HttpStatusError(504, '<html>'))).toBe(lookup('error.server', 'en'));
   });
 });

@@ -32,7 +32,7 @@ import {
   type PlanInflight,
   type WalkInInflight,
 } from './inflight';
-import { confirmedBody, payOutcomeMessage, payOutcomeTitle } from './payOutcomeCopy';
+import { confirmedBody, payOutcomeMessage, payOutcomeTitle, walkInConfirmRefusalMessage } from './payOutcomeCopy';
 import type { PlanVerification } from './planVerification';
 
 /** How a payment the screen could not show ended, by rail. */
@@ -170,7 +170,7 @@ function presentPaySettlement(resolution: PaymentResolution & { rail: 'booking' 
     case 'failed':
       showDialog({
         title: t(walkIn ? 'common.error_title' : 'booking.err.title'),
-        message: refusalMessage(settlement.error, walkIn ? 'checkIn' : 'general'),
+        message: walkIn ? walkInConfirmRefusalMessage(settlement.error) : refusalMessage(settlement.error),
         buttons: ok(),
       });
       return;
