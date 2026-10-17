@@ -107,6 +107,13 @@ export function handleNotificationResponse(response: ResponseLike | null | undef
   const parked = routeFromData(response.notification.request.content.data);
   if (!parked) return false;
   track('notification_opened', { kind: NOTIFICATION_ANALYTICS_KIND[parked.route] });
+  // A tap is a launch somewhere other than Explore: the launch-time filter
+  // presentation is cancelled NOW, not when the shell performs the tap. The
+  // tabs keep their screens mounted, so an Explore that took the
+  // presentation first would sit with its filters open for the member's next
+  // visit (iOS: `pendingTab = 4` clears it, and the tab switch rebuilds
+  // Explore). Dropped taps too: the member did not open the app for Explore.
+  useIntentStore.getState().cancelExploreLaunchPresentation();
   if (knownSignedOut()) return true;
   useNotificationRouter.setState({ pending: parked });
   return true;

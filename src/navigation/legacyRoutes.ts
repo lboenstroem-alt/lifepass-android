@@ -8,12 +8,47 @@
  * container hands it here (`onUnhandledAction`) and it is performed under
  * the new name, until each owner rebuilds its screen. QA-1 deletes this file
  * with the last legacy screen.
+ *
+ * 'CheckIn' from a page (the venue page's walk-in "Scan the QR code") is the
+ * scanner pushed on that page's own stack, with a back button (`ScanPushed`),
+ * as iOS pushes `CheckInView(showsBackButton: true)` from the venue page: the
+ * member stays in the venue's context and back returns to it. Only a caller
+ * with no stack gets the Scan tab.
  */
 import type { NavigationAction } from '@react-navigation/native';
 
 import { useIntentStore } from '../stores/intentStore';
-import { navigateInCurrentTab, openRootModal } from './navigationRef';
+import { navigateInCurrentTab, navigationRef, openRootModal } from './navigationRef';
 import type { ProfileTab } from './types';
+
+interface LooseState {
+  readonly routeNames?: readonly string[];
+  readonly routes: readonly { readonly key?: string; readonly state?: LooseState }[];
+}
+
+const has = (state: LooseState | undefined, name: string): boolean => state?.routeNames?.includes(name) ?? false;
+
+/**
+ * True when the screen that sent an action (`source`, its route key) sits in
+ * a stack that can push `name`: its own navigator or one above it has the
+ * route, or (a call through `getParent()`, which sends from the tab's route)
+ * the stack inside that route has it.
+ */
+export function sourceCanPush(source: string | undefined, name: string): boolean {
+  if (!source || !navigationRef.isReady()) return false;
+  const search = (state: LooseState, ancestorHas: boolean): boolean | null => {
+    const here = ancestorHas || has(state, name);
+    for (const route of state.routes) {
+      if (route.key === source) return here || has(route.state, name);
+      if (route.state) {
+        const found = search(route.state, here);
+        if (found !== null) return found;
+      }
+    }
+    return null;
+  };
+  return search(navigationRef.getRootState() as unknown as LooseState, false) ?? false;
+}
 
 interface NavigatePayload {
   readonly name?: unknown;
@@ -41,6 +76,10 @@ export function translateLegacyAction(action: NavigationAction): boolean {
       return openRootModal('Plans');
     case 'CheckIn':
     case 'CheckInMain':
+      // From a page: the scanner on its stack, back to the page. Else the tab.
+      if (sourceCanPush((action as { source?: string }).source, 'ScanPushed') && navigateInCurrentTab('ScanPushed')) {
+        return true;
+      }
       useIntentStore.getState().requestTab('Scan');
       return true;
     default:

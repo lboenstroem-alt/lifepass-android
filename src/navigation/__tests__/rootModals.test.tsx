@@ -3,12 +3,14 @@
  * the first build's top-up page (which pads itself above a tab bar), and a
  * refusal's next step taken on a root modal (iOS presents Account over the
  * refusing sheet; here the shared sheet does, and closing it lands back on
- * the modal).
+ * the modal), and a tab switch asked for while a modal is up (it leaves the
+ * modal through the back guards, so a busy one holds the switch).
  */
 import { act, fireEvent, screen } from '@testing-library/react-native';
 
+import { useIntentStore } from '../../stores/intentStore';
 import { openRootModal } from '../navigationRef';
-import { currentRouteName, navigationRef, renderShell, signedIn } from './shellHarness';
+import { currentRouteName, currentTab, navigationRef, renderShell, signedIn } from './shellHarness';
 
 /** The refusing page's re-check (runs when the member is back on it). */
 const mockRecheck = jest.fn();
@@ -50,7 +52,28 @@ jest.mock('../../features/classes/ClassesDiscoveryModalScreen', () => {
   }
   return { __esModule: true, default: RefusingClasses };
 });
+// A review being posted: busy until "Finish" (a booking or a checkout in flight, the same guard).
+jest.mock('../../features/venue/reviews/WriteReviewScreen', () => {
+  const { Pressable: MockPressable, Text: MockText } = require('react-native');
+  const { useState: mockUseState } = require('react');
+  const { useBusyGuard: mockUseBusyGuard } = require('../guards');
+  function PostingReview() {
+    const [busy, setBusy] = mockUseState(true);
+    mockUseBusyGuard(busy);
+    return (
+      <>
+        <MockText>{busy ? 'Posting review' : 'Review posted'}</MockText>
+        <MockPressable accessibilityRole="button" onPress={() => setBusy(false)}>
+          <MockText>Finish</MockText>
+        </MockPressable>
+      </>
+    );
+  }
+  return { __esModule: true, default: PostingReview };
+});
 /* eslint-enable @typescript-eslint/no-require-imports */
+
+const VENUE = '3f2b8c1e-7d4a-4b6e-9c2f-1a2b3c4d5e6f';
 
 const rootRoutes = () => navigationRef.getRootState().routes.map((route) => route.name);
 
@@ -106,5 +129,54 @@ describe('a refusal on a root modal', () => {
     expect(currentRouteName()).toBe('Profile');
     expect(navigationRef.getCurrentRoute()?.params).toEqual({ initialTab: 'bookings' });
     expect(rootRoutes()).toEqual(['Main', 'ClassesDiscoveryModal', 'SharedSheet']);
+  });
+});
+
+describe('a tab switch while a modal is up', () => {
+  it('closes a modal that is not busy, then switches (iOS rebuilds the tab and its sheets)', async () => {
+    signedIn();
+    await renderShell();
+    await act(async () => {
+      openRootModal('ClassesDiscoveryModal');
+    });
+    await act(async () => useIntentStore.getState().requestTab('Plan'));
+    expect(rootRoutes()).toEqual(['Main']);
+    expect(currentTab()).toBe('Plan');
+  });
+
+  it('is held while the modal is busy, and performed once the work is done and the modal has closed', async () => {
+    signedIn();
+    await renderShell();
+    await act(async () => {
+      openRootModal('WriteReview', { venueId: VENUE, venueName: 'Laugar' });
+    });
+    // A check-in link arrives while the review is being posted.
+    await act(async () => {
+      useIntentStore.getState().parkScanVenue(VENUE);
+    });
+    expect(rootRoutes()).toEqual(['Main', 'WriteReview']);
+    expect(screen.getByText('Posting review')).toBeOnTheScreen();
+    expect(currentTab()).toBe('Explore');
+
+    await fireEvent.press(screen.getByRole('button', { name: 'Finish' }));
+    expect(screen.getByText('Review posted')).toBeOnTheScreen();
+    expect(currentTab()).toBe('Explore');
+
+    await act(async () => navigationRef.goBack());
+    expect(rootRoutes()).toEqual(['Main']);
+    expect(currentTab()).toBe('Scan');
+    // Still parked for the Scan screen to ask about.
+    expect(useIntentStore.getState().pendingScanVenueId).toBe(VENUE);
+  });
+
+  it('to the tab already on screen leaves the modal as it is (Plan keeps its runner, as on iOS)', async () => {
+    signedIn('Plan');
+    await renderShell();
+    await act(async () => {
+      openRootModal('WorkoutRunner', { sessionId: 's-1', entry: 'today' });
+    });
+    await act(async () => useIntentStore.getState().requestTab('Plan'));
+    expect(rootRoutes()).toEqual(['Main', 'WorkoutRunner']);
+    expect(currentRouteName()).toBe('WorkoutRunner');
   });
 });

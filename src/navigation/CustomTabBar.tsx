@@ -23,12 +23,18 @@
  * - The bar ignores the keyboard, as on iOS, where the keyboard simply covers
  *   it: while the keyboard is up the bar is not drawn, so it can never ride
  *   up over a text field (the Coach's input, a search).
+ * - The bar floats over full-height content (iOS draws it over the tab's
+ *   content too), so a screen pads its last row or its pinned button above
+ *   it with `useBottomTabBarHeight()`. The bar reports its real height for
+ *   that (`TAB_BAR_HEIGHT` plus the system bar's inset), and 0 while it is not
+ *   drawn (the keyboard is up, or a page that hides it is on top), so a page
+ *   never pads for a bar that is not there.
  */
 import { Ionicons } from '@expo/vector-icons';
-import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { BottomTabBarHeightCallbackContext, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { StackActions, type NavigationState, type PartialState } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useState, type ReactNode } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
@@ -125,8 +131,18 @@ export default function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const activeTab = state.routes[state.index]?.name as MainTab | undefined;
   const onDark = barOnDarkSurface(activeTab, scanCameraLive);
   const planDot = showsPlanDot(healthAccess, planTabSeen, prefsHydrated);
+  const hidden = keyboardShown || BAR_HIDDEN_ON_ROUTES.includes(focusedChildRoute(state) ?? '');
 
-  if (keyboardShown || BAR_HIDDEN_ON_ROUTES.includes(focusedChildRoute(state) ?? '')) return null;
+  // What `useBottomTabBarHeight()` answers in every tab screen. Without this
+  // report bottom-tabs answers its own default bar's height (49 plus the
+  // inset), and a screen padding by it leaves 27 dp under this bar.
+  const reportHeight = useContext(BottomTabBarHeightCallbackContext);
+  const height = hidden ? 0 : TAB_BAR_HEIGHT + insets.bottom;
+  useEffect(() => {
+    reportHeight?.(height);
+  }, [reportHeight, height]);
+
+  if (hidden) return null;
 
   function select(tab: MainTab): void {
     const index = state.routes.findIndex((route) => route.name === tab);

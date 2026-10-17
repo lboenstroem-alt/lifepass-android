@@ -105,8 +105,9 @@ export function navigateInCurrentTab<Name extends SharedRouteName>(
 
 /**
  * Switches to `tab` straight away. Code outside the shell asks with the intent
- * store's `requestTab` instead, which also keeps the launch and Plan rules;
- * this is what the shell itself performs.
+ * store's `requestTab` instead, which also keeps the launch and Plan rules
+ * and leaves a root modal through the back guards (a busy one holds the
+ * switch); this removes a modal on top without asking it.
  */
 export function jumpToTab(tab: MainTab): boolean {
   const tabs = tabsState();

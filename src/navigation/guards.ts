@@ -20,6 +20,13 @@
  *   cannot be dismissed. F5's `Sheet` applies it itself (`busy`,
  *   `dismissible`); `modalRequestClose` is the same rule for a plain RN Modal.
  *
+ * A tab switch made for the member (a check-in link, a tapped notification,
+ * `requestTab`) leaves a root modal through `popTo('Main')`, a removal these
+ * guards see: a busy modal holds the switch until it is done and closed
+ * (src/navigation/TabNavigator.tsx). A bare `navigate` to a tab would remove
+ * the modal without asking (React Navigation focuses the tabs' route without
+ * `beforeRemove`), so code outside the shell asks with `requestTab`.
+ *
  * Tabs: `backBehavior: 'history'` (src/navigation/TabNavigator.tsx): back on
  * a tab's first screen returns to the tab the member came from, and back on
  * the first tab of the session (Explore after a normal launch) leaves the

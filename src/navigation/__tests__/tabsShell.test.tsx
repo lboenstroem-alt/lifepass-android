@@ -1,8 +1,13 @@
 /**
  * The signed-in shell (iOS MainTabView) with the app's real navigators: the
- * launch tab, parked tabs, notification taps, check-in links, Profile behind
- * the person buttons, the first build's route names, and every route of plan
- * 3.0.2 in place.
+ * launch tab and its one-time Explore presentation, parked tabs, notification
+ * taps, check-in links, `openProfile` and the Profile route, the first
+ * build's route names, the tab bar's height, and every route of plan 3.0.2
+ * in place.
+ *
+ * The person buttons themselves are their owners' screens (HOME-1's avatar,
+ * F5's top bar): this file drives `openProfile` from a stand-in screen, so it
+ * tests the route and the analytics, not that a real button calls it.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen } from '@testing-library/react-native';
@@ -11,6 +16,7 @@ import { handleNotificationResponse, useNotificationRouter } from '../../app/not
 import { setAnalyticsObserver, type AnalyticsParams } from '../../lib/analytics';
 import { useAppStore } from '../../stores/appStore';
 import { useIntentStore } from '../../stores/intentStore';
+import { TAB_BAR_HEIGHT } from '../CustomTabBar';
 import { navigateInCurrentTab, openRootModal } from '../navigationRef';
 import { SELECTED_TAB_KEY, useNavPrefs } from '../navPrefs';
 import { SHARED_ROUTE_NAMES } from '../sharedRoutes';
@@ -21,6 +27,7 @@ jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset')
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 
+// A tab screen that calls `openProfile` as a person button does.
 jest.mock('../../screens/home/HomeScreen', () => {
   const { Pressable: MockPressable, Text: MockText } = require('react-native');
   const { useNavigation: mockUseNavigation } = require('@react-navigation/native');
@@ -29,19 +36,50 @@ jest.mock('../../screens/home/HomeScreen', () => {
     const navigation = mockUseNavigation();
     return (
       <MockPressable accessibilityRole="button" onPress={() => mockOpenProfile(navigation, 'home_avatar')}>
-        <MockText>Home avatar</MockText>
+        <MockText>Open profile from a tab screen</MockText>
       </MockPressable>
     );
   }
   return { __esModule: true, default: Home };
 });
-jest.mock('../../screens/explore/ExploreScreen', () => require('./standIn').standInScreen('Explore'));
-jest.mock('../../screens/coach/CoachScreen', () => require('./standIn').standInScreen('Coach'));
+// Explore takes the launch presentation on appear, as EXPL-1's screen does (iOS SearchMapView.onAppear).
+jest.mock('../../screens/explore/ExploreScreen', () => {
+  const { Text: MockText } = require('react-native');
+  const { useState: mockUseState } = require('react');
+  const { useIntentStore: mockIntentStore } = require('../../stores/intentStore');
+  function Explore() {
+    const [filtersOpen] = mockUseState(() => mockIntentStore.getState().takeExploreLaunchPresentation());
+    return <MockText>{filtersOpen ? 'Explore, filters open' : 'Explore, filters closed'}</MockText>;
+  }
+  return { __esModule: true, default: Explore };
+});
+// A tab screen that pads above the bar.
+jest.mock('../../screens/coach/CoachScreen', () => {
+  const { Text: MockText } = require('react-native');
+  const { useBottomTabBarHeight: mockTabBarHeight } = require('@react-navigation/bottom-tabs');
+  function Coach() {
+    return <MockText>{`Coach, padded ${mockTabBarHeight()}`}</MockText>;
+  }
+  return { __esModule: true, default: Coach };
+});
 jest.mock('../../screens/checkin/CheckInScreen', () => require('./standIn').standInScreen('CheckIn'));
 jest.mock('../../screens/bookings/BookingsScreen', () => require('./standIn').standInScreen('Library'));
 jest.mock('../../screens/account/AccountScreen', () => require('./standIn').standInScreen('LegacyAccount'));
 jest.mock('../../screens/account/TopUpScreen', () => require('./standIn').standInScreen('TopUp'));
-jest.mock('../../screens/venue/VenueDetailScreen', () => require('./standIn').standInScreen('LegacyVenue'));
+// The first build's venue page: its walk-in bar sends 'CheckIn' to the tab navigator, as the real one does.
+jest.mock('../../screens/venue/VenueDetailScreen', () => {
+  const { Pressable: MockPressable, Text: MockText } = require('react-native');
+  const { useNavigation: mockUseNavigation } = require('@react-navigation/native');
+  function LegacyVenue() {
+    const navigation = mockUseNavigation();
+    return (
+      <MockPressable accessibilityRole="button" onPress={() => navigation.getParent()?.navigate('CheckIn' as never)}>
+        <MockText>Scan the QR code</MockText>
+      </MockPressable>
+    );
+  }
+  return { __esModule: true, default: LegacyVenue };
+});
 jest.mock('../../screens/booking/BookingFlowScreen', () => require('./standIn').standInScreen('LegacyBooking'));
 jest.mock('../../screens/auth/OnboardingScreen', () => require('./standIn').standInScreen('Onboarding'));
 jest.mock('../../screens/auth/LoginScreen', () => require('./standIn').standInScreen('Login'));
@@ -77,13 +115,20 @@ beforeEach(() => {
 });
 afterEach(() => setAnalyticsObserver(null));
 
+/** Launch decided Explore and turned its one-time filter presentation on. */
+function launchedOntoExplore(): void {
+  signedIn('Explore');
+  useIntentStore.getState().setExploreLaunchPresentation(true);
+}
+
 describe('the launch tab (ExploreLaunchTests)', () => {
-  it('a cold launch opens on Explore', async () => {
-    signedIn('Explore');
+  it('a cold launch opens on Explore, with the filters open', async () => {
+    launchedOntoExplore();
     await renderShell();
     expect(currentTab()).toBe('Explore');
     expect(screen.getByRole('tab', { name: 'Explore' })).toBeSelected();
     expect(screen.getByRole('tab', { name: 'Home' })).not.toBeSelected();
+    expect(screen.getByText('Explore, filters open')).toBeOnTheScreen();
   });
 
   it('a resumable workout keeps the tab it was left on', async () => {
@@ -132,12 +177,17 @@ describe('a parked tab', () => {
 });
 
 describe('a notification tap', () => {
-  it('on a cold launch opens Plan with its action, not Explore', async () => {
-    signedIn('Explore');
+  it('on a cold launch opens Plan with its action, not Explore, and Explore never opens its filters by itself', async () => {
+    launchedOntoExplore();
     tapNotification('plan.checkin');
     await renderShell();
     expect(currentTab()).toBe('Plan');
     expect(useIntentStore.getState().takePlanAction()?.action).toEqual({ kind: 'openWeeklyCheckIn' });
+    // iOS testANotificationStillRoutesFromALaunchOntoExplore.
+    expect(screen.queryByText(/^Explore, filters/, { includeHiddenElements: true })).toBeNull();
+    expect(useIntentStore.getState().exploreLaunchPresentation).toBe(false);
+    await act(async () => useIntentStore.getState().requestTab('Explore'));
+    expect(screen.getByText('Explore, filters closed')).toBeOnTheScreen();
   });
 
   it('while the app runs takes the member to Plan, at its root', async () => {
@@ -194,13 +244,15 @@ describe('a check-in link', () => {
   });
 
   it('outranks everything at a cold launch, a notification included', async () => {
-    signedIn();
+    launchedOntoExplore();
     tapNotification('plan');
     useIntentStore.getState().parkScanVenue(VENUE);
     await renderShell();
     expect(currentTab()).toBe('Scan');
     // Parked, for the Scan screen to ask about: never consumed by the shell.
     expect(useIntentStore.getState().pendingScanVenueId).toBe(VENUE);
+    // Explore was never drawn on the way.
+    expect(screen.queryByText(/^Explore, filters/, { includeHiddenElements: true })).toBeNull();
   });
 });
 
@@ -217,11 +269,27 @@ describe('the tab on screen', () => {
   });
 });
 
-describe('Profile behind the person buttons', () => {
-  it('the Home avatar opens Profile on Bookings in the Home tab, and says where from', async () => {
+describe('the tab bar height', () => {
+  it('a tab screen pads by the real bar (76 plus the inset), and by nothing while a page hides the bar', async () => {
+    signedIn('Coach');
+    await renderShell();
+    // The test's safe area has no bottom inset.
+    expect(screen.getByText(`Coach, padded ${TAB_BAR_HEIGHT}`)).toBeOnTheScreen();
+    await act(async () => {
+      navigateInCurrentTab('BookingFlow', { venueId: VENUE, activity: { id: 'a-1', name: 'Swim', provider: null } });
+    });
+    // The tab's first screen is under the page (hidden from TalkBack), still mounted.
+    expect(screen.getByText('Coach, padded 0', { includeHiddenElements: true })).toBeOnTheScreen();
+    await act(async () => navigationRef.goBack());
+    expect(screen.getByText(`Coach, padded ${TAB_BAR_HEIGHT}`)).toBeOnTheScreen();
+  });
+});
+
+describe('openProfile and the Profile route', () => {
+  it('opens Profile on Bookings in the tab it is called from, and says where from', async () => {
     signedIn('Home');
     await renderShell();
-    await fireEvent.press(screen.getByRole('button', { name: 'Home avatar' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Open profile from a tab screen' }));
     expect(currentTab()).toBe('Home');
     expect(currentRouteName()).toBe('Profile');
     expect(screen.getByTestId('params.Library')).toHaveTextContent('{"initialTab":"bookings"}');
@@ -260,6 +328,19 @@ describe("the first build's route names", () => {
       navigateLegacy('CheckIn');
     });
     expect(currentTab()).toBe('Scan');
+  });
+
+  it("its venue page's walk-in scan is the scanner pushed on the venue's stack, back to the venue", async () => {
+    signedIn();
+    await renderShell();
+    await act(async () => {
+      navigateInCurrentTab('VenueDetail', { venueId: VENUE });
+    });
+    await fireEvent.press(screen.getByRole('button', { name: 'Scan the QR code' }));
+    expect(currentTab()).toBe('Explore');
+    expect(currentRouteName()).toBe('ScanPushed');
+    await act(async () => navigationRef.goBack());
+    expect(currentRouteName()).toBe('VenueDetail');
   });
 });
 
