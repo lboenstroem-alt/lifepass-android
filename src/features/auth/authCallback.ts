@@ -13,8 +13,15 @@
 //
 // Until then this bridges to the first build's exchange, which takes the
 // tokens from the link; the app store's SIGNED_IN listener runs the sign-in.
+// A RECOVERY link runs the sign-in itself, with the post-sign-up Kenni nudge
+// suppressed (iOS `handleSignIn(userId:suppressKennitalaPrompt: isRecovery)`):
+// for a fresh unverified account both sheets would arm in the same turn, and
+// the nudge would hide the security-critical set-new-password screen. The
+// link's own SIGNED_IN joins this sign-in (the app store treats a second call
+// for the same member while one runs as the same sign-in).
 import { t } from '../../i18n';
 import { useAppStore } from '../../stores/appStore';
+import { supabase } from '../../supabase/lib/client';
 import { AUTH_CALLBACK_URL, completeAuthFromUrl } from '../../supabase/services/auth';
 
 /** The tokens and flags of either link form, carried over to the custom-scheme form the exchange reads. */
@@ -23,12 +30,23 @@ function asCustomSchemeLink(url: string): string {
   return start < 0 ? AUTH_CALLBACK_URL : `${AUTH_CALLBACK_URL}${url.slice(start)}`;
 }
 
+/** The member the exchange just signed in, or null. */
+async function signedInUserId(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  const id = data.session?.user.id;
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
 /** Completes a sign-in from an auth link. Never throws: a failure is shown on the sign-in screen. */
 export async function handleAuthCallback(url: string): Promise<void> {
   const isRecovery = url.includes('type=recovery');
   try {
-    await completeAuthFromUrl(asCustomSchemeLink(url));
-    if (isRecovery) useAppStore.getState().setPendingPasswordRecovery(true);
+    const exchanged = await completeAuthFromUrl(asCustomSchemeLink(url));
+    if (isRecovery) {
+      const userId = exchanged ? await signedInUserId() : null;
+      if (userId) await useAppStore.getState().handleSignIn(userId, { suppressKennitalaPrompt: true });
+      useAppStore.getState().setPendingPasswordRecovery(true);
+    }
   } catch {
     useAppStore.getState().setDeepLinkError(t(isRecovery ? 'auth.deeplink_err_recovery' : 'auth.deeplink_err_confirm'));
   }
