@@ -1,56 +1,65 @@
-// @f4-stub (plan 3.0.3): the body sheet and the target-weight sheet, filled by BODY-2; used by PLAN-4, PLAN-5, COACH-4 and COACH-5.
+// The body sheet and the target-weight sheet (plan 3.0.3, BODY-2), for PLAN-4,
+// PLAN-5, COACH-4, COACH-5 and Body and goals.
 //
 // iOS `BodySheet(mode:)` (intake for a wizard, update, goal) and
-// `TargetWeightSheet(mode:)` (save a target, or pick one for a wizard).
-// Keep the exported names and signatures; replace the bodies (and this
-// marker). `BodySheetsHost` is mounted once by F4's tabs shell.
+// `TargetWeightSheet(mode:)` (save a target, or pick one for a wizard), opened
+// from anywhere: `BodySheetsHost` is mounted once by F4's tabs shell and
+// draws what these ask for.
+//
+//   openBodySheet({ kind: 'goal', onSaved: () => void reload() });
+//   openTargetSheet({ kind: 'pick', goal: 'lose_weight', existing, onPicked: (kg) => ... });
+//
+// RULES FOR CALLERS:
+// - One sheet at a time. A request while one is on screen (or with no host,
+//   signed out) is not shown and is answered at once as a close: an intake's
+//   `{ kind: 'cancelled' }`, a pick's or a save's `onCancel`.
+// - Every callback runs once the sheet has GONE from the screen, never while
+//   it is sliding away, so the next sheet or a page can be opened from it.
+// - The values an intake returns are health data: never a chat bubble, a
+//   chip, an analytics param or a saved session (`givesTarget` says whether
+//   a bubble may mention "a target weight", never which).
+// - The target rules (`TargetWeightRules`) are the same ones the sheets run;
+//   the Coach checks a target with them before it confirms a change.
+import { presentBodySheet, presentTargetSheet } from '../sheet/presenter';
+import type { BodySheetMode, TargetSheetMode } from '../sheet/types';
+
 export { default as BodySheetsHost } from './BodySheetsHost';
 
-/** What the intake already knows (iOS `BodySheet.Prefill`). */
-export interface BodyPrefill {
-  readonly weightKg?: number | null;
-  readonly heightCm?: number | null;
-  readonly kennitalaVerified: boolean;
-  /** The programme goal the wizard is building for (its wire value). */
-  readonly goal?: string | null;
-}
+export {
+  activityLabelKey,
+  ageBandLabelKey,
+  BODY_HEIGHT_RANGE,
+  BODY_WEIGHT_RANGE,
+  CALORIE_GOALS,
+  calorieGoalLabelKey,
+  givesTarget,
+  knownValue,
+  PROGRAM_ACTIVITIES,
+  PROGRAM_AGE_BANDS,
+  PROGRAM_GOALS,
+  PROGRAM_SEXES,
+  programGoalLabelKey,
+  sexLabelKey,
+  type BodyDetails,
+  type BodyIntakeResult,
+  type BodyPrefill,
+  type BodySheetMode,
+  type CalorieGoal,
+  type ProgramActivity,
+  type ProgramAgeBand,
+  type ProgramGoal,
+  type ProgramSex,
+  type TargetSheetMode,
+} from '../sheet/types';
+export { TargetWeightRules, type TargetDirection, type TargetProblem } from '../target/rules';
+export { isBodySheetsHostMounted } from '../sheet/presenter';
 
-/** What an intake answered (BODY-2 may widen `details` to its own type). */
-export type BodyIntakeResult =
-  | { readonly kind: 'used'; readonly details: { readonly weightKg: number | null; readonly heightCm: number | null } }
-  | { readonly kind: 'skipped' }
-  | { readonly kind: 'cancelled' };
-
-export type BodySheetMode =
-  /** A wizard asks for the body details it plans with (nothing is saved here). */
-  | { readonly kind: 'intake'; readonly prefill: BodyPrefill; readonly onResult: (result: BodyIntakeResult) => void }
-  /** Update the body details (for a live programme when `programId` is set). */
-  | { readonly kind: 'update'; readonly programId: string | null; readonly onSaved?: () => void }
-  /** The calorie goal. */
-  | { readonly kind: 'goal'; readonly onSaved?: () => void };
-
-export type TargetSheetMode =
-  /** Save (or remove) the member's target weight. */
-  | {
-      readonly kind: 'save';
-      readonly onSaved?: () => void;
-      readonly onRemove?: () => void;
-      readonly onCancel?: () => void;
-    }
-  /** A wizard picks a target for `goal` (nothing is saved here). */
-  | {
-      readonly kind: 'pick';
-      readonly goal: string;
-      readonly onPicked: (targetKg: number) => void;
-      readonly onCancel?: () => void;
-    };
-
-/** Opens the body sheet over whatever is showing. A no-op until BODY-2 lands. */
+/** Opens the body sheet over whatever is showing (see the rules above). */
 export function openBodySheet(mode: BodySheetMode): void {
-  void mode;
+  presentBodySheet(mode);
 }
 
-/** Opens the target-weight sheet over whatever is showing. A no-op until BODY-2 lands. */
+/** Opens the target-weight sheet over whatever is showing (see the rules above). */
 export function openTargetSheet(mode: TargetSheetMode): void {
-  void mode;
+  presentTargetSheet(mode);
 }
