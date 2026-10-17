@@ -42,8 +42,10 @@ export { default as SegmentedControl } from './SegmentedControl';
 export type { Segment, SegmentedControlProps } from './SegmentedControl';
 export { default as NumberStepper } from './NumberStepper';
 export type { NumberStepperProps } from './NumberStepper';
+// parseDecimal / parseInteger are F1's (src/i18n/format), re-exported here.
 export {
   parseDecimal,
+  parseInteger,
   parseWholeNumber,
   formatDecimalInput,
   stepText,
