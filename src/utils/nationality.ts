@@ -43,7 +43,8 @@ export function nationalityFromEmail(email: string): string | null {
   // ("x.is.") yields "" -> null — matching the web semantics exactly.
   const tld = domain.split('.').pop();
   if (!tld) return null;
-  return TLD_TO_NATIONALITY[tld] ?? null;
+  // Own keys only: `x@y.constructor` must not find Object.prototype's.
+  return Object.prototype.hasOwnProperty.call(TLD_TO_NATIONALITY, tld) ? TLD_TO_NATIONALITY[tld] : null;
 }
 
 /**
