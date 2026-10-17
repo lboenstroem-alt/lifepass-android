@@ -1,36 +1,25 @@
-import { useEffect, useState } from 'react';
-import * as Location from 'expo-location';
+// LEGACY: Home's position before the parity build (deleted by QA-1 once HOME-1
+// reads src/stores/locationStore.ts directly).
+//
+// Now a thin view of the location store: on mount it asks for location the
+// way iOS Home does (`requestLocation()`: the system dialog only while the
+// member has not decided, never again after), and it returns the GRANTED fix,
+// or null. It no longer prompts on every mount, and a fix kept from before
+// permission was taken away is never returned.
+import { useEffect } from 'react';
 
-export type Coords = { latitude: number; longitude: number };
+import type { Coordinate } from '../lib/geo';
+import { locationStore, startLocationLifecycle, useGrantedLocation } from '../stores/locationStore';
 
-/**
- * The device's current location, or null until (and unless) a fix is granted.
- * Requests foreground permission once; on denial or error it stays null so
- * callers fall back to a default origin (e.g. Reykjavík centre).
- */
+export type Coords = Coordinate;
+
+/** The member's granted position, or null until (and unless) they allow location. */
 export function useLocation(): Coords | null {
-  const [coords, setCoords] = useState<Coords | null>(null);
-
+  const granted = useGrantedLocation();
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') return;
-        const loc = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-        if (!cancelled) {
-          setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-        }
-      } catch {
-        // No fix available — leave null; callers use a fallback origin.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    // The app-wide wiring (idempotent): F4 starts it at the root as well.
+    startLocationLifecycle();
+    void locationStore.getState().requestLocation();
   }, []);
-
-  return coords;
+  return granted;
 }
