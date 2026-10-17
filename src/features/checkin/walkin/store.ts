@@ -74,6 +74,7 @@ import {
   type PaymentSessionCreation,
   type PaySettlement,
   type PayOnHostedPageRequest,
+  type WalkInAttemptContext,
   type WalkInPaymentSession,
 } from '../../../payments';
 import { useAppStore } from '../../../stores/appStore';
@@ -195,6 +196,12 @@ export interface WalkInActions {
   retryAfterRefusal(): Promise<void>;
   /** The proof's Done. */
   resetSuccess(): void;
+  /**
+   * The proof of a walk-in paid on the hosted page and confirmed after the
+   * screen that started it was gone (Android: F8's recovery after a cold
+   * start), from what the attempt saved before the page opened.
+   */
+  showRecoveredProof(walkIn: WalkInAttemptContext): void;
   /** Everything forgotten (sign-out). */
   reset(): void;
 }
@@ -1078,6 +1085,20 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
           successCoverage: null,
           guestBandOffers: [],
           guestCounts: {},
+        });
+      },
+
+      showRecoveredProof(walkIn) {
+        // As the pay rail's own proof: no name (a payment session carries
+        // none), the party that was paid for, no balance.
+        set({
+          successVenueName: walkIn.venueName ?? null,
+          successActivityName: walkIn.activityName ?? null,
+          successTimestamp: deps.now(),
+          successMemberShortName: null,
+          successParty: walkIn.party ?? null,
+          successCoverage: null,
+          showSuccess: true,
         });
       },
 
