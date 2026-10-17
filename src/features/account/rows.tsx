@@ -71,8 +71,10 @@ function RowContent({ title, subtitle, destructive = false, dim = false, showsCh
           </LPText>
         ) : null}
       </View>
+      {/* iOS `Spacer(minLength: 8)` inside an HStack spaced 12: the words keep clear of the edge or the chevron. */}
+      <View style={styles.spacer} />
       {accessory ? (
-        <View style={styles.accessory} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+        <View importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
           {accessory}
         </View>
       ) : chevron ? (
@@ -167,7 +169,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   words: { flex: 1, gap: 2 },
-  accessory: { marginLeft: 8 },
+  spacer: { width: 8 },
   pressed: { opacity: 0.6 },
   disabled: { opacity: 0.45 },
   card: {
