@@ -1,23 +1,50 @@
-// @f4-stub (plan 3.0.3): the workout runner's public contract.
+// The workout runner's public contract (plan 3.0.3).
 //
-// Filled by RUN-1 (the data functions: `hasPendingWorkout`, `resumableWorkout`);
-// ownership passes to RUN-3 after RUN-1 merges (RUN-3 owns `openRunner`).
-// Used by PLAN-2 (the Resume row, "Start") and by F4's launch rule
-// (src/app/launchTab.ts: a workout in progress keeps the tab it was left on).
+// RUN-1 owns the data functions and everything they re-export: the pure
+// model (./model), runner.json and Plan's Resume row (./persistence), the
+// save rules (./saveRules) and the workout outbox (./outbox). Ownership of
+// `openRunner` passes to RUN-3 after RUN-1 merges.
 //
-// Keep these exported names and signatures; replace the bodies. Until RUN-1
-// lands nothing is ever resumable, so a cold launch always opens on Explore.
+// Used by PLAN-2 (the Today card: Start, Resume, "Waiting to sync"), Home's
+// Today row, PLAN-1 (the failed-outbox banner and the outbox flush before
+// Plan's read), F4's launch rule (src/app/launchTab.ts: a workout in
+// progress keeps the tab it was left on), and the runner screen and sheets
+// (RUN-2, RUN-3).
 import { openRootModal } from '../../navigation/navigationRef';
 import type { RunnerEntry } from '../../navigation/types';
+import { useAppStore } from '../../stores/appStore';
 
-export type { RunnerEntry } from '../../navigation/types';
+import { resumableWorkoutFor } from './persistence/runnerStore';
+
+// `RunnerEntry` (navigation's route param) comes through ./model.
+export * from './model';
+export {
+  CLOCK_WRITE_INTERVAL_MS,
+  clockWriteDue,
+  deleteRunner,
+  loadRunner,
+  persistRunner,
+  readRunnerOutcome,
+  refreshRunnerProgress,
+  saveRunner,
+} from './persistence/runnerStore';
+export {
+  progressSummaryOf,
+  RunnerProgressIndex,
+  selectRunnerProgressFor,
+  selectRunnerProgressOtherThan,
+  useRunnerProgress,
+  type RunnerProgressState,
+  type RunnerProgressSummary,
+} from './persistence/progressIndex';
+export { onRunnerWiped } from './persistence/wiped';
 
 /** A workout saved on this phone that can be picked up again (iOS `runner.json`). */
 export interface ResumableWorkout {
   /**
    * The session it is for. Null when a runner file exists but could not be
-   * read (a locked phone, a background start): the launch rule counts that as
-   * resumable, so the stored tab is kept when in doubt (iOS `.unreadable`).
+   * read (a storage error): the launch rule counts that as resumable, so the
+   * stored tab is kept when in doubt (iOS `.unreadable`).
    */
   readonly sessionId: string | null;
 }
@@ -27,16 +54,23 @@ export interface RunnerSessionRef {
   readonly id: string;
 }
 
+/** The signed-in member's id, as their health folder is named. */
+function signedInMemberId(): string | null {
+  const app = useAppStore.getState();
+  return app.profile?.id ?? app.userId ?? null;
+}
+
 /**
  * The workout this member can resume: a runner file of the current version
- * that has not outlived its day. `profileId` defaults to the signed-in
- * member; the launch rule passes the id of the session stored on the phone,
- * because it runs before the app store has restored anyone. Null when there
- * is none, or no member.
+ * that has not outlived its day (`today`, the server's day, defaults to
+ * now). `profileId` defaults to the signed-in member; the launch rule passes
+ * the id of the session stored on the phone, because it runs before the app
+ * store has restored anyone. Null when there is none, or no member.
  */
-export async function resumableWorkout(profileId?: string): Promise<ResumableWorkout | null> {
-  void profileId;
-  return null;
+export async function resumableWorkout(profileId?: string, today?: string): Promise<ResumableWorkout | null> {
+  const id = profileId ?? signedInMemberId();
+  if (!id) return null;
+  return resumableWorkoutFor(id, today);
 }
 
 /** True when a finished workout for `sessionId` is still queued to be sent (the outbox). */
