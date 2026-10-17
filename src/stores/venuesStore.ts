@@ -17,6 +17,16 @@
 // catalogue). A screen with its own search (Explore) makes its own with
 // `createVenueListStore()`, as iOS gives Explore its own view model, so a
 // search there never changes Home; both read the same browse session.
+//
+// SIGN-OUT. Prices in a list are resolved for the member who asked
+// (`resolvedSurchargePrice`: a member or pass price), so a list must not
+// outlive them. iOS drops it with the signed-in view that owns it; here a
+// store outlives its screen, so it is reset by a sign-out cleaner:
+//   - the shared `venuesStore`: `resetVenuesStore`, registered by the app's
+//     registry (src/app/registrations.ts, F3; F6 contract request, not wired
+//     until F3 merges);
+//   - a list a screen makes for itself (Explore): that screen's package
+//     registers its own `reset()` in its `src/features/<area>/register.ts`.
 import { useMemo } from 'react';
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
@@ -41,14 +51,15 @@ export interface VenueListState {
    * screen; a load that works clears it.
    */
   readonly error: string | null;
-  /** The filters of the last load that landed. */
+  /** The filters of the last load that landed, as sent (`normaliseQuery`). */
   readonly query: VenueQuery;
   /** The browse session this list is ordered by. */
   readonly session: BrowseSessionStore;
 
   /**
-   * Fetches `GET /venues` with `query` (none = the catalogue). Only the
-   * latest load lands: an older answer arriving late is dropped.
+   * Fetches `GET /venues` with `query` (none, or a search of only spaces, =
+   * the catalogue). Only the latest load lands: an older answer arriving
+   * late is dropped.
    */
   load(query?: VenueQuery): Promise<void>;
   /** The loaded venues in the browse order (see the file comment). */
@@ -64,9 +75,20 @@ export interface VenueListOptions {
 
 export type VenueListStore = StoreApi<VenueListState>;
 
+/**
+ * The query as it is sent: the search trimmed, and a search of nothing but
+ * spaces left out, so it is no search at all (iOS MapViewModel.loadVenues:
+ * trimmed, and empty means no `q` and the catalogue is refreshed).
+ */
+export function normaliseQuery(query: VenueQuery): VenueQuery {
+  const { search, ...rest } = query;
+  const trimmed = search?.trim();
+  return trimmed ? { ...rest, search: trimmed } : rest;
+}
+
 /** True when a query narrows the list (a search, a category or a city). */
 export function isFilteredQuery(query: VenueQuery): boolean {
-  return !!query.search || !!query.category || !!query.city;
+  return !!query.search?.trim() || !!query.category || !!query.city;
 }
 
 export function createVenueListStore(options: VenueListOptions = {}): VenueListStore {
@@ -84,7 +106,8 @@ export function createVenueListStore(options: VenueListOptions = {}): VenueListS
     query: {},
     session,
 
-    async load(query = {}) {
+    async load(asked = {}) {
+      const query = normaliseQuery(asked);
       const mine = ++latest;
       set({ isLoading: true });
       try {
@@ -133,7 +156,11 @@ export function createVenueListStore(options: VenueListOptions = {}): VenueListS
 /** The app's shared venue list. */
 export const venuesStore: VenueListStore = createVenueListStore();
 
-/** Sign-out cleaner: venue prices are resolved for the member who asked. */
+/**
+ * Sign-out cleaner for the shared list: venue prices are resolved for the
+ * member who asked. To be registered as 'venues.list' in
+ * src/app/registrations.ts (see the file comment).
+ */
 export function resetVenuesStore(): void {
   venuesStore.getState().reset();
 }

@@ -12,7 +12,14 @@ import { setCurrentLanguage } from '../../i18n';
 import { browseOrder, browseOrderWithin } from '../../lib/browseOrder';
 import type { Venue } from '../../types/venue';
 import { createBrowseSession } from '../browseSession';
-import { createVenueListStore, isFilteredQuery, useOrderedVenues, venuesStore, resetVenuesStore } from '../venuesStore';
+import {
+  createVenueListStore,
+  isFilteredQuery,
+  normaliseQuery,
+  resetVenuesStore,
+  useOrderedVenues,
+  venuesStore,
+} from '../venuesStore';
 
 stubApiClientPerTest();
 
@@ -93,9 +100,34 @@ it('a search is ordered within the catalogue, which it never replaces', async ()
 it('a category or a city narrows the list as a search does', () => {
   expect(isFilteredQuery({})).toBe(false);
   expect(isFilteredQuery({ search: '' })).toBe(false);
+  expect(isFilteredQuery({ search: '   ' })).toBe(false);
   expect(isFilteredQuery({ search: 'x' })).toBe(true);
   expect(isFilteredQuery({ category: 'Gym' })).toBe(true);
   expect(isFilteredQuery({ city: 'Akureyri' })).toBe(true);
+});
+
+/** iOS MapViewModel.loadVenues: the search is trimmed, and nothing but spaces is no search. */
+it('a search of only spaces is no search: no q, and the catalogue is refreshed', async () => {
+  const list = createVenueListStore({ session: createBrowseSession({ seed: 1 }) });
+  api.on('GET', '/venues', page(catalog.slice(0, 2)));
+  await list.getState().load();
+  expect(list.getState().catalog).toHaveLength(2);
+
+  api.on('GET', '/venues', page(catalog));
+  await list.getState().load({ search: '  \n ' });
+  expect(api.sent('/venues').query).toEqual({ limit: '100' });
+  expect(list.getState().catalog).toHaveLength(catalog.length);
+  expect(list.getState().query).toEqual({});
+});
+
+it('a search is sent trimmed', async () => {
+  const list = createVenueListStore({ session: createBrowseSession({ seed: 1 }) });
+  api.on('GET', '/venues', page([catalog[2]]));
+  await list.getState().load({ search: '  sky ', city: 'Reykjavík' });
+  expect(api.sent('/venues').query).toEqual({ limit: '100', q: 'sky', city: 'Reykjavík' });
+  expect(list.getState().query).toEqual({ search: 'sky', city: 'Reykjavík' });
+  expect(list.getState().catalog).toEqual([]); // a real search never replaces the catalogue
+  expect(normaliseQuery({ search: null, category: 'Gym' })).toEqual({ category: 'Gym' });
 });
 
 /** Typing fast: an older answer arriving after a newer one never lands. */
