@@ -226,6 +226,24 @@ export function mayTakeTarget(goal: LivePlanGoal): boolean {
 /** Which read is the current one: an older answer is dropped rather than overwriting a newer day. */
 let loadGeneration = 0;
 
+/**
+ * How many wipes have run. A load takes it BEFORE its first await and gives
+ * up when it has moved: a wipe (a sign-out, a withdrawal, a minor) that runs
+ * while the cache is being read leaves `profileId` as it was and `today`
+ * null, so without this the load would put the wiped member's cached day
+ * back on screen after the wipe, and its own read (started on a generation
+ * taken after the wipe) would rewrite today.json for them. iOS has the same
+ * window (`load` sets `today` straight after `await readCache()`); the
+ * Android wipe closes it.
+ */
+let wipeEpoch = 0;
+
+/** Every read in flight, cache or network, is for data that is about to be gone. */
+function invalidateReads(): void {
+  loadGeneration += 1;
+  wipeEpoch += 1;
+}
+
 function initialState(): HealthStoreState {
   return {
     today: null,
@@ -331,12 +349,19 @@ export const useHealthStore = create<HealthStore>()((set, get) => {
       const isToday = wanted === todayKey;
       set({ profileId: profile?.id ?? null });
       const profileId = profile?.id ?? null;
+      const epoch = wipeEpoch;
 
       if (isToday && get().today === null && profileId) {
         const cached = await readCache(profileId);
+        // Read BEFORE the check below, so no await sits between the check
+        // and the write.
+        const at = cached ? await localStore.modifiedAt('today', profileId) : null;
+        // A wipe ran while the disk was read: what was read is gone, and so
+        // is the member this load was for. No cache, and no network read.
+        if (epoch !== wipeEpoch) return;
         if (cached && get().today === null && get().profileId === profileId) {
           useAppStore.getState().noteServerFeatures(cached.features);
-          set({ today: cached, isShowingCache: true, cachedAt: await localStore.modifiedAt('today', profileId) });
+          set({ today: cached, isShowingCache: true, cachedAt: at });
         }
       }
 
@@ -504,7 +529,7 @@ export const useHealthStore = create<HealthStore>()((set, get) => {
       const id = explicitId ?? get().profileId;
       if (!id) return;
       // A read still in flight is for data that is about to be gone.
-      loadGeneration += 1;
+      invalidateReads();
       const work = Promise.all([
         cancelBackgroundTask(),
         removeAllHealthNotifications(),
@@ -552,7 +577,10 @@ export const selectHasLiveProgram = (s: HealthStoreState): boolean => isLiveStat
  * feedback's member and the background task still go (iOS `handleSignOut`).
  */
 export async function wipeWithoutMember(): Promise<void> {
-  await Promise.all([
+  // A read in flight is for the member who left, whoever that was. Memory
+  // goes at once, as in `wipeLocal`, not after the awaits below.
+  invalidateReads();
+  const work = Promise.all([
     removeAllHealthNotifications(),
     removeKeys([FeedbackKeys.lastProfileId]),
     cancelBackgroundTask(),
@@ -566,6 +594,7 @@ export async function wipeWithoutMember(): Promise<void> {
     cachedAt: null,
     lastError: null,
   });
+  await work;
   await runHealthWipeHooks({ profileId: null, reason: 'signout' });
 }
 
@@ -576,6 +605,6 @@ export async function memberForSignOutWipe(memberId: string | null): Promise<str
 
 /** Tests: back to a fresh launch (nothing stored is touched). */
 export function resetHealthStoreForTests(): void {
-  loadGeneration += 1;
+  invalidateReads();
   useHealthStore.setState(initialState());
 }

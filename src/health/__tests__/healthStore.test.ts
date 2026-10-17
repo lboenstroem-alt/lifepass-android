@@ -26,6 +26,7 @@ import {
   MAX_REMEMBERED_DAYS,
   resetHealthStoreForTests,
   useHealthStore,
+  wipeWithoutMember,
 } from '../store';
 import { registerHealthWipeHook, type HealthWipeContext } from '../wipe';
 
@@ -383,6 +384,57 @@ describe('the local wipe', () => {
     await localStore.settled();
     expect(store().today).toBeNull();
     expect(fileSystemState.files()).toEqual([]);
+  });
+
+  it('a wipe while the cache is being read: the wiped day never comes back, and nothing is read for them', async () => {
+    signedIn();
+    fileSystemState.seed(`health/${MEMBER}/today.json`, JSON.stringify(dayJSON()));
+    let reads = 0;
+    api.on('GET', '/health', () => {
+      reads += 1;
+      return Reply.ok(dayJSON());
+    });
+    // The load is waiting on the disk when the sign-out's wipe starts.
+    const loading = store().load({ force: true });
+    const wiping = store().wipeLocal({ profileId: MEMBER, reason: 'signout' });
+    await Promise.all([loading, wiping]);
+    await localStore.settled();
+    expect(store().today).toBeNull();
+    expect(store().isShowingCache).toBe(false);
+    expect(reads).toBe(0);
+    expect(fileSystemState.files()).toEqual([]);
+  });
+
+  it('a wipe between reading the cache and its date: the cached day stays gone', async () => {
+    signedIn();
+    fileSystemState.seed(`health/${MEMBER}/today.json`, JSON.stringify(dayJSON()));
+    api.on('GET', '/health', Reply.ok(dayJSON()));
+    const modifiedAt = jest.spyOn(localStore, 'modifiedAt').mockImplementationOnce(async () => {
+      await store().wipeLocal({ profileId: MEMBER, reason: 'withdrawn_elsewhere' });
+      return new Date();
+    });
+    try {
+      await store().load({ force: true });
+      await localStore.settled();
+      expect(modifiedAt).toHaveBeenCalledTimes(1);
+      expect(store().today).toBeNull();
+      expect(store().cachedAt).toBeNull();
+      expect(fileSystemState.files()).toEqual([]);
+    } finally {
+      modifiedAt.mockRestore();
+    }
+  });
+
+  it('a sign-out that names nobody also drops a read in flight', async () => {
+    signedIn();
+    api.on('GET', '/health', Reply.delayed(30, Reply.ok(dayJSON())));
+    const loading = store().load({ force: true });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await wipeWithoutMember();
+    await loading;
+    await localStore.settled();
+    expect(store().today).toBeNull();
+    expect(store().loadState).toEqual({ kind: 'idle' });
   });
 
   it('with no member at all there is nothing to delete', async () => {
