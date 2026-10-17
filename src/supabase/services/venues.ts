@@ -1,15 +1,31 @@
+// LEGACY venue reads for the screens written before the parity build
+// (deleted by QA-1 once HOME-1, EXPL-1, VENUE-1, LIB-1, BOOK-1, COACH-1 and
+// CHECKIN-1 have moved to src/api/venues.ts and src/stores/venuesStore.ts).
+//
+// Every venue now comes through the API decoder (src/api/venues.ts) and is
+// reshaped into the old `LegacyVenue` here, so even the old screens get no
+// stock photo (an empty `imageUrl` instead) and no 0,0 position (null). The
+// retired credit fields are filled with placeholders the old screens still
+// read; the classification is derived from the bundle (premium = 'luxury').
+//
+// Activities still come from a direct Supabase table read until VENUE-1 and
+// BOOK-1 switch to the walk-in preview's `slotActivities`
+// (src/api/walkInPreview.ts).
 import { supabase } from '../lib/client';
 import { apiGet } from '../../api/client';
-import type { Venue as DbVenue, Activity as DbActivity, DayHours, OpeningHours as DbOpeningHours } from '../types/venue';
-import type { Venue, Activity, VenueReview, OpeningHours, OpeningHoursDay } from '../../types/venue';
-
-// Venue reads go through the LifePass API (GET /venues), same as
-// lifepass-ios VenueService.swift — the API returns resolved image URLs
-// and caller-resolved ISK pricing (inBundle / surchargePrice / …).
-// Reviews go through GET /venues/{id}/reviews. Activities still read the
-// (live) activities table directly — see fetchActivities.
-
-// ─── Storage ──────────────────────────────────────────────────────────────────
+import { fetchVenueBySlug as fetchApiVenueBySlug, fetchVenues as fetchApiVenues, VENUE_PAGE_LIMIT } from '../../api/venues';
+import type { Activity as DbActivity } from '../types/venue';
+import type {
+  DayHours,
+  LegacyActivity,
+  LegacyOpeningHours,
+  LegacyOpeningHoursDay,
+  LegacyVenue,
+  LegacyVenueReview,
+  OpeningHours,
+  Venue,
+} from '../../types/venue';
+import { WEEKDAYS } from '../../types/venue';
 
 // Public bucket holding venue/activity images; used for activity rows,
 // which still come straight from the DB with relative storage paths.
@@ -22,215 +38,95 @@ function storageUrl(path: string | null | undefined): string | undefined {
   return `${STORAGE_BASE}/${encoded}`;
 }
 
-// ─── API response shape (VenueSummary) ────────────────────────────────────────
-
-type ApiDayHours = { open?: string | null; close?: string | null; closed?: boolean | null };
-
-type ApiVenue = {
-  id: string;
-  slug: string;
-  name: string;
-  description?: string | null;
-  descriptionIs?: string | null;
-  address?: string | null;
-  city?: string | null;
-  coordinates?: { latitude?: number | null; longitude?: number | null } | null;
-  imageUrl?: string | null;
-  categories?: string[] | null;
-  category?: string | null; // singular primary category
-  amenities?: string[] | null;
-  phone?: string | null;
-  openingHours?: Partial<Record<keyof OpeningHours, ApiDayHours | null>> | null;
-  walkInsAllowed?: boolean | null;
-  averageRating?: number | null;
-  totalReviews?: number | null;
-  displayOrder?: number | null;
-  awaitingConnection?: boolean | null;
-  activitiesAwaitingConnection?: boolean | null;
-  inBundle?: boolean | null;
-  surchargePrice?: number | null;
-  resolvedSurchargePrice?: number | null;
-  topupPrice?: number | null;
-  daypassPrice?: number | null;
-};
-
-type VenuePage = {
-  data: ApiVenue[];
-  // pagination and facets are present but unused by the shelves today
-};
-
-// ─── Adapters ─────────────────────────────────────────────────────────────────
-
-function adaptDay(d: DayHours | ApiDayHours | null | undefined): OpeningHoursDay | undefined {
-  if (!d) return undefined;
-  return {
-    open: d.open ?? undefined,
-    close: d.close ?? undefined,
-    closed: d.closed ?? undefined,
-  };
+function legacyDay(day: DayHours | null): LegacyOpeningHoursDay | undefined {
+  if (!day) return undefined;
+  return { open: day.open ?? undefined, close: day.close ?? undefined, closed: day.closed ?? undefined };
 }
 
-function adaptOpeningHours(
-  hours: DbOpeningHours | ApiVenue['openingHours'] | null | undefined,
-): OpeningHours {
-  if (!hours) return {};
-  return {
-    monday: adaptDay(hours.monday),
-    tuesday: adaptDay(hours.tuesday),
-    wednesday: adaptDay(hours.wednesday),
-    thursday: adaptDay(hours.thursday),
-    friday: adaptDay(hours.friday),
-    saturday: adaptDay(hours.saturday),
-    sunday: adaptDay(hours.sunday),
-  };
+function legacyHours(hours: OpeningHours | null): LegacyOpeningHours {
+  const result: LegacyOpeningHours = {};
+  if (!hours) return result;
+  for (const day of WEEKDAYS) result[day] = legacyDay(hours[day]);
+  return result;
 }
 
-export function adaptApiVenue(api: ApiVenue): Venue {
-  const inBundle = api.inBundle ?? false;
+/** The API model in the old screens' shape (see the file comment). */
+export function toLegacyVenue(venue: Venue): LegacyVenue {
   return {
-    id: api.id,
-    slug: api.slug,
-    name: api.name,
-    description: api.description ?? '',
-    address: api.address ?? '',
-    city: api.city ?? '',
-    latitude: api.coordinates?.latitude ?? 0,
-    longitude: api.coordinates?.longitude ?? 0,
-    imageUrl: api.imageUrl ?? `https://picsum.photos/seed/${api.id}/800/520`,
-    // Premium (out-of-bundle) venues fill the old 'luxury' slot so the
-    // existing filters keep working.
-    classification: inBundle ? 'basic' : 'luxury',
-    category: api.categories ?? [],
-    primaryCategory: api.category ?? undefined,
-    // Credits are gone backend-side; kept as a placeholder until the
-    // booking flow migrates to the API. Venue UI shows ISK price labels.
+    id: venue.id,
+    slug: venue.slug,
+    name: venue.name,
+    description: venue.description ?? '',
+    address: venue.address ?? '',
+    city: venue.city ?? '',
+    latitude: venue.latitude,
+    longitude: venue.longitude,
+    imageUrl: venue.imageUrl ?? '',
+    classification: venue.inBundle ? 'basic' : 'luxury',
+    category: [...(venue.categories ?? [])],
+    primaryCategory: venue.primaryCategory ?? undefined,
     creditCost: 1,
-    walkInsAllowed: api.walkInsAllowed ?? false,
+    walkInsAllowed: venue.walkInsAllowed ?? false,
     walkInCreditCost: 1,
-    amenities: api.amenities ?? [],
-    openingHours: adaptOpeningHours(api.openingHours),
-    phone: api.phone ?? '',
-    averageRating: api.averageRating ?? 0,
-    totalReviews: api.totalReviews ?? 0,
-    activities: [],   // loaded separately via fetchActivities
-    reviews: [],      // loaded separately via fetchVenueReviews
-    specialInstructions: undefined,
-    inBundle,
-    surchargePrice: api.surchargePrice ?? undefined,
-    resolvedSurchargePrice: api.resolvedSurchargePrice ?? undefined,
-    topupPrice: api.topupPrice ?? undefined,
-    daypassPrice: api.daypassPrice ?? undefined,
-  };
-}
-
-// DB-row adapter — still used by the walk-in check-in flow, which looks
-// venues up by QR-code id directly in Supabase.
-export function adaptVenue(db: DbVenue): Venue {
-  const inBundle = db.in_bundle ?? true;
-  return {
-    id: db.id,
-    slug: db.slug ?? undefined,
-    name: db.name,
-    description: db.description ?? '',
-    address: db.address ?? '',
-    city: db.city ?? '',
-    latitude: db.latitude ?? 0,
-    longitude: db.longitude ?? 0,
-    imageUrl: venueImageUrl(db) ?? `https://picsum.photos/seed/${db.id}/800/520`,
-    classification: inBundle ? 'basic' : 'luxury',
-    category: db.categories ?? [],
-    primaryCategory: db.category ?? undefined,
-    creditCost: 1,
-    walkInsAllowed: db.walk_ins_allowed ?? false,
-    walkInCreditCost: 1,
-    amenities: db.amenities ?? [],
-    openingHours: adaptOpeningHours(db.opening_hours),
-    phone: db.phone ?? '',
-    averageRating: db.average_rating ?? 0,
-    totalReviews: db.total_reviews ?? 0,
+    amenities: [...(venue.amenities ?? [])],
+    openingHours: legacyHours(venue.openingHours),
+    phone: venue.phone ?? '',
+    averageRating: venue.averageRating ?? 0,
+    totalReviews: venue.totalReviews ?? 0,
     activities: [],
     reviews: [],
     specialInstructions: undefined,
-    inBundle,
-    surchargePrice: db.surcharge_price ?? undefined,
-    resolvedSurchargePrice: db.member_surcharge_price ?? undefined,
-    topupPrice: db.topup_price ?? undefined,
-    daypassPrice: db.daypass_price ?? undefined,
+    inBundle: venue.inBundle,
+    surchargePrice: venue.surchargePrice ?? undefined,
+    resolvedSurchargePrice: venue.resolvedSurchargePrice ?? undefined,
+    topupPrice: venue.topupPrice ?? undefined,
+    daypassPrice: venue.daypassPrice ?? undefined,
   };
 }
 
-function venueImageUrl(db: DbVenue): string | undefined {
-  const media = (db.venue_media ?? [])
-    .filter((m) => m.active !== false && m.storage_path)
-    .sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
-  return storageUrl(media[0]?.storage_path) ?? storageUrl(db.image_path);
-}
-
-export function adaptActivity(db: DbActivity): Activity {
+/** A DB activity row in the old shape; no photo is an empty `imageUrl`, never a stock photo. */
+export function adaptActivity(db: DbActivity): LegacyActivity {
   return {
     id: db.id,
     name: db.name,
-    imageUrl:
-      db.image_url ??
-      storageUrl(db.image_storage_path) ??
-      `https://picsum.photos/seed/${db.id}/200/200`,
-    creditCost: 1, // see adaptApiVenue — credit model moved behind the API
+    imageUrl: db.image_url ?? storageUrl(db.image_storage_path) ?? '',
+    creditCost: 1,
     durationMinutes: db.duration_minutes ?? 60,
     classification: 'basic',
   };
 }
 
-// ─── Service functions ────────────────────────────────────────────────────────
+/** @deprecated Use `fetchVenues` in src/api/venues.ts. */
+export async function fetchVenues(opts?: { search?: string; city?: string }): Promise<LegacyVenue[]> {
+  const venues = await fetchApiVenues({ search: opts?.search, city: opts?.city });
+  return venues.map(toLegacyVenue);
+}
 
-// The API caps pages at 100; LifePass has ~40 venues, so one page is the
-// whole catalogue (same assumption as the iOS shelves).
-const VENUE_PAGE_LIMIT = 100;
+/** @deprecated Use `fetchVenues({ category, limit })` in src/api/venues.ts. */
+export async function fetchVenuesFromAPI(category: string | null, limit = 20): Promise<LegacyVenue[]> {
+  const venues = await fetchApiVenues({ category, limit });
+  return venues.map(toLegacyVenue);
+}
 
-export async function fetchVenues(opts?: {
-  search?: string;
-  city?: string;
-}): Promise<Venue[]> {
-  const page = await apiGet<VenuePage>('/venues', {
-    limit: VENUE_PAGE_LIMIT,
-    q: opts?.search,
-    city: opts?.city,
-  });
-  return page.data.map(adaptApiVenue);
+/** @deprecated Use `fetchVenueBySlug` in src/api/venues.ts. */
+export async function fetchVenueBySlug(slug: string): Promise<LegacyVenue> {
+  return toLegacyVenue(await fetchApiVenueBySlug(slug));
 }
 
 /**
- * `GET /venues` filtered to one API category — used by the Coach venue
- * wizard's result cards (mirrors iOS VenueService.fetchVenuesFromAPI).
- * The API matches the category case-insensitively against each venue's
- * `categories` array.
+ * @deprecated The API has no get-by-id; the venue page is reached by slug.
+ * Kept for the old screens that still navigate by id: one page holds the
+ * whole catalogue.
  */
-export async function fetchVenuesFromAPI(
-  category: string | null,
-  limit = 20,
-): Promise<Venue[]> {
-  const page = await apiGet<VenuePage>('/venues', {
-    limit,
-    category: category ?? undefined,
-  });
-  return page.data.map(adaptApiVenue);
-}
-
-export async function fetchVenueBySlug(slug: string): Promise<Venue> {
-  const venue = await apiGet<ApiVenue>(`/venues/by-slug/${encodeURIComponent(slug)}`);
-  return adaptApiVenue(venue);
-}
-
-export async function fetchVenueById(id: string): Promise<Venue> {
-  // The API has no get-by-id (detail is keyed by slug), but one page holds
-  // the whole catalogue — find the venue there so callers keep their id-based
-  // navigation.
-  const page = await apiGet<VenuePage>('/venues', { limit: VENUE_PAGE_LIMIT });
-  const match = page.data.find((v) => v.id === id);
+export async function fetchVenueById(id: string): Promise<LegacyVenue> {
+  const venues = await fetchApiVenues({ limit: VENUE_PAGE_LIMIT });
+  const match = venues.find((venue) => venue.id === id.toLowerCase());
   if (!match) throw new Error('Venue not found');
-  return adaptApiVenue(match);
+  return toLegacyVenue(match);
 }
 
-export async function fetchActivities(venueId: string): Promise<Activity[]> {
+/** @deprecated Activities come from the walk-in preview (src/api/walkInPreview.ts). */
+export async function fetchActivities(venueId: string): Promise<LegacyActivity[]> {
   const { data, error } = await supabase
     .from('activities')
     .select('*')
@@ -241,9 +137,8 @@ export async function fetchActivities(venueId: string): Promise<Activity[]> {
   return (data as DbActivity[]).map(adaptActivity);
 }
 
-// `GET /venues/{venueId}/reviews` — reviews + aggregate summary (mirrors iOS
-// VenueService.fetchVenueReviews). Maps the API `rows` into the app VenueReview
-// the detail view consumes. Reviews are keyed by venue UUID (not slug).
+// `GET /venues/{venueId}/reviews` (iOS VenueService.fetchVenueReviews); VENUE-2
+// replaces it with the reviews feature. Reviews are keyed by venue UUID.
 type ApiReviewsResponse = {
   rows: {
     id: string;
@@ -257,7 +152,8 @@ type ApiReviewsResponse = {
   ownReviewId?: string | null;
 };
 
-export async function fetchVenueReviews(venueId: string): Promise<VenueReview[]> {
+/** @deprecated VENUE-2 owns reviews. */
+export async function fetchVenueReviews(venueId: string): Promise<LegacyVenueReview[]> {
   const resp = await apiGet<ApiReviewsResponse>(`/venues/${venueId}/reviews`);
   return resp.rows.map((r) => ({
     id: r.id,

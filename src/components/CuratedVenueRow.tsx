@@ -2,7 +2,7 @@ import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme';
 import BookItPill from './BookItPill';
-import type { Venue } from '../types/venue';
+import type { LegacyVenue as Venue } from '../types/venue';
 
 type Props = {
   venue: Venue;

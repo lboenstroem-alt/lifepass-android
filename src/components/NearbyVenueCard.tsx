@@ -2,7 +2,7 @@ import { View, Text, Image, StyleSheet } from 'react-native';
 import { colors } from '../theme';
 import BookItPill from './BookItPill';
 import { priceLabel, isPremium } from '../types/venue';
-import type { Venue } from '../types/venue';
+import type { LegacyVenue as Venue } from '../types/venue';
 
 type Props = {
   venue: Venue;

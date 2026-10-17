@@ -19,11 +19,11 @@ import { useFavouriteVenues } from '../../supabase/hooks/useFavourites';
 import Kicker from '../../components/Kicker';
 import { isPremium, isBoutique, priceLabel } from '../../types/venue';
 import type {
-  Venue,
-  Activity,
-  VenueReview,
-  OpeningHours,
-  OpeningHoursDay,
+  LegacyVenue as Venue,
+  LegacyActivity as Activity,
+  LegacyVenueReview as VenueReview,
+  LegacyOpeningHours as OpeningHours,
+  LegacyOpeningHoursDay as OpeningHoursDay,
 } from '../../types/venue';
 
 const HERO_HEIGHT = 420;

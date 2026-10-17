@@ -33,7 +33,7 @@ import { gateRefusalFor } from '../../api/gateRefusal';
 import PrimaryButton from '../../components/PrimaryButton';
 import Kicker from '../../components/Kicker';
 import { scheduleBookingReminders } from '../../services/notifications';
-import type { Activity, Venue } from '../../types/venue';
+import type { LegacyActivity as Activity, LegacyVenue as Venue } from '../../types/venue';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { HomeStackParamList } from '../../navigation/types';
 

@@ -22,8 +22,8 @@ import PricePill from '../../components/PricePill';
 import Kicker from '../../components/Kicker';
 import EmptyState from '../../components/EmptyState';
 import type { Booking } from '../../types/booking';
-import type { Venue } from '../../types/venue';
-import type { Activity } from '../../types/venue';
+import type { LegacyVenue as Venue } from '../../types/venue';
+import type { LegacyActivity as Activity } from '../../types/venue';
 import type { BookingsStackParamList } from '../../navigation/types';
 
 type TopTab = 'bookings' | 'saved';

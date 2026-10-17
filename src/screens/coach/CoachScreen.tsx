@@ -52,7 +52,7 @@ import {
 import { coachCategories } from '../../data/coachCategories';
 import { deriveCoachHeading } from '../../utils/activityHeading';
 import { fetchVenuesFromAPI } from '../../supabase/services/venues';
-import type { Venue } from '../../types/venue';
+import type { LegacyVenue as Venue } from '../../types/venue';
 import type { SuggestionChip } from '../../data/mockCoach';
 import ChatDrawer from './ChatDrawer';
 import SuggestionChips from './SuggestionChips';
@@ -302,7 +302,7 @@ export default function CoachScreen() {
           .filter((v) => v.latitude && v.longitude)
           .map((v) => ({
             venue: v,
-            meters: haversineMeters(origin.latitude, origin.longitude, v.latitude, v.longitude),
+            meters: haversineMeters(origin.latitude, origin.longitude, v.latitude as number, v.longitude as number),
           }))
           .sort((a, b) => a.meters - b.meters);
         const within = ranked.filter((r) => r.meters <= NEARBY_RADIUS_METERS).map((r) => r.venue);
