@@ -22,6 +22,14 @@
 //
 // While `loading` the label gives way to a spinner and the button refuses
 // presses; TalkBack still hears the label, with the busy state.
+//
+// SPOKEN NAME. `accessibilityLabel` replaces the visible title for TalkBack
+// where iOS gives the button a fuller name than it prints: the class sheet's
+// Confirm is read as "Confirm booking: {name}, {when}" plus the price line
+// (ClassBookingSheet.confirmButton, classsheet.confirm_a11y), so a member who
+// reaches Confirm by touch exploration hears what it charges BEFORE activating
+// it. Never move that into `accessibilityHint`: TalkBack reads hints after a
+// pause, and members can turn hints off.
 import { Ionicons } from '@expo/vector-icons';
 import { ActivityIndicator, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
@@ -41,6 +49,8 @@ export type PrimaryButtonProps = {
   disabled?: boolean;
   tone?: PrimaryButtonTone;
   shape?: PrimaryButtonShape;
+  /** What TalkBack reads instead of `title` (iOS `.accessibilityLabel`); default: the title. */
+  accessibilityLabel?: string;
   accessibilityHint?: string;
   style?: StyleProp<ViewStyle>;
   testID?: string;
@@ -64,6 +74,7 @@ export default function PrimaryButton({
   disabled = false,
   tone = 'accent',
   shape = 'primary',
+  accessibilityLabel,
   accessibilityHint,
   style,
   testID,
@@ -80,7 +91,7 @@ export default function PrimaryButton({
       onPress={onPress}
       disabled={inactive}
       accessibilityRole="button"
-      accessibilityLabel={title}
+      accessibilityLabel={accessibilityLabel ?? title}
       accessibilityHint={accessibilityHint}
       accessibilityState={{ disabled: inactive, busy: loading }}
       style={({ pressed }) => [
