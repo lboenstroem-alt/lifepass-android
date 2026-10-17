@@ -77,7 +77,6 @@ describe('the build flag (EXPO_PUBLIC_SOCIAL_SIGN_IN, iOS LPSocialSignIn)', () =
   });
 
   it('is set for every EAS profile, so production builds offer the buttons (D1)', () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const eas = require('../../../../eas.json') as {
       build: Record<string, { extends?: string; env?: Record<string, string> }>;
     };
