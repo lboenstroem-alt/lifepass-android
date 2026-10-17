@@ -2,6 +2,10 @@
 // (LifePassTheme.swift). In-bundle venues read "Included" (or "Limited visits"
 // for a boutique) in moss; premium venues read "from ISK X" (or "See venue")
 // in the signal accent. The words follow the language on screen.
+//
+// No line limit and no cap on font scaling, as iOS sets neither: at a large
+// text size the price wraps inside the pill rather than being cut short, so
+// the member always reads the whole figure they would pay.
 import { StyleSheet, View } from 'react-native';
 
 import LPText from './ui/LPText';
@@ -28,7 +32,7 @@ export default function PricePill({ venue, compact = false, testID }: Props) {
         { backgroundColor: `${tint}1A`, borderColor: `${tint}33` },
       ]}
     >
-      <LPText size={compact ? 11 : 12} weight="semibold" color={tint} numberOfLines={1}>
+      <LPText size={compact ? 11 : 12} weight="semibold" color={tint}>
         {priceLabel(venue, t)}
       </LPText>
     </View>

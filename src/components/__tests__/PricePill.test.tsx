@@ -44,3 +44,15 @@ it('a premium venue with no figure points to the venue', async () => {
   await render(<PricePill venue={{ inBundle: false }} />);
   expect(screen.getByText('Sjá stað')).toBeOnTheScreen();
 });
+
+/**
+ * At a large font scale the price wraps inside the pill, as iOS's Text does
+ * (no line limit): it is never cut to "from ISK 12,9…".
+ */
+it('the whole price is shown at any text size: no line limit, no scale cap', async () => {
+  await render(<PricePill venue={{ inBundle: false, surchargePrice: 12990 }} compact />);
+  const label = screen.getByText('from ISK 12,990');
+  expect(label.props.numberOfLines).toBeUndefined();
+  expect(label.props.maxFontSizeMultiplier).toBeUndefined();
+  expect(label.props.adjustsFontSizeToFit).toBeFalsy();
+});
