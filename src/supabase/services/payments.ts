@@ -12,7 +12,11 @@
  * verified like iOS's Done instead of being read as a cancel; a plan or pass
  * checkout is saved before its page opens and recovered after process death;
  * a pass is confirmed from the profile (the status endpoint can never
- * confirm one).
+ * confirm one). A purchase nothing could confirm is said in iOS's words
+ * ("Payment issue", naming the support address, or the status check's
+ * refusal) and returned as `canceled`, so the old screen adds nothing: it
+ * never tells a member who may have paid nothing that their payment is
+ * processing.
  */
 import { activePasses } from '../../api/profile';
 import { isSubscriptionActive } from '../../api/subscriptions';
@@ -22,8 +26,10 @@ import {
   createCheckout as createCheckoutSession,
   pollPaymentStatus as pollStatus,
 } from '../../api/planCheckout';
-import { checkoutOnHostedPage } from '../../payments/attempts';
+import { checkCheckoutAgain, checkoutOnHostedPage, type CheckoutResult } from '../../payments/attempts';
 import { openHostedPage } from '../../payments/hostedPage';
+import type { PlanAttemptContext } from '../../payments/inflight';
+import { presentPlanOutcome } from '../../payments/presenters';
 import { PAYMENT_CANCEL_URL, PAYMENT_SUCCESS_URL } from '../../payments/returnUrls';
 import { useAppStore } from '../../stores/appStore';
 
@@ -66,7 +72,8 @@ export async function pollPaymentStatus(plan?: string, maxAttempts = 12): Promis
 
 /**
  * Creates the checkout, opens it and verifies the purchase on return
- * (src/payments `checkoutOnHostedPage`).
+ * (src/payments `checkoutOnHostedPage`). An earlier checkout of the same plan
+ * or pass still unverified is verified first instead of a second page.
  */
 export async function startCheckout(
   productSlug: string,
@@ -76,27 +83,33 @@ export async function startCheckout(
   const { userId, profile, subscription } = useAppStore.getState();
   const memberId = userId ?? profile?.id;
   if (!memberId) return settleHostedCheckout(url, externalSessionId, productSlug);
-  const result = await checkoutOnHostedPage({
+  const plan: PlanAttemptContext = {
+    productSlug,
+    planName: null,
+    prePurchasePassIds: activePasses(profile).map((pass) => pass.id),
+    prePurchaseSubSlug: subscription && isSubscriptionActive(subscription) ? subscription.productSlug : null,
+  };
+  let result: CheckoutResult = await checkoutOnHostedPage({
     memberId,
     url,
     externalSessionId: externalSessionId ?? null,
-    plan: {
-      productSlug,
-      planName: null,
-      prePurchasePassIds: activePasses(profile).map((pass) => pass.id),
-      prePurchaseSubSlug: subscription && isSubscriptionActive(subscription) ? subscription.productSlug : null,
-    },
+    plan,
   });
+  if (result.kind === 'unresolved') result = await checkCheckoutAgain(result.attempt);
   if (result.kind !== 'verified') return 'canceled';
   switch (result.verification.kind) {
     case 'confirmed':
-      return 'fulfilled';
+      // Confirmed a moment ago by the recovery, which welcomed the member already.
+      return result.presented ? 'canceled' : 'fulfilled';
     case 'cancelled':
     case 'unverified':
       return 'canceled';
     case 'timeout':
     case 'failed':
-      return 'pending';
+      // iOS PlansView's "Payment issue" (the support address, or the
+      // refusal), never "processing": the member may not have paid at all.
+      if (!result.presented) presentPlanOutcome(plan, result.verification);
+      return 'canceled';
   }
 }
 
