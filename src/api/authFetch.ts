@@ -25,7 +25,10 @@
  *    "network error" for a token read, the original 401 after a refresh.
  *    A call that STARTS while those retries are known to be failing
  *    (`knownRefreshTrouble`) fails at once too, instead of queueing on the
- *    lock for the SDK's next attempt.
+ *    lock for the SDK's next attempt, as long as that failure still holds:
+ *    the client counts an unreachable auth server only while a fresh NetInfo
+ *    read says the phone is still offline, because the network coming back
+ *    is just when the next attempt will be answered.
  *
  * 3. Every request to the auth server has a ceiling (60 s, the URLSession
  *    default supabase-swift rides). React Native's fetch has none, and a
@@ -67,9 +70,11 @@ let refreshesInFlight = 0;
  * by every failed attempt; cleared by a refresh (or any token grant) that
  * answers, and by the SDK having stopped: no attempt out and none failed for
  * `REFRESH_RETRY_GAP_MS`. While it is set, a session read would only queue
- * behind the SDK's lock for an attempt that will fail like the last one, so
- * the API client fails the call at once, as iOS fails each call at the first
- * failure.
+ * behind the SDK's lock for an attempt that will likely fail like the last
+ * one, so the API client fails the call at once, as iOS fails each call at
+ * the first failure. It is a record of the last attempt, not of the network
+ * now: the client checks that an `unreachable` one still holds (the phone
+ * still offline) before it fails a call on it.
  */
 export function knownRefreshTrouble(now: number = Date.now()): RefreshTrouble | null {
   if (!latest) return null;
