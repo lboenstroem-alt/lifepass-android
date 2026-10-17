@@ -602,9 +602,18 @@ export function replacingHealth(profile: Profile, block: ProfileHealthBlock | nu
 // ---------------------------------------------------------------------------
 // Derived reads
 
-/** The member's active passes, in the order the door redeems them; empty when none. */
+/**
+ * "No passes", one shared value. `activePasses` is read through
+ * `useAppStore(selectActivePasses)`, and React's useSyncExternalStore needs
+ * the same answer for the same state: a fresh `[]` per read (no profile yet,
+ * no usage block) is a new snapshot every time, and React loops until it
+ * aborts the screen.
+ */
+const NO_PASSES: readonly ActivePass[] = Object.freeze([]);
+
+/** The member's active passes, in the order the door redeems them; empty when none (always the same empty value). */
 export function activePasses(profile: Profile | null | undefined): readonly ActivePass[] {
-  return profile?.usage?.passes ?? [];
+  return profile?.usage?.passes ?? NO_PASSES;
 }
 
 // ---------------------------------------------------------------------------
