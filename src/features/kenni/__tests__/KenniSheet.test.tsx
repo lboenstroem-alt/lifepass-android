@@ -313,3 +313,20 @@ describe('every failure sentence, in English and Icelandic', () => {
 function KenniReopen({ onPress }: { onPress: () => void }) {
   return <Pressable testID="reopen" onPress={onPress} />;
 }
+
+it('a completion that lands after Cancel still re-reads the profile, and says nothing to a closed sheet', async () => {
+  signIn();
+  answer();
+  api.on('GET', '/profile', Reply.ok({ id: MEMBER, locale: 'en', kennitalaVerified: true, marketingConsent: false }));
+  let release: (url: string) => void = () => undefined;
+  const closed = jest.fn<void, [KenniSheetOutcome]>();
+  await render(<Harness onClosed={closed} authenticate={() => new Promise<string>((resolve) => (release = resolve))} />);
+  await fireEvent.press(verifyButton());
+  await waitFor(() => expect(verifyButton()).toBeDisabled());
+  await fireEvent.press(screen.getByRole('button', { name: en('common.cancel') }));
+  await waitFor(() => expect(closed).toHaveBeenCalledWith({ verified: false }));
+
+  await act(async () => release(GOOD_CALLBACK));
+  await waitFor(() => expect(useAppStore.getState().profile?.kennitalaVerified).toBe(true));
+  expect(announced).not.toHaveBeenCalledWith(en('kenni.verified'));
+});

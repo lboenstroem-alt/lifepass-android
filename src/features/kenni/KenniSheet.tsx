@@ -137,13 +137,19 @@ function KenniPresentation({
   }, [visible, resumeUrl, model]);
 
   // TalkBack hears how the round trip ended as soon as it does (iOS posts an
-  // announcement for the failure). Every ending is a new state object.
+  // announcement for the failure; "Identity verified!" is said too, since
+  // focus is lost coming back from the tab). Every ending is a new state
+  // object. Nothing is said for a sheet the member has already closed (a
+  // completion can land after Cancel).
   const tRef = useRef(t);
   tRef.current = t;
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const announced = useRef<KenniModelState | null>(null);
   useEffect(() => {
     if (announced.current === state) return;
     announced.current = state;
+    if (!visibleRef.current) return;
     if (state.failure) announce(tRef.current(failureMessageKey(state.failure)));
     else if (state.phase === 'verified') announce(tRef.current('kenni.verified'));
   }, [state]);
