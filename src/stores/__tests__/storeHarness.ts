@@ -67,8 +67,14 @@ export async function storeSession(userId: string, expiresInSeconds = 3600): Pro
   await secureSessionStorage.setItem(SUPABASE_STORAGE_KEY, JSON.stringify(sessionJSON(userId, expiresInSeconds)));
 }
 
+/**
+ * What NetInfo answers, cached and on a fresh read: src/api/connectivity
+ * confirms a cached "disconnected" with NetInfo.refresh() (the library mock's
+ * default is connected).
+ */
 export function netInfo(state: { isConnected: boolean | null; isInternetReachable: boolean | null }): void {
   jest.mocked(NetInfo.fetch).mockResolvedValue({ type: 'wifi', details: null, ...state } as never);
+  jest.mocked(NetInfo.refresh).mockResolvedValue({ type: 'wifi', details: null, ...state } as never);
 }
 
 const restores: (() => void)[] = [];
