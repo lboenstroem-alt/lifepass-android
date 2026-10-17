@@ -14,6 +14,7 @@
  */
 import { t } from '../i18n';
 
+import { ProblemError } from './errors';
 import { specificRefusal, type RefusalContext, type RefusalCta } from './refusals';
 
 export type GateRefusal = {
@@ -26,10 +27,27 @@ export type GateRefusal = {
 };
 
 /**
+ * The gate refusal for a thrown error: the problem's slug, `reason` and
+ * body status, as iOS calls `gateRefusal(forCode: p.slug, reason: p.reason,
+ * status: p.status ?? 0)`. Null for anything that is not a problem (offline,
+ * a timeout, a gateway page). Pass `checkIn` at the scanner.
+ *
+ * Prefer this to `gateRefusalFor(e.code)`: the code alone drops the reason
+ * (`slot_unavailable` with `class_full` would read as "no longer
+ * available") and the status, and leaves the booking context in place at a
+ * door (`daily_use_cap_reached` would read as the booking sentence under
+ * "Booking error").
+ */
+export function gateRefusalForError(error: unknown, context: RefusalContext = 'general'): GateRefusal | null {
+  if (!(error instanceof ProblemError)) return null;
+  return gateRefusalFor(error.slug, error.details.reason ?? null, error.details.status ?? 0, context);
+}
+
+/**
  * `context` is where the member is: `checkIn` at the scanner, where the
  * table's check-in rows ("it resets at midnight") and the scanner's alert
  * title (iOS CheckInView: `common.error_title`) apply instead of the
- * booking ones.
+ * booking ones. A caller holding the error should use `gateRefusalForError`.
  */
 export function gateRefusalFor(
   code: string | undefined,

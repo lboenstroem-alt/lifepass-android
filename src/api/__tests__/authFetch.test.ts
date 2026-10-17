@@ -8,7 +8,10 @@ import {
   createAuthFetch,
   isAuthServerUrl,
   isRefreshTokenUrl,
+  knownRefreshTrouble,
   onRefreshTrouble,
+  REFRESH_RETRY_GAP_MS,
+  resetRefreshTrouble,
   type RefreshTrouble,
 } from '../authFetch';
 
@@ -20,6 +23,8 @@ function answering(status: number, body: unknown = { code: status, msg: 'x' }) {
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }),
   );
 }
+
+afterEach(() => resetRefreshTrouble());
 
 function recordTrouble() {
   const seen: RefreshTrouble[] = [];
@@ -139,5 +144,58 @@ describe('the ceiling on auth requests', () => {
     });
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('the refresh known to be failing', () => {
+  it('is the last failed attempt, until a refresh answers', async () => {
+    expect(knownRefreshTrouble()).toBeNull();
+    await createAuthFetch({ fetch: answering(500) })(REFRESH, { method: 'POST' });
+    expect(knownRefreshTrouble()).toBe('failing');
+    await createAuthFetch({
+      fetch: jest.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+    })(REFRESH, { method: 'POST' }).catch(() => undefined);
+    expect(knownRefreshTrouble()).toBe('unreachable');
+    await createAuthFetch({ fetch: answering(200) })(REFRESH, { method: 'POST' });
+    expect(knownRefreshTrouble()).toBeNull();
+  });
+
+  it("ends with the auth server's refusal (the SDK stops retrying) or any session it issues", async () => {
+    await createAuthFetch({ fetch: answering(503) })(REFRESH, { method: 'POST' });
+    await createAuthFetch({ fetch: answering(400) })(REFRESH, { method: 'POST' });
+    expect(knownRefreshTrouble()).toBeNull();
+
+    await createAuthFetch({ fetch: answering(429) })(REFRESH, { method: 'POST' });
+    // A failed sign-in says nothing about the refresh; a session issued does.
+    await createAuthFetch({ fetch: answering(400) })(`${BASE}/auth/v1/token?grant_type=password`, { method: 'POST' });
+    expect(knownRefreshTrouble()).toBe('failing');
+    await createAuthFetch({ fetch: answering(200) })(`${BASE}/auth/v1/token?grant_type=password`, { method: 'POST' });
+    expect(knownRefreshTrouble()).toBeNull();
+  });
+
+  it('lapses once the SDK has stopped retrying, but not while an attempt is out', async () => {
+    const started = Date.now();
+    await createAuthFetch({ fetch: answering(500) })(REFRESH, { method: 'POST' });
+    expect(knownRefreshTrouble(started + REFRESH_RETRY_GAP_MS - 1_000)).toBe('failing');
+
+    // The next attempt is on the way (it may hang up to its own ceiling).
+    let answer: (response: Response) => void = () => undefined;
+    const pending = createAuthFetch({
+      fetch: jest.fn(() => new Promise<Response>((resolve) => (answer = resolve))),
+    })(REFRESH, { method: 'POST' });
+    expect(knownRefreshTrouble(started + REFRESH_RETRY_GAP_MS + 60_000)).toBe('failing');
+    answer(new Response('{}', { status: 502 }));
+    await pending;
+
+    // No attempt out and none failed for the gap: the SDK has given up.
+    expect(knownRefreshTrouble(Date.now() + REFRESH_RETRY_GAP_MS)).toBeNull();
+    expect(knownRefreshTrouble()).toBeNull();
+  });
+
+  it('is longer than the longest wait between two of the SDK\'s attempts (12.8 s)', () => {
+    expect(REFRESH_RETRY_GAP_MS).toBeGreaterThan(12_800);
+    expect(REFRESH_RETRY_GAP_MS).toBeLessThan(30_000);
   });
 });
