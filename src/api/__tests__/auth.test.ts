@@ -35,6 +35,7 @@ import { supabase } from '../../supabase/lib/client';
 import { createAuthFetch, knownRefreshTrouble, resetRefreshTrouble, type RefreshTrouble } from '../authFetch';
 import {
   createApiClient,
+  createApiClient as createApiClientWith,
   RefreshRefusedError,
   refreshRefused,
   supabaseAccessToken,
@@ -539,6 +540,21 @@ function refreshEndpoint(failure: () => StubReply, freshToken: string) {
 describe('through Supabase', () => {
   const firstToken = jwt(3600);
   const freshToken = jwt(7200);
+  // The SDK on its own, built the way the first Android build built the
+  // app's client (plain fetch, no ./authFetch): what the API client must cope
+  // with by itself. The app's client fetches through ./authFetch since F3,
+  // which fails a waiting call at the first failed refresh; the next block
+  // covers that.
+  const supabase = createClient(TEST_SUPABASE_URL, TEST_SUPABASE_ANON_KEY, {
+    auth: {
+      storage: AsyncStorage,
+      storageKey: 'sb-plain-sdk-test-auth-token',
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+    },
+  });
+  const createApiClient = () => createApiClientWith(supabaseSessionDeps(supabase));
 
   it('sends the live session token and refreshes it after a 401', async () => {
     await signIn(supabase, firstToken);

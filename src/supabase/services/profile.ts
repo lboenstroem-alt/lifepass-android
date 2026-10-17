@@ -1,53 +1,23 @@
-// Profile reads from the LifePass v1 API — mirrors lifepass-ios
-// Services/API + Models/Profile.swift. Today this only pulls the member's
-// `recentCheckIn` (the staff proof); identity still comes from Supabase auth.
-import { apiGet } from '../../api/client';
-import type { RecentCheckIn } from '../types/profile';
-
-type ApiProfile = { recentCheckIn?: unknown };
+/**
+ * The first Android build's profile read, kept for `useRecentCheckIn`
+ * (CHECKIN-1) until it reads the app store directly. `GET /profile` is now
+ * read and decoded once, by the app store (src/stores/appStore.ts with the
+ * fail-soft decoder in src/api/profile.ts), so the check-in banner, the
+ * member card and the language all come from the same read.
+ */
+import { useAppStore } from '../../stores/appStore';
+import { toLegacyRecentCheckIn, type RecentCheckIn } from '../types/profile';
 
 /**
- * `GET /profile` → the member's recent check-in (staff proof), or null.
+ * Re-reads the profile (as iOS Home's `.task { await appState.loadProfile() }`
+ * does) and answers its recent check-in (the staff proof), or null.
  *
- * FAIL-SOFT, mirroring iOS `FailSoft<RecentCheckIn>`: a malformed value — an
- * unparseable `checkedInAt`, a renamed venue field — is DISCARDED, never thrown.
- * A nice-to-have banner must never be able to break the app, and this keeps it
- * safe to ship before the API half (monorepo #128) sends the field: no field,
- * no banner, no crash.
+ * FAIL-SOFT: a malformed check-in block is discarded by the decoder, never
+ * thrown, and a failed read keeps the profile the app had, so a banner that
+ * was showing stays until a read says otherwise.
  */
 export async function fetchRecentCheckIn(): Promise<RecentCheckIn | null> {
-  try {
-    const profile = await apiGet<ApiProfile>('/profile');
-    return adaptRecentCheckIn(profile?.recentCheckIn);
-  } catch {
-    // A failed /profile read must not surface — just no banner.
-    return null;
-  }
-}
-
-function adaptRecentCheckIn(raw: unknown): RecentCheckIn | null {
-  try {
-    if (!raw || typeof raw !== 'object') return null;
-    const r = raw as Record<string, any>;
-    if (typeof r.checkInId !== 'string' || typeof r.checkedInAt !== 'string') return null;
-    if (!r.venue || typeof r.venue.id !== 'string' || typeof r.venue.name !== 'string') return null;
-
-    const checkedInAt = new Date(r.checkedInAt);
-    if (Number.isNaN(checkedInAt.getTime())) return null; // unparseable timestamp → discard
-
-    const activity =
-      r.activity && typeof r.activity.id === 'string' && typeof r.activity.name === 'string'
-        ? { id: r.activity.id, name: r.activity.name }
-        : null;
-
-    return {
-      checkInId: r.checkInId,
-      checkedInAt,
-      memberName: typeof r.memberName === 'string' ? r.memberName : null,
-      venue: { id: r.venue.id, name: r.venue.name },
-      activity,
-    };
-  } catch {
-    return null; // any parse issue → discard (fail-soft)
-  }
+  const store = useAppStore.getState();
+  if (store.isAuthenticated) await store.loadProfile();
+  return toLegacyRecentCheckIn(useAppStore.getState().profile?.recentCheckIn ?? null);
 }
