@@ -9,6 +9,12 @@
  * `account_deletion`), then the profile is read again so every screen shows
  * the account as the server now has it.
  *
+ * THE COACH'S SAVED CHATS go through that same hook. iOS calls
+ * `CoachViewModel.forgetSavedSessions()` here by name; on Android the Coach
+ * owns its chats and forgets them from its own health-wipe hook when the
+ * reason is `account_deletion` (src/features/coach/register.ts, COACH-1),
+ * so this file never reaches into the Coach's storage.
+ *
  * WHY AFTER THE SHEET, NOT AT THE ANSWER. The wipe resets what screens show
  * and can take the presenting screen with it; run first, the member who
  * confirmed would land back with no erasure date, no obligation lines and no
