@@ -89,6 +89,22 @@ describe('a pass holder sees the pass, not "no membership" (iOS AccountPassRowTe
       'Skoða áskriftir, Adventurer-passi · 5 heimsóknir eftir · gildir til 7. des. 2026',
     );
   });
+
+  it('two passes lead with the one the next visit uses, never the sum over both', async () => {
+    const explorer = {
+      id: '1b8e3c1a-2d4f-4a6b-8c9d-0e1f2a3b4c5d',
+      type: 'explorer',
+      visitsLeft: 1,
+      expiresAt: '2027-01-31T12:00:00.000Z',
+    };
+    signedInAs(profileJSON({ usage: usageJSON({ passes: [explorer, ADVENTURER] }) }));
+    await renderAccount();
+    expect(text('account.memberCard.kicker')).toBe('EXPLORER PASS');
+    expect(text('account.memberCard.caps')).toBe('1 visit left');
+    expect(text('account.memberCard.footnote')).toBe('Valid until 31 Jan 2027');
+    expect(rowsOf('account.membership')[0]).toBe('View plans, Explorer pass · 1 visit left · valid until 31 Jan 2027');
+    expect(screen.queryByText('6 pass visits left')).toBeNull();
+  });
 });
 
 describe('the member card', () => {
