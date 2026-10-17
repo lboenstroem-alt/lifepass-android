@@ -6,6 +6,13 @@
 import { definePack } from './pack';
 
 export default definePack({
-  en: {},
-  is: {},
+  en: {
+    // A screen whose package has not landed yet, in DEVELOPMENT builds only
+    // (src/navigation/stubs.tsx). A release build shows nothing there, and
+    // REL-1 checks that no such screen ships.
+    'nav.stub.not_in_build': 'Not in this build yet',
+  },
+  is: {
+    'nav.stub.not_in_build': 'Ekki komið í þessa útgáfu',
+  },
 });
