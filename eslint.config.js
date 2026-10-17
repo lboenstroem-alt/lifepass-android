@@ -47,7 +47,6 @@ const SOURCE = ['**/*.{js,jsx,ts,tsx,mjs,cjs}'];
 /** Legacy files with English literals, each with its owner (plan 3.0.1). */
 const LEGACY_COPY_OWNERS = {
   'src/api/gateRefusal.ts': 'F2',
-  'src/components/AuthField.tsx': 'AUTH-1',
   'src/components/BookItPill.tsx': 'F5',
   'src/components/CheckInProofBanner.tsx': 'CHECKIN-1',
   'src/components/CreditPill.tsx': 'F5',
@@ -60,9 +59,6 @@ const LEGACY_COPY_OWNERS = {
   'src/navigation/CustomTabBar.tsx': 'F4',
   'src/screens/account/AccountScreen.tsx': 'ACCT-1',
   'src/screens/account/TopUpScreen.tsx': 'PLANS-1',
-  'src/screens/auth/LoginScreen.tsx': 'AUTH-1',
-  'src/screens/auth/OnboardingScreen.tsx': 'AUTH-1',
-  'src/screens/auth/SignUpScreen.tsx': 'AUTH-1',
   'src/screens/booking/BookingFlowScreen.tsx': 'BOOK-1',
   'src/screens/bookings/BookingsScreen.tsx': 'LIB-1',
   'src/screens/checkin/CheckInScreen.tsx': 'CHECKIN-1',

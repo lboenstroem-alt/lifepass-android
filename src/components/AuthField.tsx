@@ -1,4 +1,3 @@
-/* eslint lifepass/no-literal-copy: "error" */
 /**
  * A text field on the sign-in screens (iOS LoginView `authField` and
  * SignUpView `inputField` / `secureField`): 52 tall, the raised paper
