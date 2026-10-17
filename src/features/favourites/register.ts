@@ -10,9 +10,15 @@
 //   writes still on their way: the next member on the phone must never see
 //   the hearts of the one who left (iOS drops them with the view models it
 //   tears down).
+// - The reviews cache (src/features/venue/reviews) is public reviews, but each
+//   answer also says which review is the member's own (`ownReviewId`), which
+//   hides "Report review" on it. VENUE-1 owns src/features/venue/register.ts,
+//   so the reviews cleaner is registered here, next to its sibling.
 //
 // Nothing is kept on disk, so there is nothing to claim at sign-in.
 import { registerSignOutCleaner } from '../../app/signOut';
+import { resetVenueReviews } from '../venue/reviews';
 import { favouritesStore } from './store';
 
 registerSignOutCleaner('favourites.store', () => favouritesStore.getState().reset());
+registerSignOutCleaner('venue.reviews', () => resetVenueReviews());
