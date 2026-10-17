@@ -134,6 +134,16 @@ export const browseSession: BrowseSessionStore = createBrowseSession({
   seedIsFixed: fixedSeed !== null,
 });
 
+/**
+ * The list header's sort label, which says what the order ACTUALLY is (iOS
+ * SearchMapView `isNearestFirst`, the web's two labels): "Nearest first" only
+ * with a band origin, a real fix; "Mixed for you" otherwise. It must never
+ * claim a proximity the phone does not have.
+ */
+export function sortLabelKey(origin: Coordinate | null): 'explore.sort_nearest' | 'explore.sort_mixed' {
+  return origin ? 'explore.sort_nearest' : 'explore.sort_mixed';
+}
+
 /** React: a slice of the shared session (or of `store`). */
 export function useBrowseSession<T>(selector: (state: BrowseSessionState) => T, store: BrowseSessionStore = browseSession): T {
   return useStore(store, selector);

@@ -5,7 +5,15 @@
 import { renderHook, act } from '@testing-library/react-native';
 
 import { MAX_SEED } from '../../lib/browseOrder';
-import { browseSession, createBrowseSession, debugFixedSeed, launchSeed, useBrowseSession } from '../browseSession';
+import { translate } from '../../i18n';
+import {
+  browseSession,
+  createBrowseSession,
+  debugFixedSeed,
+  launchSeed,
+  sortLabelKey,
+  useBrowseSession,
+} from '../browseSession';
 
 it('a development build can fix the seed; a bad value is ignored', () => {
   expect(debugFixedSeed(undefined)).toBeNull();
@@ -38,4 +46,11 @@ it('a screen re-renders when the visit changes', async () => {
   expect(result.current).toBe(0);
   await act(async () => visit.getState().locationDidChange({ latitude: 64, longitude: -21 }));
   expect(result.current).toBe(1);
+});
+
+it('the sort label claims "nearest" only with a real fix', () => {
+  expect(sortLabelKey(null)).toBe('explore.sort_mixed');
+  expect(sortLabelKey({ latitude: 64.1, longitude: -21.9 })).toBe('explore.sort_nearest');
+  expect(translate(sortLabelKey(null), 'is')).toBe('Blandað fyrir þig');
+  expect(translate(sortLabelKey({ latitude: 64.1, longitude: -21.9 }), 'en')).toBe('Nearest first');
 });
