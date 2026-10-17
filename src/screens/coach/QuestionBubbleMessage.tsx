@@ -53,7 +53,7 @@ export default function QuestionBubbleMessage({ question, options, answered, sel
     <View style={styles.root}>
       <View style={styles.row}>
         <CoachAssistantAvatar size={24} />
-        <View style={[styles.bubble, assistantBubbleStyle, { maxWidth: width * 0.75 }]}>
+        <View style={[styles.bubble, assistantBubbleStyle, styles.questionCorners, { maxWidth: width * 0.75 }]}>
           <LPText size={14} color={coachPalette.textPrimary} style={styles.text}>
             {question}
           </LPText>
@@ -165,6 +165,8 @@ const styles = StyleSheet.create({
   root: { gap: 10, alignSelf: 'stretch' },
   row: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   bubble: { paddingHorizontal: 13, paddingVertical: 9, flexShrink: 1 },
+  // A question's bubble is a touch tighter than a message's (iOS: 16, not 18).
+  questionCorners: { borderTopRightRadius: 16, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 },
   text: { lineHeight: 20 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
