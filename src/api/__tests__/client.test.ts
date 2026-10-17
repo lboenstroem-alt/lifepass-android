@@ -475,9 +475,18 @@ describe('ceilings by route', () => {
     expect(error.transport).toBe('timeout');
   });
 
-  it('API_TIMEOUTS carries the iOS values', () => {
-    expect(API_TIMEOUTS.bookingCreate).toBe(120_000);
-    expect(API_TIMEOUTS.default).toBe(60_000);
+  it('API_TIMEOUTS carries the iOS values, one per iOS literal', () => {
+    expect(API_TIMEOUTS).toEqual({
+      default: 60_000, // URLSession's default
+      profile: 60_000, // ProfileService.requestTimeout
+      health: 20_000, // HealthNetwork.defaultTimeout
+      healthSession: 30_000, // HealthNetwork.session timeoutIntervalForRequest
+      mealScan: 20_000, // HealthNetwork.scanTimeout
+      mealDescribe: 20_000, // HealthNetwork.describeTimeout
+      barcode: 8_000, // MealService.barcode (POST /health/foods/barcode)
+      programBuild: 20_000, // ProgramBuildService.timeout
+      bookingCreate: 120_000, // BookingService.createTimeout
+    });
   });
 });
 

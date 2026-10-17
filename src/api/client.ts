@@ -91,19 +91,32 @@ export type QueryValue = string | number | boolean | null | undefined;
 export type Query = Readonly<Record<string, QueryValue | readonly (string | number | boolean)[]>>;
 
 /**
- * Per-call ceilings iOS uses, for the call sites that port them. Everything
- * else gets `DEFAULT_TIMEOUT_MS`, the iOS session default.
+ * Every per-call ceiling iOS sets, one named constant per iOS literal, for
+ * the call sites that port them. A call that names none gets
+ * `DEFAULT_TIMEOUT_MS`, the iOS session default (60 s), so a port that
+ * forgets its ceiling waits longer than iOS, never shorter.
  */
 export const API_TIMEOUTS = {
   default: 60_000,
+  /** `ProfileService.requestTimeout`: /profile, its PATCH and /referrals/me. */
   profile: 60_000,
-  /** Health reads and writes (a Today read must not hang). */
+  /** `HealthNetwork.defaultTimeout`: health reads and writes (a Today read must not hang). */
   health: 20_000,
-  /** The health client's session default. */
+  /** The health client's session default (`HealthNetwork.session`, 30 s). */
   healthSession: 30_000,
-  /** A photo or text meal estimate waits on a model. */
+  /** `HealthNetwork.scanTimeout`: `POST /health/meals/scan`, a photo estimate waits on a model. */
   mealScan: 20_000,
-  /** POST /bookings and the payment-session confirm: the venue's system is in the loop. */
+  /**
+   * `HealthNetwork.describeTimeout`: `POST /health/meals/describe`. The
+   * server gives the model 12 s and answers 502 after that; the rest is the
+   * network.
+   */
+  mealDescribe: 20_000,
+  /** `MealService.barcode`: `POST /health/foods/barcode`, a member holding a pack up to the camera. */
+  barcode: 8_000,
+  /** `ProgramBuildService.timeout`: the Coach's programme build (`POST /coach`), a model call. */
+  programBuild: 20_000,
+  /** `BookingService.createTimeout`: POST /bookings, the walk-in and the payment-session confirm. */
   bookingCreate: 120_000,
 } as const;
 
