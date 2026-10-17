@@ -2,12 +2,12 @@
  * The camera-first Scan tab on screen (iOS CheckInView, CheckInScanTests'
  * screen half and the plan's CHECKIN-1 acceptance): the camera states, the
  * QR rules through a real render, the rescan capsule, pushed mode, the person
- * button, the processing veil, the dark tab bar, and check-in links.
+ * button, where the walk-in host sits, the dark tab bar, and check-in links.
  */
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { NavigationContainer, type NavigationContainerRef, type ParamListBase } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { createRef, useEffect, type ReactNode } from 'react';
 import { AccessibilityInfo, AppState, Linking, Pressable, Text, type AppStateStatus } from 'react-native';
 
@@ -316,12 +316,16 @@ describe('QR reads on screen', () => {
     expect(screen.queryByText('Point at the LifePass code at the venue')).toBeNull();
   });
 
-  it('shows the processing veil while the flow works, and locks the QR', async () => {
+  it('a walk-in in hand locks the QR, however it started (the flow is shared with the pushed scanner)', async () => {
     await renderApp();
     await layOut();
-    await act(async () => flowDouble.setState({ isIdle: false, isProcessing: true }));
-    expect(screen.getByTestId('scan.processing')).toBeOnTheScreen();
+    expect(screen.getByTestId('scan.camera').props.onBarcodeScanned).toBeDefined();
+    await act(async () => flowDouble.setState({ isIdle: false }));
     expect(screen.getByTestId('scan.camera').props.onBarcodeScanned).toBeUndefined();
+    // Done with it: the member asks for the next read.
+    await act(async () => flowDouble.setState({ isIdle: true }));
+    expect(screen.getByTestId('scan.camera').props.onBarcodeScanned).toBeUndefined();
+    expect(screen.getByRole('button', { name: 'Scan another code' })).toBeOnTheScreen();
   });
 });
 
@@ -339,10 +343,12 @@ describe('the bar and the meal entry', () => {
     expect(events).toContainEqual(['profile_opened', { entry: 'scan' }]);
   });
 
-  it('the tab shows the meal entry and mounts the walk-in host', async () => {
+  it('the tab shows the meal entry and mounts the walk-in host over the camera region', async () => {
     await renderApp();
     expect(screen.getByTestId('meal.entry')).toBeOnTheScreen();
-    expect(screen.getByTestId('walkin.host')).toBeOnTheScreen();
+    // The host's "Processing…" veil fills its parent: the region, never the bar.
+    const region = screen.getByTestId('scan.region');
+    expect(within(region).getByTestId('walkin.host')).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
   });
 });

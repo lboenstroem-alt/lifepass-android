@@ -58,22 +58,19 @@ export const expoCameraModule = {
 
 interface FlowDouble {
   isIdle: boolean;
-  isProcessing: boolean;
   starts: [string, { readonly fromLink: boolean }][];
 }
 
-export const flowDouble = create<FlowDouble>(() => ({ isIdle: true, isProcessing: false, starts: [] }));
+export const flowDouble = create<FlowDouble>(() => ({ isIdle: true, starts: [] }));
 
 export function resetFlowDouble(): void {
-  flowDouble.setState({ isIdle: true, isProcessing: false, starts: [] }, true);
+  flowDouble.setState({ isIdle: true, starts: [] }, true);
 }
 
 function useWalkInFlow() {
   const isIdle = flowDouble((s) => s.isIdle);
-  const isProcessing = flowDouble((s) => s.isProcessing);
   return {
     isIdle,
-    isProcessing,
     startWalkIn: async (venueId: string, options: { readonly fromLink: boolean }) => {
       flowDouble.setState((s) => ({ starts: [...s.starts, [venueId, options]] }));
     },

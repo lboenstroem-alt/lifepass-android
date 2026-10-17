@@ -12,19 +12,21 @@
  * What it owns: the camera (./useScanCamera.ts), what each read means and the
  * QR lock (./qrRead.ts), the chip, the refusal alert, "Scan another code",
  * and the parked link (../link). What it hands on: a venue to the walk-in
- * flow (`useWalkInFlow`, CHECKIN-2), whose sheets, alerts and success cover
- * `WalkInFlowHost` draws.
+ * flow (`useWalkInFlow`, CHECKIN-2), whose "Processing…" veil, sheets,
+ * alerts and success cover (the proof, ../proof) `WalkInFlowHost` draws.
  *
- * ONE HOST AT A TIME. The flow is one store, and two scanners can be mounted
- * (the Scan tab and one pushed on a venue's stack), so each mounts the host
- * only while it is the focused screen.
+ * THE HOST is the last child of the camera region, as CHECKIN-2 asks: its
+ * veil covers the camera and not the bar, as iOS's does, and its sheets and
+ * covers draw over the whole app wherever it sits. Two scanners can be
+ * mounted (the Scan tab and one pushed on a venue's stack); the flow is one
+ * store and only the newest host draws, so each scanner simply mounts one.
  */
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import type { BarcodeScanningResult } from 'expo-camera';
 import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { ActivityIndicator, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
-import { announce, Dialog, LPText, TopBar } from '../../../components/ui';
+import { announce, Dialog, TopBar } from '../../../components/ui';
 import { useT } from '../../../i18n';
 import { haptics } from '../../../lib/haptics';
 import { track } from '../../../lib/analytics';
@@ -33,7 +35,7 @@ import { openProfile } from '../../../navigation/profile';
 import { colors } from '../../../theme';
 import ScanMealEntry from '../../meals/ScanMealEntry';
 import { useParkedScanLink, type ScanLinkNavigation } from '../link/useParkedScanLink';
-import { useWalkInFlow, WalkInFlowHost, type WalkInFlow } from '../walkin';
+import { useWalkInFlow, WalkInFlowHost } from '../walkin';
 import { dispositionOf, QrGate, QrReadClassifier, type QrDisposition } from './qrRead';
 import ScanPrompt from './ScanPrompt';
 import ScanViewfinder from './ScanViewfinder';
@@ -45,15 +47,6 @@ export const FOREIGN_CHIP_MS = 2_000;
 /** The 24 dp gap under the meal entry, or under the bar when there is none (iOS `reticleReserveTop`). */
 const RESERVE_GAP = 24;
 const MEAL_ENTRY_TOP = 16;
-
-/**
- * Whether the walk-in flow is busy with a request (iOS `isProcessing`): the
- * "Processing…" veil. Not in the published contract yet (contract request to
- * CHECKIN-2); read when the flow offers it, so the veil appears the day it does.
- */
-export function flowIsProcessing(flow: WalkInFlow): boolean {
-  return (flow as WalkInFlow & { readonly isProcessing?: unknown }).isProcessing === true;
-}
 
 /** iOS `reticleReserveTop`: under the meal entry with the 24 dp gap, or 24 dp when there is none. */
 export function reserveTopFor(mealEntryHeight: number): number {
@@ -84,7 +77,6 @@ export default function CheckInScanView({ pushed }: CheckInScanViewProps) {
   const [mealEntryHeight, setMealEntryHeight] = useState(0);
 
   const isIdle = flow.isIdle;
-  const processing = flowIsProcessing(flow);
   const showsMealEntry = !pushed;
   const reserveTop = reserveTopFor(showsMealEntry ? mealEntryHeight : 0);
 
@@ -95,11 +87,14 @@ export default function CheckInScanView({ pushed }: CheckInScanViewProps) {
     [],
   );
 
-  // Whatever started the walk-in (a read or a link), the same rule after it:
-  // no second walk-in until the member asks for one (iOS locks on `isProcessing`).
+  // Whatever started the walk-in (a read, a link, or the other scanner: the
+  // flow is one store), the same rule after it: no second walk-in until the
+  // member asks for one. iOS locks when its view model starts processing;
+  // here the flow's `isIdle` is the published signal, and it turns false no
+  // later than that.
   useEffect(() => {
-    if (processing) gate.lock();
-  }, [processing, gate]);
+    if (!isIdle) gate.lock();
+  }, [isIdle, gate]);
 
   const showForeignChip = useCallback(() => {
     if (chipTimer.current) return;
@@ -164,7 +159,7 @@ export default function CheckInScanView({ pushed }: CheckInScanViewProps) {
 
   // The QR is locked and nothing of the walk-in is on screen: offer the
   // capsule rather than scanning again by itself.
-  const showsRescan = qrLocked && isIdle && refusalKey === null && !processing;
+  const showsRescan = qrLocked && isIdle && refusalKey === null;
 
   const rescan = useCallback(() => {
     track('qr_rescan_tapped');
@@ -238,16 +233,7 @@ export default function CheckInScanView({ pushed }: CheckInScanViewProps) {
           </View>
         ) : null}
 
-        {processing ? (
-          <View style={styles.processing} testID="scan.processing">
-            <View style={styles.processingCard} accessible accessibilityRole="progressbar" accessibilityLabel={t('common.processing')}>
-              <ActivityIndicator color={colors.paper2} />
-              <LPText size={15} weight="medium" color={colors.paper}>
-                {t('common.processing')}
-              </LPText>
-            </View>
-          </View>
-        ) : null}
+        <WalkInFlowHost />
       </View>
 
       <Dialog
@@ -258,7 +244,6 @@ export default function CheckInScanView({ pushed }: CheckInScanViewProps) {
         buttons={[{ label: t('common.ok'), role: 'cancel' }]}
       />
 
-      {camera.isFocused ? <WalkInFlowHost /> : null}
     </View>
   );
 }
@@ -269,20 +254,4 @@ const styles = StyleSheet.create({
   cameraOff: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000000' },
   checking: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.ink2 },
   mealEntry: { position: 'absolute', top: MEAL_ENTRY_TOP, left: 20, right: 20 },
-  processing: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // iOS draws the card in lpCard with white words, from the days lpCard was
-  // dark; on the 2.5.6 paper palette that is white on cream, so the words
-  // take the ink here and stay readable.
-  processingCard: {
-    alignItems: 'center',
-    gap: 10,
-    padding: 24,
-    borderRadius: 16,
-    backgroundColor: colors.ink2,
-  },
 });
