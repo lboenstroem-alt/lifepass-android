@@ -18,12 +18,21 @@
 import { registerProfileReadHook, registerSignOutCleaner } from '../app/signOut';
 import { useAppStore } from '../stores/appStore';
 
+import { resetHealthConsentPresenter } from './consent/presenter';
+import { resetMealGatePresenter } from './gate/mealGate';
 import { memberForSignOutWipe, useHealthStore, wipeWithoutMember } from './store';
 
 registerSignOutCleaner('health.wipe', async ({ memberId }) => {
   const id = await memberForSignOutWipe(memberId);
   if (id) await useHealthStore.getState().wipeLocal({ profileId: id, reason: 'signout' });
   else await wipeWithoutMember();
+});
+
+// A consent sheet or a meal gate opened for the member who left must not
+// greet the next one (iOS drops them with the signed-in views).
+registerSignOutCleaner('health.sheets', () => {
+  resetHealthConsentPresenter();
+  resetMealGatePresenter();
 });
 
 registerProfileReadHook('health.reconcile', ({ profile }) => useHealthStore.getState().reconcile(profile));

@@ -37,7 +37,6 @@ import type { Lang } from '../i18n';
 
 import { arrayOf, boolean, instant, integer, object, opt, string, type Reader } from './decode';
 import {
-  decodeCheckinResponse,
   decodeHealthDay,
   decodeMeasurement,
   decodeMealDaySummary,
@@ -53,7 +52,6 @@ import {
   decodeSessionView,
   decodeWeeklyReview,
   decodeWeightTrendPoint,
-  type CheckinResponse,
   type ExtraWorkoutKind,
   type Feeling,
   type HealthConsent,
@@ -432,8 +430,8 @@ export function fetchWeightTrend(weeks: number): Promise<WeightTrend> {
 // ---------------------------------------------------------------------------
 // OP-23 weekly check-in, OP-43 reviews
 
-/** The weekly check-in's answer (the body lives with the sheet that sends it). */
-export { decodeCheckinResponse, type CheckinResponse };
+// The weekly check-in's call and body live with the sheet that sends them
+// (PLAN-5); its answer is `decodeCheckinResponse` in ./models.
 
 export function fetchReviews(options: { cursor?: string | null; limit?: number; language: Lang }): Promise<Page<WeeklyReviewView>> {
   return apiGet(
