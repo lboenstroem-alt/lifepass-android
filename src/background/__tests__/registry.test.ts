@@ -18,25 +18,35 @@ import {
 } from '../registry';
 import { defineBackgroundTask, runBackgroundTask } from '../task';
 
-function fakeBackgroundTask() {
-  const registered = new Map<string, { minimumInterval?: number }>();
+/**
+ * The two modules as the real ones behave (expo-background-task 1.0,
+ * build/BackgroundTask.js): registering a task that is already registered
+ * does NOTHING, whatever the new options, and unregistering one that is not
+ * registered is fine. Both share TaskManager's persistent registrations.
+ */
+type Registrations = Map<string, { minimumInterval?: number }>;
+
+function fakeBackgroundTask(registered: Registrations) {
   const module: BackgroundTaskModule = {
     registerTaskAsync: jest.fn(async (name: string, options?: { minimumInterval?: number }) => {
+      if (registered.has(name)) return;
       registered.set(name, options ?? {});
     }),
     unregisterTaskAsync: jest.fn(async (name: string) => {
-      if (!registered.delete(name)) throw new Error('not registered');
+      registered.delete(name);
     }),
     BackgroundTaskResult: { Success: 1, Failed: 2 },
   };
   return { module, registered };
 }
 
-function fakeTaskManager() {
+function fakeTaskManager(registered: Registrations = new Map()) {
   const defined = new Map<string, (body: unknown) => Promise<unknown>>();
   const module: TaskManagerModule = {
     defineTask: jest.fn((name: string, executor: (body: unknown) => Promise<unknown>) => void defined.set(name, executor)),
     isTaskDefined: jest.fn((name: string) => defined.has(name)),
+    isTaskRegisteredAsync: jest.fn(async (name: string) => registered.has(name)),
+    getTaskOptionsAsync: jest.fn(async (name: string) => registered.get(name) ?? null),
   };
   return { module, defined };
 }
@@ -45,8 +55,9 @@ let background: ReturnType<typeof fakeBackgroundTask>;
 
 beforeEach(() => {
   resetBackgroundJobsForTests();
-  background = fakeBackgroundTask();
-  setBackgroundModulesForTests({ backgroundTask: background.module });
+  const registered: Registrations = new Map();
+  background = fakeBackgroundTask(registered);
+  setBackgroundModulesForTests({ backgroundTask: background.module, taskManager: fakeTaskManager(registered).module });
 });
 
 afterEach(() => {
@@ -70,6 +81,31 @@ describe('the task follows eligibility', () => {
     feedbackEligible = false;
     await syncBackgroundTask();
     expect(background.registered.has(BACKGROUND_TASK_NAME)).toBe(false);
+  });
+
+  it('a shorter interval that becomes eligible later replaces the registration; the same one is left alone', async () => {
+    let coachEligible = false;
+    registerBackgroundJob('feedback.refresh', async () => 'no-data', () => true);
+    registerBackgroundJob('coach.sync', async () => 'no-data', () => coachEligible, { minimumIntervalMinutes: 60 });
+    await syncBackgroundTask();
+    expect(background.registered.get(BACKGROUND_TASK_NAME)).toEqual({ minimumInterval: 360 });
+
+    coachEligible = true;
+    await syncBackgroundTask();
+    expect(background.registered.get(BACKGROUND_TASK_NAME)).toEqual({ minimumInterval: 60 });
+
+    const calls = (background.module.registerTaskAsync as jest.Mock).mock.calls.length;
+    await syncBackgroundTask();
+    expect(background.module.registerTaskAsync).toHaveBeenCalledTimes(calls);
+    expect(background.registered.get(BACKGROUND_TASK_NAME)).toEqual({ minimumInterval: 60 });
+  });
+
+  it('a registration an earlier launch left at another interval is read back and replaced', async () => {
+    background.registered.set(BACKGROUND_TASK_NAME, { minimumInterval: 15 });
+    registerBackgroundJob('feedback.refresh', async () => 'no-data', () => true);
+    await syncBackgroundTask();
+    expect(background.registered.get(BACKGROUND_TASK_NAME)).toEqual({ minimumInterval: 360 });
+    expect(background.module.unregisterTaskAsync).toHaveBeenCalledTimes(1);
   });
 
   it("never asks below WorkManager's fifteen minutes", async () => {

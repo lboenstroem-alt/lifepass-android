@@ -1,12 +1,19 @@
 /**
- * The one background task's definition. IMPORT THIS FILE AT THE TOP OF THE
- * APP'S ENTRY (index.ts), before `registerRootComponent`.
+ * The one background task's definition. IT MUST LOAD WITH THE APP'S ENTRY
+ * (index.ts), before `registerRootComponent`.
  *
  * WHY THERE. WorkManager starts the app's JavaScript without any screen (a
  * headless run): only what the entry file imports at load is evaluated, and
  * a task defined later, inside a component or a hook, is not there to run.
- * iOS has the same rule for Background App Refresh (the handler is registered
- * in `application(_:didFinishLaunchingWithOptions:)`).
+ * Nor can it be registered: `registerTaskAsync` refuses a task that is not
+ * defined. iOS has the same rule for Background App Refresh (the handler is
+ * registered in `application(_:didFinishLaunchingWithOptions:)`).
+ *
+ * TODAY src/services/notifications.ts imports this file first thing; App.tsx
+ * imports that module at load and index.ts imports App.tsx before
+ * `registerRootComponent`, so every run defines the task. When QA-1 deletes
+ * that shim, `import './src/background/task';` goes at the top of index.ts
+ * (F4 contract request).
  *
  * A run loads the session hooks (src/app/signOut.ts `loadRegistrations`,
  * which loads every feature's register file, where the jobs are registered)

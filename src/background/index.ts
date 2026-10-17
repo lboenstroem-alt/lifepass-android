@@ -1,7 +1,7 @@
 /**
  * Background work (one WorkManager task, jobs registered per feature). See
- * ./registry.ts; the task's definition (./task.ts) is imported by the app's
- * entry file, not from here.
+ * ./registry.ts; the task's definition (./task.ts) loads with the app's
+ * entry (see that file), not from here.
  */
 export {
   BACKGROUND_TASK_NAME,

@@ -23,7 +23,7 @@
  * or a test without them (Expo Go, Jest) still loads every screen; the work
  * simply never runs there.
  */
-import { loadBackgroundTaskModule } from './native';
+import { loadBackgroundTaskModule, loadTaskManagerModule } from './native';
 
 /** The WorkManager task's name. One task for every job (see the file comment). */
 export const BACKGROUND_TASK_NAME = 'is.lifepass.android.background-refresh';
@@ -136,9 +136,40 @@ export async function runBackgroundJobs(): Promise<BackgroundJobResult> {
 }
 
 /**
+ * The interval the task is registered at, as far as this launch knows: a
+ * number, null for "not registered", undefined until read back. A
+ * registration outlives the app's process (TaskManager keeps it), so a fresh
+ * launch reads it from there before deciding anything.
+ */
+let registeredInterval: number | null | undefined;
+
+/** A registration whose interval cannot be read: replaced, never trusted. */
+const UNREADABLE_INTERVAL = -1;
+
+async function currentRegistration(): Promise<number | null> {
+  if (registeredInterval !== undefined) return registeredInterval;
+  const taskManager = loadTaskManagerModule();
+  if (!taskManager) return UNREADABLE_INTERVAL;
+  try {
+    if (!(await taskManager.isTaskRegisteredAsync(BACKGROUND_TASK_NAME))) return null;
+    const options = await taskManager.getTaskOptionsAsync(BACKGROUND_TASK_NAME);
+    const minutes = typeof options === 'object' && options !== null ? (options as { minimumInterval?: unknown }).minimumInterval : undefined;
+    return typeof minutes === 'number' && Number.isFinite(minutes) ? minutes : UNREADABLE_INTERVAL;
+  } catch {
+    return UNREADABLE_INTERVAL;
+  }
+}
+
+/**
  * Registers the WorkManager task while any job is eligible, at the shortest
  * interval an eligible job asks for; unregisters it when none is. Never
  * throws.
+ *
+ * A DIFFERENT INTERVAL MEANS A NEW REGISTRATION. expo-background-task's
+ * `registerTaskAsync` does nothing for a task that is already registered, so
+ * a job that becomes eligible with a shorter interval than the one
+ * registered would otherwise never change WorkManager's. The task is
+ * unregistered first, then registered at the new interval.
  */
 export async function syncBackgroundTask(): Promise<void> {
   const module = loadBackgroundTaskModule();
@@ -150,9 +181,15 @@ export async function syncBackgroundTask(): Promise<void> {
       return;
     }
     const interval = Math.min(...due.map((job) => job.intervalMinutes));
+    const current = await currentRegistration();
+    if (current === interval) return;
+    if (current !== null) await module.unregisterTaskAsync(BACKGROUND_TASK_NAME);
+    registeredInterval = null;
     await module.registerTaskAsync(BACKGROUND_TASK_NAME, { minimumInterval: interval });
+    registeredInterval = interval;
   } catch {
-    // The next sync tries again.
+    // Not known any more: the next sync reads it back and tries again.
+    registeredInterval = undefined;
   }
 }
 
@@ -167,12 +204,15 @@ export async function cancelBackgroundTask(): Promise<void> {
   if (!module) return;
   try {
     await module.unregisterTaskAsync(BACKGROUND_TASK_NAME);
+    registeredInterval = null;
   } catch {
-    // Not registered: nothing to cancel.
+    // Not registered, or the module refused: read it back next time.
+    registeredInterval = undefined;
   }
 }
 
-/** Tests: no jobs. */
+/** Tests: no jobs, and the registration is read back afresh (a new launch). */
 export function resetBackgroundJobsForTests(): void {
   jobs.clear();
+  registeredInterval = undefined;
 }

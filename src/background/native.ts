@@ -19,6 +19,10 @@ export interface BackgroundTaskModule {
 export interface TaskManagerModule {
   defineTask(taskName: string, executor: (body: unknown) => Promise<unknown>): void;
   isTaskDefined(taskName: string): boolean;
+  /** A registration is kept across launches, so a fresh launch reads it back (./registry.ts). */
+  isTaskRegisteredAsync(taskName: string): Promise<boolean>;
+  /** The options the task was registered with (`{ minimumInterval }`), or null. */
+  getTaskOptionsAsync(taskName: string): Promise<unknown>;
 }
 
 type Override<T> = { readonly module: T | null } | null;

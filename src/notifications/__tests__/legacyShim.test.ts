@@ -5,6 +5,7 @@
  */
 import { notificationsState } from '@test/mocks/expoNotifications';
 
+import { BACKGROUND_TASK_NAME } from '../../background/registry';
 import { translate } from '../../i18n';
 import {
   cancelClassReminders,
@@ -30,6 +31,19 @@ it('the foreground handler is installed by importing it, and shows nothing', asy
   expect(handler).not.toBeNull();
   const behaviour = await handler!.handleNotification({} as never);
   expect(behaviour).toEqual(expect.objectContaining({ shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false }));
+});
+
+it('loading it defines the background task, as every run of the app (headless ones too) loads it', () => {
+  const defined: string[] = [];
+  jest.isolateModules(() => {
+    jest.doMock('expo-task-manager', () => ({
+      defineTask: (name: string) => void defined.push(name),
+      isTaskDefined: (name: string) => defined.includes(name),
+    }));
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('../../services/notifications');
+  });
+  expect(defined).toEqual([BACKGROUND_TASK_NAME]);
 });
 
 it('a booking asks in context, then schedules the T-30 and T-10 rungs keyed by the start', async () => {
