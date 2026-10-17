@@ -90,12 +90,13 @@ export function isSubscriptionPastDue(subscription: Subscription | null | undefi
 }
 
 /**
- * Foundation's `String.capitalized`: the first letter of each word upper
- * case, the rest lower case. Words break at anything that is not a letter or
- * a digit, except an apostrophe ("plan-gold" reads "Plan-Gold").
+ * Foundation's `String.capitalized` for a product slug: the first letter of
+ * each word upper case, the rest lower case. Words break at anything that is
+ * not a letter or a digit, except an apostrophe ("plan-gold" reads
+ * "Plan-Gold"). Slugs are ASCII, so ASCII classes suffice.
  */
 function capitalized(value: string): string {
-  return value.replace(/[\p{L}\p{N}']+/gu, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
+  return value.replace(/[A-Za-z0-9']+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
 }
 
 /**
