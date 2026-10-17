@@ -70,10 +70,14 @@ function showMicDenied(): void {
   });
 }
 
+/**
+ * A phone with no speech service at all (iOS always has one). The sentence is
+ * the whole notice: "Microphone access needed" would send the member to a
+ * setting that cannot help.
+ */
 function showUnavailable(): void {
   showDialog({
-    title: t('coach.mic.denied_title'),
-    message: t('coach.android.voice_unavailable'),
+    title: t('coach.android.voice_unavailable'),
     buttons: [{ label: t('common.ok'), role: 'cancel' }],
   });
 }

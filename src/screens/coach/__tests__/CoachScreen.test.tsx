@@ -446,6 +446,17 @@ describe('dictation', () => {
     expect(fakeSpeech.started).toEqual([]);
   });
 
+  it('a phone with no speech service says so, and does not send the member to Settings', async () => {
+    fakeSpeech.available = false;
+    await renderCoach();
+    await fireEvent.press(screen.getByRole('button', { name: en('coach.a11y.start_voice') }));
+    await settle();
+    expect(screen.getByText(en('coach.android.voice_unavailable'))).toBeOnTheScreen();
+    expect(screen.queryByText(en('coach.mic.denied_title'))).toBeNull();
+    expect(screen.queryByRole('button', { name: en('coach.mic.open_settings') })).toBeNull();
+    expect(fakeSpeech.started).toEqual([]);
+  });
+
   it('stops when the Coach loses focus', async () => {
     await renderCoach();
     await fireEvent.press(screen.getByRole('button', { name: en('coach.a11y.start_voice') }));
