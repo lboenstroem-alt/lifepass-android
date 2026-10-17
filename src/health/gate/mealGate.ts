@@ -13,6 +13,11 @@
  * A 403 from a meal call presents it over whatever is underneath
  * (`presentMealGate`): the screen that got the refusal is on its way out and
  * cannot present it itself.
+ *
+ * NO HOST, NO GATE. The host (../HealthHost.tsx) registers itself when it
+ * mounts (`attachMealGateHost`). With none mounted, `presentMealGate` answers
+ * false and changes nothing, so the caller can show `MealGateSheet` itself
+ * rather than leave the member with a meal screen that silently did nothing.
  */
 import { create } from 'zustand';
 
@@ -47,9 +52,29 @@ interface MealGatePresenterState {
 
 export const useMealGatePresenter = create<MealGatePresenterState>()(() => ({ access: null, visible: false }));
 
-/** Shows the gate over whatever is on screen (iOS `MealGatePresenter.present`). */
-export function presentMealGate(access: HealthAccess): void {
+/** How many hosts are mounted: the app shell's one (a test may render its own). */
+let hostsMounted = 0;
+
+/** The host calls this when it mounts and the answer when it unmounts. */
+export function attachMealGateHost(): () => void {
+  hostsMounted += 1;
+  let attached = true;
+  return () => {
+    if (!attached) return;
+    attached = false;
+    hostsMounted -= 1;
+    if (hostsMounted === 0) useMealGatePresenter.setState({ access: null, visible: false });
+  };
+}
+
+/**
+ * Shows the gate over whatever is on screen (iOS `MealGatePresenter.present`).
+ * Answers false, and shows nothing, when no host is mounted.
+ */
+export function presentMealGate(access: HealthAccess): boolean {
+  if (hostsMounted === 0) return false;
   useMealGatePresenter.setState({ access, visible: true });
+  return true;
 }
 
 export function dismissMealGate(): void {

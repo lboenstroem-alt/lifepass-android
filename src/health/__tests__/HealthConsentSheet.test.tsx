@@ -208,6 +208,34 @@ it('offline and rate limited say so; nothing is granted', async () => {
   expect(granted).not.toHaveBeenCalled();
 });
 
+it('a re-opened sheet is a fresh presentation: no old error or card, nothing ticked, a new key', async () => {
+  signIn(true);
+  api.once('POST', '/profile/health-consent', Reply.problem(429, 'rate_limited'));
+  const close = jest.fn();
+  const sheet = (visible: boolean) => <HealthConsentSheet visible={visible} entry="plan" onClose={close} />;
+  const view = await render(sheet(true));
+  await fireEvent.press(consentBox());
+  await fireEvent.press(turnOn());
+  await waitFor(() => expect(screen.getByText(en('health.err.rate_limited'))).toBeOnTheScreen());
+
+  await act(async () => view.rerender(sheet(false)));
+  await act(async () => view.rerender(sheet(true)));
+  expect(screen.queryByText(en('health.err.rate_limited'))).toBeNull();
+  expect(consentBox()).not.toBeChecked();
+
+  api.once('POST', '/profile/health-consent', Reply.problem(403, 'health_minor_blocked'));
+  await fireEvent.press(consentBox());
+  await fireEvent.press(turnOn());
+  await waitFor(() => expect(screen.getByRole('header', { name: en('health.minor.title') })).toBeOnTheScreen());
+  const [first, second] = api.sentAll('/profile/health-consent');
+  expect(second.headers['idempotency-key']).not.toBe(first.headers['idempotency-key']);
+
+  await act(async () => view.rerender(sheet(false)));
+  await act(async () => view.rerender(sheet(true)));
+  expect(screen.queryByRole('header', { name: en('health.minor.title') })).toBeNull();
+  expect(screen.getByRole('header', { name: en('healthconsent.title') })).toBeOnTheScreen();
+});
+
 it('Not now closes without a grant or a request', async () => {
   signIn(true);
   await render(<Harness />);

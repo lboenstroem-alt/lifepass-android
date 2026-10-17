@@ -13,6 +13,9 @@ import HealthHost from '../HealthHost';
 import { openHealthConsent, closeHealthConsent, resetHealthConsentPresenter, useHealthConsentPresenter } from '../consent/presenter';
 import { mealGateCopy, presentMealGate, resetMealGatePresenter, useMealGatePresenter } from '../gate/mealGate';
 import MinorCard from '../minor/MinorCard';
+// The app loads this with the session hooks (src/app/registrations.ts); the
+// sheets' sign-out cleaner is registered there.
+import '../register';
 
 jest.mock('@gorhom/bottom-sheet', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -96,11 +99,33 @@ describe('the host', () => {
 
   it('a sign-out drops whatever was presented for the member who left', async () => {
     expect(registeredHookIds().signOut).toContain('health.sheets');
-    presentMealGate('pass_only');
-    openHealthConsent({ entry: 'plan' });
-    await runSignOutCleaners({ memberId: null });
+    await renderHost().view;
+    await act(async () => {
+      expect(presentMealGate('pass_only')).toBe(true);
+      expect(openHealthConsent({ entry: 'plan' })).toBe(true);
+    });
+    await act(async () => runSignOutCleaners({ memberId: null }));
     expect(useMealGatePresenter.getState()).toEqual({ access: null, visible: false });
     expect(useHealthConsentPresenter.getState()).toEqual({ request: null, visible: false });
+  });
+
+  it('with no host mounted nothing is pretended: both answer false and nothing is left pending', async () => {
+    expect(openHealthConsent({ entry: 'scan' })).toBe(false);
+    expect(presentMealGate('pass_only')).toBe(false);
+    expect(useHealthConsentPresenter.getState()).toEqual({ request: null, visible: false });
+    expect(useMealGatePresenter.getState()).toEqual({ access: null, visible: false });
+
+    // Once the shell mounts the host they work, and when it goes they stop.
+    const { view } = renderHost();
+    await view;
+    await act(async () => {
+      expect(openHealthConsent({ entry: 'scan' })).toBe(true);
+    });
+    expect(screen.getByRole('header', { name: en('healthconsent.title') })).toBeOnTheScreen();
+    await act(async () => (await view).unmount());
+    expect(useHealthConsentPresenter.getState()).toEqual({ request: null, visible: false });
+    expect(openHealthConsent({ entry: 'coach' })).toBe(false);
+    expect(presentMealGate('not_member')).toBe(false);
   });
 });
 

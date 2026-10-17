@@ -73,7 +73,28 @@ export type HealthConsentSheetProps = {
 
 type ErrorState = { key: string; showOpenAccount: boolean } | null;
 
-export default function HealthConsentSheet({ visible, entry, onClose, onGranted, onOpenAccount, testID }: HealthConsentSheetProps) {
+/**
+ * EACH PRESENTATION IS A FRESH SHEET (iOS makes new @State per sheet): the
+ * ticks, the error line, the under-18 card and the Idempotency-Key belong to
+ * one presentation. The host keeps this mounted between presentations, so
+ * the body is keyed by a counter that moves when `visible` turns true. The
+ * counter moves DURING the render that sees `visible` turn true, so the
+ * first frame of a re-opened sheet is already the fresh one; a reset in an
+ * effect ran after that frame had shown the last presentation's under-18
+ * card or ticked box. Closing keeps the same body, which slides away and
+ * reports `onClosed`.
+ */
+export default function HealthConsentSheet(props: HealthConsentSheetProps) {
+  const [presentation, setPresentation] = useState(0);
+  const [wasVisible, setWasVisible] = useState(props.visible);
+  if (props.visible !== wasVisible) {
+    setWasVisible(props.visible);
+    if (props.visible) setPresentation((count) => count + 1);
+  }
+  return <ConsentPresentation key={presentation} {...props} />;
+}
+
+function ConsentPresentation({ visible, entry, onClose, onGranted, onOpenAccount, testID }: HealthConsentSheetProps) {
   const { t } = useT();
   const { isAccessibilitySize } = useA11ySize();
   const kennitalaVerified = useAppStore(selectIsKennitalaVerified);
@@ -93,21 +114,10 @@ export default function HealthConsentSheet({ visible, entry, onClose, onGranted,
   const continuation = useRef<(() => void | Promise<void>) | null>(null);
   const titleRef = useRef<Text>(null);
 
-  // Each presentation is a fresh sheet with a fresh key (iOS @State per sheet).
+  // This instance is one presentation (see HealthConsentSheet above), so its
+  // state and key start fresh; it is counted once, when it shows.
   useEffect(() => {
-    if (!visible) return;
-    setAgeTicked(false);
-    setConsentTicked(false);
-    setPosting(false);
-    setError(null);
-    setAgeErrored(false);
-    setServerAskedToAttest(false);
-    setRefusedAsMinor(false);
-    idempotencyKey.current = newIdempotencyKey();
-    granted.current = false;
-    minorWipeOwed.current = null;
-    continuation.current = null;
-    track('health_consent_viewed', { entry });
+    if (visible) track('health_consent_viewed', { entry });
   }, [visible, entry]);
 
   const needsAge = ageRowNeeded(kennitalaVerified, serverAskedToAttest);

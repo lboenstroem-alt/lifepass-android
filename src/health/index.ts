@@ -62,5 +62,5 @@ export {
   type ConsentFailure,
   type HealthConsentEntry,
 } from './consent/consent';
-export { closeHealthConsent, openHealthConsent, type HealthConsentRequest } from './consent/presenter';
+export { closeHealthConsent, isHealthConsentHostMounted, openHealthConsent, type HealthConsentRequest } from './consent/presenter';
 export { dismissMealGate, mealGateCopy, presentMealGate, useMealGatePresenter, type MealGateCopy } from './gate/mealGate';
