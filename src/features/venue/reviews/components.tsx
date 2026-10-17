@@ -309,7 +309,8 @@ const styles = StyleSheet.create({
 
   header: { backgroundColor: colors.ink, borderBottomWidth: hairline, borderBottomColor: colors.line },
   headerRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 },
-  headerSide: { width: 88 },
+  // Room for "Hætta við" at a large font scale; the title takes what is left.
+  headerSide: { minWidth: 88, maxWidth: '40%', flexShrink: 0 },
   headerLeading: { alignItems: 'flex-start' },
   headerTrailing: { alignItems: 'flex-end' },
   headerTitle: { flex: 1 },
