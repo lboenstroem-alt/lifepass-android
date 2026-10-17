@@ -450,6 +450,12 @@ describe('plans, cards and co-pay after process death', () => {
     expect(screen.getByText(lookup('plans.welcome_title', 'en'))).toBeTruthy();
     expect(screen.getByText(translate('plans.success.pass', 'en', { name: 'Day Pass' }))).toBeTruthy();
     expect(await storedRecords()).toEqual([]);
+
+    // The welcome's button re-reads the membership, as iOS's does.
+    const reads = api.sentAll('/subscriptions', 'GET').length;
+    await fireEvent.press(screen.getByText(lookup('plans.welcome_cta', 'en')));
+    await act(flush);
+    expect(api.sentAll('/subscriptions', 'GET').length).toBe(reads + 1);
   });
 
   it('a checkout left on the cancel link verifies nothing and says nothing', async () => {

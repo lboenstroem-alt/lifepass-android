@@ -20,6 +20,7 @@ import { MerchantInfo } from '../config/merchantInfo';
 import { showDialog, type DialogButton } from '../components/ui/Dialog';
 import { t } from '../i18n';
 import { scheduleBookingReminders } from '../services/notifications';
+import { useAppStore } from '../stores/appStore';
 
 import type { PaySettlement } from './bookingPaymentSession';
 import type { ConfirmedCard } from './cardSetup';
@@ -210,7 +211,12 @@ function presentPlan(record: PlanInflight, verification: PlanVerification) {
       const message = name
         ? t(record.plan.productSlug.startsWith('pass-') ? 'plans.success.pass' : 'plans.success.subscription', { name })
         : t('plans.success.generic');
-      showDialog({ title: t('plans.welcome_title'), message, buttons: [{ label: t('plans.welcome_cta') }] });
+      // The button re-reads the membership, as iOS PlansView's does.
+      showDialog({
+        title: t('plans.welcome_title'),
+        message,
+        buttons: [{ label: t('plans.welcome_cta'), onPress: () => void useAppStore.getState().loadSubscription() }],
+      });
       return;
     }
     case 'timeout':
