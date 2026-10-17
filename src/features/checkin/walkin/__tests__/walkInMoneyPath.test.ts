@@ -106,14 +106,15 @@ describe('charge consent', () => {
 
   it('a declined attempt and the next one never share a key', async () => {
     api.on('GET', '/check-ins/walk-in/preview', Reply.ok(previewJSON({ charge: { kind: 'surcharge', amountIsk: 1500 } })));
+    api.on('POST', '/check-ins/walk-in', Reply.ok(checkInJSON(), 201));
     api.once('POST', '/check-ins/walk-in', Reply.problem(402, 'charge_consent_required', {
       offer: { kind: 'surcharge', amountIsk: 1800 },
     }));
-    api.on('POST', '/check-ins/walk-in', Reply.ok(checkInJSON(), 201));
     const store = walkInStoreForTest();
 
     await store.getState().startWalkIn(SKY_LAGOON_ID);
     await store.getState().acceptWalkInCharge(); // 402: re-offered
+    expect(store.getState().offerWasReoffered).toBe(true);
     store.getState().declineWalkInCharge();
     await store.getState().startWalkIn(SKY_LAGOON_ID);
     await store.getState().acceptWalkInCharge();
