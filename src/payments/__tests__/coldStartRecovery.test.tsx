@@ -445,8 +445,9 @@ describe('plans, cards and co-pay after process death', () => {
     await launch();
     expect(api.sentAll('/billing/payment-methods/confirm')).toHaveLength(1);
     expect(await storedRecords()).toEqual([]);
-    // Quiet by default; Account's presenter could re-read billing, but card setup speaks nothing here.
-    expect(seen).toHaveLength(0);
+    // Quiet by default; a presenter Account registers is told, to re-read billing.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ rail: 'card_setup', card: { brand: 'visa', last4: '4242' } });
   });
 
   it('a co-pay share paid behind the page is pulled and the plan re-read', async () => {
@@ -536,6 +537,17 @@ describe('the live flow', () => {
     close(DISMISSED);
     await first;
     expect(await storedRecords()).toEqual([]);
+  });
+
+  it('two taps together open one page; the second is busy, never "not paid"', async () => {
+    signIn();
+    openAuthSession.mockResolvedValue(DISMISSED);
+    confirmReplies(fulfilledBooking);
+    const [first, second] = await Promise.all([live(), live()]);
+    expect(openAuthSession).toHaveBeenCalledTimes(1);
+    expect(first).toMatchObject({ kind: 'settled', settlement: { kind: 'fulfilled' } });
+    expect(second).toEqual({ kind: 'busy' });
+    expect(confirms()).toHaveLength(1);
   });
 
   it('still settling: the screen holds it for Check again, then lets go and the record waits quietly', async () => {

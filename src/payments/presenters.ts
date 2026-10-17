@@ -79,8 +79,8 @@ export function presentResolution(resolution: PaymentResolution, actions: Presen
   }
 }
 
-/** True when `resolution` has anything to say (quiet ones are never shown). */
-export function resolutionSpeaks(resolution: PaymentResolution): boolean {
+/** True when the default presenter has anything to say about `resolution`. */
+function defaultSpeaks(resolution: PaymentResolution): boolean {
   switch (resolution.rail) {
     case 'booking':
     case 'walk_in':
@@ -91,6 +91,16 @@ export function resolutionSpeaks(resolution: PaymentResolution): boolean {
     case 'copay':
       return false;
   }
+}
+
+/**
+ * Whether `resolution` goes to a presenter at all. The default speaks only
+ * when there is something to say; a rail's own presenter is also told about
+ * the quiet endings (a card setup, a co-pay, a session that never existed),
+ * so Account can re-read what it shows, and shows nothing for them.
+ */
+export function shouldPresent(resolution: PaymentResolution): boolean {
+  return presenters.has(resolution.rail) || defaultSpeaks(resolution);
 }
 
 // ---------------------------------------------------------------------------

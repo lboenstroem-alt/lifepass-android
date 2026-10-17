@@ -38,14 +38,13 @@ import {
   claimAttempt,
   clearInflight,
   hasLiveAttempt,
-  isAttemptLive,
   railFamily,
   readInflight,
   releaseAttempt,
   updateInflight,
   type InflightRecord,
 } from './inflight';
-import { presentResolution, resolutionSpeaks, type PaymentResolution } from './presenters';
+import { presentResolution, shouldPresent, type PaymentResolution } from './presenters';
 import { settleRecord, type Settled } from './resolve';
 import { parseReturnUrl, type ParsedReturn } from './returnUrls';
 
@@ -180,7 +179,11 @@ async function recover(memberId: string, trigger: RecoveryTrigger): Promise<Reco
   let pending = 0;
   let skipped = 0;
   for (const record of records) {
-    if (isAttemptLive(record.attemptId) || !claimAttempt(record.attemptId, railFamily(record.rail))) {
+    if (!claimAttempt(record.attemptId, railFamily(record.rail), 'recovery')) {
+      // A flow here holds it: the link, if one came, is that flow's too.
+      if (newestByFamily.get(railFamily(record.rail)) === record.attemptId) {
+        takeReturnLeg(railFamily(record.rail), now);
+      }
       skipped += 1;
       continue;
     }
@@ -195,6 +198,11 @@ async function recover(memberId: string, trigger: RecoveryTrigger): Promise<Reco
         pending += 1;
       }
       await speak(record, settled, { trigger, afterLink: linkLeg !== null });
+    } catch (error) {
+      // One attempt that could not be settled must not stop the others; its
+      // record stays for the next return to the app.
+      pending += 1;
+      if (__DEV__ && process.env.NODE_ENV !== 'test') console.warn('[payments] recovery failed', error);
     } finally {
       releaseAttempt(record.attemptId);
     }
@@ -223,7 +231,7 @@ function isFailedConfirm(resolution: PaymentResolution): boolean {
 /** Shows what `settled` says, when it should be said (see the file comment). */
 async function speak(record: InflightRecord, settled: Settled, context: SpeakContext): Promise<void> {
   const { resolution } = settled;
-  if (!resolutionSpeaks(resolution) || !stillSignedIn(record.memberId)) return;
+  if (!shouldPresent(resolution) || !stillSignedIn(record.memberId)) return;
   if (isFailedConfirm(resolution) && !context.afterLink && context.trigger !== 'return') return;
   if (isProcessing(resolution)) {
     if (record.presentedProcessing) return;
@@ -237,11 +245,11 @@ async function speak(record: InflightRecord, settled: Settled, context: SpeakCon
  * says now (including "still confirming", which the member asked for).
  */
 export async function checkRecordAgain(record: InflightRecord): Promise<void> {
-  if (!claimAttempt(record.attemptId, railFamily(record.rail))) return;
+  if (!claimAttempt(record.attemptId, railFamily(record.rail), 'recovery')) return;
   try {
     const settled = await settleRecord(record, 'done');
     if (settled.record === 'clear') await clearInflight(record.memberId, record.attemptId);
-    if (resolutionSpeaks(settled.resolution) && stillSignedIn(record.memberId)) {
+    if (shouldPresent(settled.resolution) && stillSignedIn(record.memberId)) {
       presentResolution(settled.resolution, { checkAgain: () => void checkRecordAgain(record) });
     }
   } finally {
@@ -249,7 +257,10 @@ export async function checkRecordAgain(record: InflightRecord): Promise<void> {
   }
 }
 
-/** Sign-out: forget the waiting link (the records themselves are wiped by the cleaner). */
+/**
+ * Forget the waiting link: at sign-out (the records themselves are wiped by
+ * the cleaner), and when a new page opens (no earlier link can be its).
+ */
 export function forgetPendingReturn(): void {
   pendingReturn = null;
 }

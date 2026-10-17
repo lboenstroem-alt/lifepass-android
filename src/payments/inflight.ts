@@ -358,12 +358,24 @@ export async function wipeInflight(): Promise<void> {
  * settled-for-now attempt (no page, nothing running), which neither blocks a
  * new page nor owns an incoming return link.
  */
-const live = new Map<string, { readonly family: 'payment' | 'cardSetup'; phase: 'active' | 'held' }>();
+export type AttemptOwner = 'flow' | 'recovery';
+
+interface LiveAttempt {
+  readonly family: 'payment' | 'cardSetup';
+  readonly owner: AttemptOwner;
+  phase: 'active' | 'held';
+}
+
+const live = new Map<string, LiveAttempt>();
 
 /** Claims `attemptId` for one owner. False when someone else already holds it. */
-export function claimAttempt(attemptId: string, family: 'payment' | 'cardSetup'): boolean {
+export function claimAttempt(
+  attemptId: string,
+  family: 'payment' | 'cardSetup',
+  owner: AttemptOwner = 'flow',
+): boolean {
   if (live.has(attemptId)) return false;
-  live.set(attemptId, { family, phase: 'active' });
+  live.set(attemptId, { family, owner, phase: 'active' });
   return true;
 }
 
@@ -389,10 +401,16 @@ export function isAttemptLive(attemptId: string): boolean {
   return live.has(attemptId);
 }
 
-/** True while an attempt (of `family`, when given) has its page open or its confirm running here. */
-export function hasLiveAttempt(family?: 'payment' | 'cardSetup'): boolean {
+/**
+ * True while an attempt has its page open or its confirm running here (of
+ * `family`, and by `owner`, when given).
+ */
+export function hasLiveAttempt(family?: 'payment' | 'cardSetup', owner?: AttemptOwner): boolean {
   for (const entry of live.values()) {
-    if (entry.phase === 'active' && (family === undefined || entry.family === family)) return true;
+    if (entry.phase !== 'active') continue;
+    if (family !== undefined && entry.family !== family) continue;
+    if (owner !== undefined && entry.owner !== owner) continue;
+    return true;
   }
   return false;
 }

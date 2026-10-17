@@ -24,7 +24,7 @@ import {
   type PaySettlement,
 } from './bookingPaymentSession';
 import { startCardSetup, type ConfirmedCard } from './cardSetup';
-import { checkRecordAgain, recoverPayments, recoveryIdle } from './coldStartRecovery';
+import { checkRecordAgain, forgetPendingReturn, recoverPayments, recoveryIdle } from './coldStartRecovery';
 import { openHostedPage, isHostedPageOpen, type HostedPageLeg } from './hostedPage';
 import {
   claimAttempt,
@@ -45,7 +45,7 @@ import {
   type WalkInAttemptContext,
 } from './inflight';
 import { verifyPlanCheckout, type PlanVerification } from './planVerification';
-import { presentResolution, resolutionSpeaks } from './presenters';
+import { presentResolution, shouldPresent } from './presenters';
 import { settleRecord, type Settled } from './resolve';
 
 /** A screen's attempt, while it still holds it (a payment still settling). */
@@ -78,15 +78,37 @@ export async function settleUnresolvedPayments(memberId: string): Promise<void> 
   }
 }
 
-/** Saves the attempt, claims it, and opens its page. Null when another page is open. */
-async function begin(record: NewInflightRecord, url: string) {
+/** Page families a flow is opening right now (between the tap and the claim). */
+const opening = new Set<'payment' | 'cardSetup'>();
+
+/**
+ * Saves the attempt, claims it, and opens its page. Null when a page is
+ * already open, or another payment of this kind is being opened or settled
+ * by a flow here (a second tap). The family is reserved before the first
+ * wait, so two taps together can never both open a page.
+ *
+ * `url` may be a function that makes the page (the card setup session), run
+ * inside the reservation; if it throws, nothing is saved and the error
+ * propagates.
+ */
+async function begin(record: NewInflightRecord, url: string | (() => Promise<string>)) {
   const family = railFamily(record.rail);
-  if (isHostedPageOpen() || hasLiveAttempt(family)) return null;
-  await settleUnresolvedPayments(record.memberId);
-  if (isHostedPageOpen() || hasLiveAttempt(family)) return null;
-  const saved = await saveInflight(record);
-  claimAttempt(saved.attemptId, family);
-  const page = await openHostedPage(url, family);
+  if (opening.has(family) || isHostedPageOpen() || hasLiveAttempt(family, 'flow')) return null;
+  opening.add(family);
+  let saved: InflightRecord;
+  let pageUrl: string;
+  try {
+    await settleUnresolvedPayments(record.memberId);
+    if (isHostedPageOpen() || hasLiveAttempt(family, 'flow')) return null;
+    pageUrl = typeof url === 'string' ? url : await url();
+    saved = await saveInflight(record);
+    claimAttempt(saved.attemptId, family, 'flow');
+  } finally {
+    opening.delete(family);
+  }
+  // No link that arrived before this page opened can be this page's.
+  forgetPendingReturn();
+  const page = await openHostedPage(pageUrl, family);
   return { saved, page };
 }
 
@@ -99,7 +121,7 @@ async function finish(
   if (settled.record === 'clear') await clearInflight(saved.memberId, saved.attemptId);
   const screenGone = isScreenAlive !== undefined && !isScreenAlive();
   let presented = false;
-  if (screenGone && resolutionSpeaks(settled.resolution) && stillSignedIn(saved.memberId)) {
+  if (screenGone && shouldPresent(settled.resolution) && stillSignedIn(saved.memberId)) {
     presentResolution(settled.resolution, { checkAgain: () => void checkRecordAgain(saved) });
     presented = true;
   }
@@ -303,14 +325,12 @@ export async function cardSetupOnHostedPage(input: {
   readonly memberId: string;
   readonly isScreenAlive?: () => boolean;
 }): Promise<CardSetupResult> {
-  if (isHostedPageOpen() || hasLiveAttempt('cardSetup')) return { kind: 'busy' };
-  let url: string;
+  let started: Awaited<ReturnType<typeof begin>>;
   try {
-    url = await startCardSetup();
+    started = await begin({ rail: 'card_setup', memberId: input.memberId }, startCardSetup);
   } catch (error) {
     return { kind: 'notOpened', error };
   }
-  const started = await begin({ rail: 'card_setup', memberId: input.memberId }, url);
   if (!started) return { kind: 'busy' };
   const { saved, page } = started;
   if (page.kind === 'neverOpened') {
@@ -366,4 +386,5 @@ export async function copayOnHostedPage(input: {
 /** Tests only: forget held attempts. */
 export function resetAttemptsForTests(): void {
   held.clear();
+  opening.clear();
 }
