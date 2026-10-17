@@ -440,12 +440,13 @@ export async function signInWithSocialProvider(provider: SocialProvider): Promis
   if (useSocialSignInStore.getState().busy) return 'busy';
   useSocialSignInStore.setState({ busy: true });
   try {
-    const pending: PendingSocialAttempt = {
-      attempt: newAttemptId(),
-      provider,
-      verifier: newCodeVerifier(),
-      startedAt: Date.now(),
-    };
+    let pending: PendingSocialAttempt;
+    try {
+      pending = { attempt: newAttemptId(), provider, verifier: newCodeVerifier(), startedAt: Date.now() };
+    } catch {
+      // The platform's secure random was not there: no attempt can be made safely.
+      return 'failed';
+    }
     // Saved BEFORE the page opens: the process can be gone by the time it returns.
     await savePending(pending);
 
