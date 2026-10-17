@@ -27,6 +27,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AuthField from '../../../components/AuthField';
 import { Dialog, LPText, PrimaryButton } from '../../../components/ui';
 import { useT } from '../../../i18n';
+import { track } from '../../../lib/analytics';
 import { useBusyGuard } from '../../../navigation/guards';
 import type { AuthStackScreenProps } from '../../../navigation/types';
 import { useAppStore } from '../../../stores/appStore';
@@ -97,14 +98,21 @@ export default function SignUpScreen({ navigation }: AuthStackScreenProps<'SignU
     setError(null);
     try {
       // The key is left out when unset; the password is sent as typed.
+      const normalizedNationality = normalizeNationality(nationality);
       const result = await signUp(
         trimmedEmail,
         password,
         fullName.trim(),
-        normalizeNationality(nationality) ?? undefined,
+        normalizedNationality ?? undefined,
         marketingOptIn,
         language,
       );
+      // iOS's event: whether a nationality was given and the marketing choice, never the values typed.
+      track('user_signed_up', {
+        has_nationality: normalizedNationality !== null,
+        marketing_opt_in: marketingOptIn,
+        ...(result.session ? {} : { email_confirmation_required: true }),
+      });
       if (result.session) {
         await useAppStore.getState().handleSignIn(result.session.user.id, { session: result.session });
       } else if (mounted.current) {

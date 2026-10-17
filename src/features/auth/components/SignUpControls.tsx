@@ -8,13 +8,10 @@ import { useMemo } from 'react';
 import { Pressable, StyleSheet, Switch, View } from 'react-native';
 
 import { LPText, MenuPicker, type MenuOption } from '../../../components/ui';
+import { MerchantInfo } from '../../../config/merchantInfo';
 import { markupPlain, MarkupText, useT } from '../../../i18n';
 import { colors, hairline, radius, sans } from '../../../theme';
 import { COUNTRY_OPTIONS, nationalityLabel } from '../../../utils/nationality';
-
-/** Where the Terms and Privacy links go (iOS `MerchantInfo.termsURL` / `privacyURL`). */
-export const TERMS_URL = 'https://lifepass.is/terms';
-export const PRIVACY_URL = 'https://lifepass.is/privacy';
 
 /**
  * The optional nationality (iOS `Menu`): "Prefer not to say" on top, then
@@ -99,7 +96,8 @@ export function MarketingToggle({ value, onChange }: { readonly value: boolean; 
  */
 export function TermsRow({ checked, onChange }: { readonly checked: boolean; readonly onChange: (on: boolean) => void }) {
   const { t } = useT();
-  const text = t('auth.terms_agree', { terms: TERMS_URL, privacy: PRIVACY_URL });
+  // The documents every checkout is agreed under (iOS `MerchantInfo.termsURL` / `privacyURL`).
+  const text = t('auth.terms_agree', { terms: MerchantInfo.termsURL, privacy: MerchantInfo.privacyURL });
   return (
     <View style={styles.termsRow}>
       <Pressable

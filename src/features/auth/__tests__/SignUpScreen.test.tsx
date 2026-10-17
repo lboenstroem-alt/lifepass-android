@@ -13,6 +13,7 @@ import { api, Reply, supabase as authHost, type StubReply } from '@test/server';
 import { stubApiClientPerTest } from '../../../api/testing';
 import { bottomSheetMock } from '../../../components/ui/testing/bottomSheetMock';
 import { lookup, type Lang } from '../../../i18n';
+import { setAnalyticsObserver, type AnalyticsEvent, type AnalyticsParams } from '../../../lib/analytics';
 import {
   freshStorePerTest,
   MEMBER_A,
@@ -200,6 +201,52 @@ describe('Create account', () => {
     await waitFor(() => expect(screen.getByText(en('auth.check_email'))).toBeOnTheScreen());
     await fireEvent.press(screen.getByRole('button', { name: en('common.ok') }));
     expect(authStack()).toEqual(['Onboarding', 'Login']);
+  });
+
+  describe('the sign-up event (iOS `userSignedUp`)', () => {
+    let events: { event: AnalyticsEvent; params: AnalyticsParams }[];
+    beforeEach(() => {
+      events = [];
+      setAnalyticsObserver((event, params) => events.push({ event, params }));
+    });
+    afterEach(() => setAnalyticsObserver(null));
+
+    it('says a confirmation is to come, and only whether a nationality and marketing were chosen', async () => {
+      await openSignUp();
+      authHost.on('POST', '/auth/v1/signup', NO_SESSION);
+      await fireEvent.press(screen.getByRole('switch'));
+      await createAs();
+      await waitFor(() => expect(events.filter((e) => e.event === 'user_signed_up')).toHaveLength(1));
+      expect(events.find((e) => e.event === 'user_signed_up')!.params).toEqual({
+        has_nationality: true,
+        marketing_opt_in: true,
+        email_confirmation_required: true,
+      });
+    });
+
+    it('without the confirmation flag when the account signs in at once', async () => {
+      api.on('GET', '/profile', Reply.ok(profileJSON({ kennitalaVerified: true })));
+      api.on('GET', '/subscriptions', Reply.ok(PLUS_SUBSCRIPTION));
+      await openSignUp();
+      authHost.on('POST', '/auth/v1/signup', Reply.json(200, sessionJSON(MEMBER_A, 3600)));
+      await createAs('member@gmail.com');
+      await waitFor(() => expect(useAppStore.getState().isAuthenticated).toBe(true));
+      expect(events.filter((e) => e.event === 'user_signed_up').map((e) => e.params)).toEqual([
+        { has_nationality: false, marketing_opt_in: false },
+      ]);
+    });
+
+    it('not for a refused sign-up', async () => {
+      await openSignUp();
+      authHost.on(
+        'POST',
+        '/auth/v1/signup',
+        Reply.json(429, { code: 429, error_code: 'over_email_send_rate_limit', msg: 'email rate limit exceeded' }),
+      );
+      await createAs();
+      await waitFor(() => expect(screen.getByText(en('auth.err.rate_limited'))).toBeOnTheScreen());
+      expect(events.filter((e) => e.event === 'user_signed_up')).toHaveLength(0);
+    });
   });
 
   it('the email rate limit has its own sentence', async () => {
