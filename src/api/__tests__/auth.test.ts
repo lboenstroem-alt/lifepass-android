@@ -63,9 +63,10 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const authorizations = () => api.requests.map((r) => r.headers.authorization);
 
-/** What NetInfo answers (the library mock's default is connected). */
+/** What NetInfo answers, cached and on a fresh read (the library mock's default is connected). */
 function netInfo(state: { isConnected: boolean | null; isInternetReachable: boolean | null }): void {
   jest.mocked(NetInfo.fetch).mockResolvedValue({ type: 'wifi', details: null, ...state } as never);
+  jest.mocked(NetInfo.refresh).mockResolvedValue({ type: 'wifi', details: null, ...state } as never);
 }
 
 /** A trouble feed a test drives by hand, for the stub client. */
@@ -273,7 +274,7 @@ describe('Android additions', () => {
     jest
       .spyOn(supabase.auth, 'getSession')
       .mockResolvedValue({ data: { session: null }, error: new AuthRetryableFetchError('Bad gateway', 502) });
-    jest.mocked(NetInfo.fetch).mockResolvedValue({ isConnected: false, isInternetReachable: false } as never);
+    netInfo({ isConnected: false, isInternetReachable: false });
     expect(((await failure(supabaseAccessToken())) as TransportError).transport).toBe('network');
   });
 });

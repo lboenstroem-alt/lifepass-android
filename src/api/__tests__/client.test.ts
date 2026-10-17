@@ -428,14 +428,24 @@ describe('transport', () => {
 
   it("asks NetInfo by default", async () => {
     api.on('GET', '/a', Reply.fail());
-    // Connected before the call; after it failed, the internet is out of reach.
-    jest
-      .mocked(NetInfo.fetch)
-      .mockResolvedValueOnce({ isConnected: true, isInternetReachable: true } as never)
-      .mockResolvedValueOnce({ isConnected: true, isInternetReachable: false } as never);
+    // Connected before the call; after it failed, a fresh read says the
+    // internet is out of reach (the cached answer has not caught up).
+    jest.mocked(NetInfo.fetch).mockResolvedValueOnce({ isConnected: true, isInternetReachable: true } as never);
+    jest.mocked(NetInfo.refresh).mockResolvedValueOnce({ isConnected: true, isInternetReachable: false } as never);
     const app = createApiClient({ accessToken: async () => 'test-token' });
     expect(((await failure(app.get('/a'))) as TransportError).transport).toBe('offline');
     expect(api.requests).toHaveLength(1);
+  });
+
+  it('a stale "disconnected" in NetInfo\'s cache does not stop a call a fresh read says can go', async () => {
+    api.on('GET', '/a', Reply.ok({ id: 'a' }));
+    // NetInfo missed the reconnect (a callback lost across background and
+    // resume): its cache still says disconnected. iOS always tries.
+    jest.mocked(NetInfo.fetch).mockResolvedValueOnce({ isConnected: false, isInternetReachable: false } as never);
+    jest.mocked(NetInfo.refresh).mockResolvedValueOnce({ isConnected: true, isInternetReachable: true } as never);
+    const app = createApiClient({ accessToken: async () => 'test-token' });
+    await expect(app.get('/a')).resolves.toEqual({ id: 'a' });
+    expect(NetInfo.refresh).toHaveBeenCalledTimes(1);
   });
 });
 

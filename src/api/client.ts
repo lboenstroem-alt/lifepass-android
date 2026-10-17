@@ -220,9 +220,9 @@ export interface ApiClientDeps {
   readonly isDeviceOffline?: () => Promise<boolean>;
   /**
    * Before a call: true only when the phone has no network connection at all
-   * (NetInfo `isConnected === false`). A required route then fails as
-   * offline at once, without asking the auth SDK for a token it would spend
-   * about 25 s failing to refresh.
+   * (NetInfo `isConnected === false`, confirmed by a fresh native read). A
+   * required route then fails as offline at once, without asking the auth
+   * SDK for a token it would spend about 25 s failing to refresh.
    */
   readonly isDeviceDisconnected?: () => Promise<boolean>;
   /**
