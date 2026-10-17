@@ -24,6 +24,11 @@
  * override it: the server answers 403 and the sheet turns into the under-18
  * card. The local wipe and the profile read after it wait until the card is
  * closed: either can take down the screen this sheet was opened from.
+ *
+ * KEEP IT MOUNTED AND DRIVE `visible`. What runs after the sheet has gone
+ * (`onGranted`, the minor wipe) runs from the Sheet's `onClosed`, which an
+ * unmounted sheet never reports. A caller with no screen of its own uses
+ * `openHealthConsent` (./presenter.ts) instead.
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
