@@ -78,6 +78,8 @@ export function visibleSocialProviders(buildEnabled: boolean, server: SocialProv
 let cached: SocialProviders | null = null;
 /** A read on its way: the sign-in and sign-up screens asking together share it. */
 let inFlight: Promise<SocialProviders | null> | null = null;
+/** Bumped by a reset: an answer to a read from before it is not this session's. */
+let generation = 0;
 
 /** The cached answer, without asking (null until a read has answered). */
 export function cachedSocialProviders(): SocialProviders | null {
@@ -85,6 +87,7 @@ export function cachedSocialProviders(): SocialProviders | null {
 }
 
 async function readSettings(): Promise<SocialProviders | null> {
+  const mine = generation;
   // The auth-server fetch carries the ceiling (and joins nothing else): a
   // read that never answers ends after 10 s, as URLSession's timeout does.
   const fetchWithCeiling = createAuthFetch({ timeoutMs: AUTH_SETTINGS_TIMEOUT_MS });
@@ -99,7 +102,7 @@ async function readSettings(): Promise<SocialProviders | null> {
     });
     if (!response.ok) return null;
     const providers = decodeAuthSettings(await response.text());
-    cached = providers;
+    if (mine === generation) cached = providers;
     return providers;
   } catch {
     return null;
@@ -114,9 +117,10 @@ async function readSettings(): Promise<SocialProviders | null> {
 export function enabledSocialProviders(): Promise<SocialProviders | null> {
   if (cached) return Promise.resolve(cached);
   if (!inFlight) {
-    inFlight = readSettings().finally(() => {
-      inFlight = null;
+    const read = readSettings().finally(() => {
+      if (inFlight === read) inFlight = null;
     });
+    inFlight = read;
   }
   return inFlight;
 }
@@ -136,6 +140,7 @@ export async function loadSocialProviders(): Promise<SocialProviders> {
 
 /** Back to a fresh app session (tests). */
 export function resetSocialProviderSettingsForTests(): void {
+  generation += 1;
   cached = null;
   inFlight = null;
 }
