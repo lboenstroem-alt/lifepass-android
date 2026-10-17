@@ -16,7 +16,13 @@ import { api, Reply, supabase as authHost, type StubReply } from '@test/server';
 import { setEnv } from '@test/harness';
 
 import { stubApiClientPerTest } from '../../api/testing';
-import { registerActivationHook, registerPreSignOutHook, registerSignOutCleaner } from '../../app/signOut';
+import {
+  registerActivationHook,
+  registerPreSignOutHook,
+  registerProfileReadHook,
+  registerSignOutCleaner,
+} from '../../app/signOut';
+import { FIXTURE_PROFILE_ID } from '../../dev/fixtureSession';
 import { COACH_SESSIONS_KEY, COACH_SESSIONS_OWNER_KEY } from '../../features/coach/register';
 import { readStoredSession } from '../../lib/secureSessionStorage';
 import { supabase, SUPABASE_STORAGE_KEY } from '../../supabase/lib/client';
@@ -24,6 +30,8 @@ import {
   ACCOUNT_LANGUAGE_KEY,
   KENNITALA_PROMPT_DISMISSED_KEY,
   registerKennitalaPromptBlocker,
+  selectPurchaseStateKnown,
+  serverLogoutSettledForTests,
   useAppStore,
 } from '../appStore';
 
@@ -86,6 +94,13 @@ function serveMember(options: Parameters<typeof profileJSON>[0] = {}) {
   api.on('GET', '/profile', Reply.ok(profileJSON({ kennitalaVerified: true, ...options })));
   api.on('GET', '/subscriptions', Reply.ok(PLUS_SUBSCRIPTION));
 }
+
+/** Settles until `check` holds, or gives up after enough turns for a sign-out round trip. */
+async function eventually(check: () => boolean | Promise<boolean>): Promise<void> {
+  for (let i = 0; i < 50 && !(await check()); i += 1) await settle(1);
+}
+
+const noStoredSession = async () => (await readStoredSession(SUPABASE_STORAGE_KEY)) === null;
 
 const ownerlessChats = JSON.stringify([{ id: 's-1', title: 'Pools near Laugardalur?', date: '2026-10-01', messages: [] }]);
 
@@ -213,8 +228,44 @@ describe('launch', () => {
     expect(store().profile?.usage?.passes[0]?.type).toBe('adventurer');
     expect(store().language).toBe('is');
     expect(store().healthAccess).toBe('pass_only');
+    // No plan, and that is known (iOS treats the fixture's nil plan as read).
+    expect(store().subscriptionLoaded).toBe(true);
+    expect(selectPurchaseStateKnown(store())).toBe(true);
     expect(api.requests).toHaveLength(0);
     expect(authHost.requests).toHaveLength(0);
+  });
+
+  it('a real session the SDK signs in meanwhile does not replace the fixture member', async () => {
+    setEnv({ EXPO_PUBLIC_FIXTURE: 'state=pass-holder' });
+    await store().bootstrap();
+    authHost.on('GET', '/auth/v1/user', Reply.json(200, sessionJSON(MEMBER_B, 3600).user));
+    const real = sessionJSON(MEMBER_B, 3600);
+    await supabase.auth.setSession({ access_token: real.access_token, refresh_token: real.refresh_token });
+    await settle(10);
+    expect(store().userId).toBe(FIXTURE_PROFILE_ID);
+    expect(store().profile?.usage?.passes[0]?.type).toBe('adventurer');
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it('the profile-read hooks run after every successful read, with the profile, before launch ends', async () => {
+    const seen: string[] = [];
+    let loadingDuringHook: boolean | null = null;
+    unregister.push(
+      registerProfileReadHook('test.reconcile', ({ memberId, profile }) => {
+        loadingDuringHook ??= store().isLoading;
+        seen.push(`${memberId}:${profile.fullName}`);
+      }),
+    );
+    await storeSession(MEMBER_A);
+    serveMember({ fullName: 'Anna' });
+    await store().bootstrap();
+    expect(loadingDuringHook).toBe(true);
+
+    api.on('GET', '/profile', Reply.problem(500, 'internal_error'));
+    await store().loadProfile();
+    api.on('GET', '/profile', Reply.ok(profileJSON({ kennitalaVerified: true, fullName: 'Anna B' })));
+    await store().loadProfile();
+    expect(seen).toEqual([`${MEMBER_A}:Anna`, `${MEMBER_A}:Anna B`]);
   });
 });
 
@@ -284,6 +335,40 @@ describe('sign-in', () => {
     expect(store().profile?.fullName).toBe('Björn');
   });
 
+  it("another member signing in never keeps the last member's plan, even when that member's profile never loaded", async () => {
+    api.on('GET', '/profile', Reply.problem(500, 'internal_error'));
+    api.on('GET', '/subscriptions', Reply.ok(PLUS_SUBSCRIPTION));
+    await store().handleSignIn(MEMBER_A);
+    await settle();
+    expect(store().profile).toBeNull();
+    expect(store().subscription?.productSlug).toBe('plan-plus');
+
+    // An auth link for another account opened on this phone, both reads failing.
+    api.on('GET', '/subscriptions', Reply.problem(500, 'internal_error'));
+    await store().handleSignIn(MEMBER_B);
+    await settle();
+    expect(store().userId).toBe(MEMBER_B);
+    expect(store().subscription).toBeNull();
+    expect(store().subscriptionLoaded).toBe(false);
+    expect(selectPurchaseStateKnown(store())).toBe(false);
+  });
+
+  it('a sign-in for the member already signed in, once theirs has finished, runs in full again (an auth link)', async () => {
+    serveMember();
+    await store().handleSignIn(MEMBER_A);
+    await settle();
+    const profiles = api.sentAll('/profile', 'GET').length;
+    const plans = api.sentAll('/subscriptions', 'GET').length;
+    await AsyncStorage.setItem(ACCOUNT_LANGUAGE_KEY, 'is');
+
+    await store().handleSignIn(MEMBER_A, { suppressKennitalaPrompt: true });
+    await settle();
+    expect(api.sentAll('/profile', 'GET')).toHaveLength(profiles + 1);
+    expect(api.sentAll('/subscriptions', 'GET')).toHaveLength(plans + 1);
+    // As iOS: a sign-in forgets the cached account language, then the read stores it again.
+    expect(await AsyncStorage.getItem(ACCOUNT_LANGUAGE_KEY)).toBe('en');
+  });
+
   describe('the Kenni nudge (fresh, unverified accounts only)', () => {
     const fresh = () => new Date(Date.now() - 60 * 60 * 1000).toISOString();
 
@@ -308,6 +393,14 @@ describe('sign-in', () => {
       const first = store().handleSignIn(MEMBER_A);
       const recovery = store().handleSignIn(MEMBER_A, { suppressKennitalaPrompt: true });
       await Promise.all([first, recovery]);
+      expect(store().pendingKennitalaPrompt).toBe(false);
+    });
+
+    it("not for a password-recovery sign-in that comes after the link's own sign-in finished", async () => {
+      serveMember({ kennitalaVerified: false, createdAt: fresh() });
+      await store().handleSignIn(MEMBER_A);
+      expect(store().pendingKennitalaPrompt).toBe(true);
+      await store().handleSignIn(MEMBER_A, { suppressKennitalaPrompt: true });
       expect(store().pendingKennitalaPrompt).toBe(false);
     });
 
@@ -386,6 +479,92 @@ describe('sign-out', () => {
     expect(await readStoredSession(SUPABASE_STORAGE_KEY)).toBeNull();
   });
 
+  describe('the member is signed out at once, as on iOS (session off the phone first, the server told after)', () => {
+    it('online, with a logout the auth server holds: the logout goes after, everywhere, with their token', async () => {
+      await signedIn();
+      const token = (await readStoredSession(SUPABASE_STORAGE_KEY))!.access_token;
+      let release!: () => void;
+      let atLogout: { signedIn: boolean; stored: boolean } | null = null;
+      authHost.on('POST', '/auth/v1/logout', async () => {
+        atLogout = { signedIn: store().isAuthenticated, stored: !(await noStoredSession()) };
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return Reply.empty(204);
+      });
+
+      const started = Date.now();
+      await store().signOut();
+      expect(Date.now() - started).toBeLessThan(1000);
+      expect(store().isAuthenticated).toBe(false);
+      expect(store().userId).toBeNull();
+      expect(await noStoredSession()).toBe(true);
+
+      await eventually(() => authHost.sentAll('/auth/v1/logout', 'POST').length === 1);
+      const logout = authHost.sent('/auth/v1/logout', 'POST');
+      expect(logout.query.scope).toBe('global');
+      expect(logout.headers.authorization).toBe(`Bearer ${token}`);
+      expect(atLogout).toEqual({ signedIn: false, stored: false });
+      release();
+      await serverLogoutSettledForTests();
+    });
+
+    it('offline after an offline cold start, with an expired token and a refresh still retrying', async () => {
+      await storeSession(MEMBER_A, -60);
+      netInfo({ isConnected: false, isInternetReachable: false });
+      const endpoint = refreshEndpoint(() => Reply.fail());
+      api.on('GET', '/profile', Reply.fail());
+      api.on('GET', '/subscriptions', Reply.fail());
+      authHost.on('POST', '/auth/v1/logout', Reply.empty(204));
+      const seen: (string | null)[] = [];
+      unregister.push(registerSignOutCleaner('test.member', ({ memberId }) => void seen.push(memberId)));
+      await store().bootstrap();
+      expect(store().isAuthenticated).toBe(true);
+      // The SDK is retrying the expired token's refresh (it holds its session lock while it does).
+      const refreshing = supabase.auth.getSession();
+      await settle();
+      expect(authHost.sentAll('/auth/v1/token', 'POST').length).toBeGreaterThan(0);
+
+      const started = Date.now();
+      await store().signOut();
+      expect(Date.now() - started).toBeLessThan(1000);
+      expect(store().isAuthenticated).toBe(false);
+      expect(await noStoredSession()).toBe(true);
+      expect(seen).toEqual([MEMBER_A]);
+      await serverLogoutSettledForTests();
+      // Offline: the auth server is not asked; its copy expires on its own.
+      expect(authHost.sentAll('/auth/v1/logout', 'POST')).toHaveLength(0);
+
+      // The phone comes back and the SDK's retry finally gets a session: it does not stay.
+      netInfo({ isConnected: true, isInternetReachable: true });
+      await endpoint.recover();
+      await refreshing;
+      await eventually(noStoredSession);
+      expect(await noStoredSession()).toBe(true);
+      expect(store().isAuthenticated).toBe(false);
+      expect(seen).toEqual([MEMBER_A]);
+      await serverLogoutSettledForTests();
+    });
+
+    it('a second tap joins the sign-out under way', async () => {
+      await signedIn();
+      let hooks = 0;
+      let cleaners = 0;
+      unregister.push(registerPreSignOutHook('test.count', () => void (hooks += 1)));
+      unregister.push(registerSignOutCleaner('test.count', () => void (cleaners += 1)));
+      authHost.on('POST', '/auth/v1/logout', Reply.empty(204));
+      const first = store().signOut();
+      const second = store().signOut();
+      expect(second).toBe(first);
+      await first;
+      await settle(10);
+      expect(hooks).toBe(1);
+      expect(cleaners).toBe(1);
+      await serverLogoutSettledForTests();
+      expect(authHost.sentAll('/auth/v1/logout', 'POST')).toHaveLength(1);
+    });
+  });
+
   describe('a refresh that answers after the member signed out', () => {
     /**
      * What a refresh supabase-js was still retrying does when it finally
@@ -399,18 +578,12 @@ describe('sign-out', () => {
       await supabase.auth.setSession({ access_token: expired.access_token, refresh_token: expired.refresh_token });
     }
 
-    /** Settles until `check` holds, or gives up after enough turns for a sign-out round trip. */
-    async function eventually(check: () => Promise<boolean>): Promise<void> {
-      for (let i = 0; i < 50 && !(await check()); i += 1) await settle(1);
-    }
-
-    const noStoredSession = async () => (await readStoredSession(SUPABASE_STORAGE_KEY)) === null;
-
     async function signedInThenOut(): Promise<void> {
       await signedIn();
       authHost.on('POST', '/auth/v1/logout', Reply.empty(204));
       await store().signOut();
       await settle(10);
+      await serverLogoutSettledForTests();
       expect(await noStoredSession()).toBe(true);
     }
 
@@ -426,6 +599,7 @@ describe('sign-out', () => {
       expect(store().isAuthenticated).toBe(false);
       expect(store().userId).toBeNull();
       // Ended on the server too, as the sign-out meant, and wiped only once.
+      await eventually(() => authHost.sentAll('/auth/v1/logout', 'POST').length === 2);
       expect(authHost.sentAll('/auth/v1/logout', 'POST')).toHaveLength(2);
       expect(runs).toBe(1);
     });

@@ -19,10 +19,13 @@
  *   account language (it may be a different member), reads the profile, and
  *   arms the Kenni nudge unless this is a password-recovery sign-in.
  * - `signOut()` gives the pre-sign-out hooks a short try, ends the session
- *   (locally too when the auth server cannot be reached: an offline sign-out
- *   still signs out), and `handleSignOut()` clears the state and runs every
- *   sign-out cleaner with the member's id, captured before anything is
- *   cleared, so the wipe works even when the profile never loaded.
+ *   ON THE PHONE at once (as supabase-swift does, so a missing or slow
+ *   network never keeps the member on screen), and `handleSignOut()` clears the
+ *   state and runs every sign-out cleaner with the member's id, captured
+ *   before anything is cleared, so the wipe works even when the profile
+ *   never loaded. The auth server is told afterwards, in the background.
+ * - `loadProfile()` runs the profile-read hooks after every successful read
+ *   (iOS `health.reconcile(profile:)`), src/app/signOut.ts.
  * - One auth listener for the life of the app: SIGNED_OUT runs
  *   `handleSignOut` (once), USER_UPDATED re-reads the profile, a refreshed
  *   token replaces the session. A SIGNED_IN that nobody announced (an auth
@@ -48,7 +51,7 @@ import { AppState, type NativeEventSubscription } from 'react-native';
 import { create } from 'zustand';
 
 import { onRefreshTrouble } from '../api/authFetch';
-import { LOGOUT_WAIT_MS, supabaseSessionDeps } from '../api/client';
+import { LOGOUT_WAIT_MS } from '../api/client';
 import { deviceDisconnected } from '../api/connectivity';
 import {
   activePasses,
@@ -72,13 +75,19 @@ import {
   type Subscription,
 } from '../api/subscriptions';
 import { wireId } from '../api/wire';
-import '../app/registrations';
-import { runActivationHooks, runPreSignOutHooks, runSignInHooks, runSignOutCleaners } from '../app/signOut';
+import {
+  loadRegistrations,
+  runActivationHooks,
+  runPreSignOutHooks,
+  runProfileReadHooks,
+  runSignInHooks,
+  runSignOutCleaners,
+} from '../app/signOut';
 import { fixtureProfile, FIXTURE_PROFILE_ID, requestedFixtureState } from '../dev/fixtureSession';
 import { deviceLanguage, normaliseLang, setCurrentLanguage, type Lang } from '../i18n';
 import { errorDescription, track } from '../lib/analytics';
 import { readStoredSession } from '../lib/secureSessionStorage';
-import { SUPABASE_STORAGE_KEY, supabase } from '../supabase/lib/client';
+import { endSessionOnPhone, revokeSessionOnServer, SUPABASE_STORAGE_KEY, supabase } from '../supabase/lib/client';
 
 // ---------------------------------------------------------------------------
 // Keys and limits
@@ -169,9 +178,17 @@ export interface SignInOptions {
 export interface AppStoreActions {
   /** Launch: restore the session and load the member (iOS `checkSession`). Runs once; later calls share it. */
   bootstrap(): Promise<void>;
-  /** After a sign-in (iOS `handleSignIn`). A second call for the same member joins the first. */
+  /**
+   * After a sign-in (iOS `handleSignIn`). A call for the same member while
+   * their sign-in is still running joins it; once it has finished, a call
+   * runs in full again.
+   */
   handleSignIn(userId: string, options?: SignInOptions): Promise<void>;
-  /** The member's Sign out: pre-sign-out hooks, end the session, then `handleSignOut`. Never throws. */
+  /**
+   * The member's Sign out: pre-sign-out hooks, the session off the phone,
+   * then `handleSignOut`; the auth server is told in the background. Never
+   * throws; a second call while it runs joins it.
+   */
   signOut(): Promise<void>;
   /** Clears the member's state and runs the sign-out cleaners (iOS `handleSignOut`). */
   handleSignOut(): Promise<void>;
@@ -323,6 +340,19 @@ let activatedFor: string | null = null;
  */
 let signedOutMember: string | null = null;
 
+/** The member's Sign out while it runs: a second tap joins it rather than start another. */
+let signOutFlight: Promise<void> | null = null;
+
+/** The last logout sent to the auth server after a session ended (tests wait on it). */
+let serverLogout: Promise<void> | null = null;
+
+/**
+ * A development fixture member is standing in (src/dev/fixtureSession.ts):
+ * a real session the SDK restores or refreshes meanwhile does not replace
+ * them. Only a sign-out (or an explicit sign-in) does.
+ */
+let fixtureApplied = false;
+
 let authListener: { unsubscribe(): void } | null = null;
 let appStateListener: NativeEventSubscription | null = null;
 
@@ -432,9 +462,15 @@ export const useAppStore = create<AppStore>()((set, get) => {
     const current = get();
     // Signed in again: a refreshed session of theirs is theirs once more.
     if (signedOutMember === userId) signedOutMember = null;
-    // A different member than the one whose profile is in hand (their
-    // session lapsed without a sign-out): nothing of theirs stays on screen.
-    const otherMember = current.profile !== null && current.profile.id !== userId;
+    // A different member than the one signed in, or than the one whose
+    // profile is in hand (an auth link for another account opened on this
+    // phone, a session that lapsed without a sign-out): nothing of theirs
+    // stays on screen. The member is compared as well as the profile: when
+    // their profile never loaded (offline, a failed read) but their plan
+    // did, the next member must not be shown that plan.
+    const otherMember =
+      (current.userId !== null && current.userId !== userId) ||
+      (current.profile !== null && current.profile.id !== userId);
     set({
       session: session ?? (current.userId === userId ? current.session : null),
       userId,
@@ -489,17 +525,25 @@ export const useAppStore = create<AppStore>()((set, get) => {
     return stored();
   }
 
-  /** Development only: a fixture member (src/dev/fixtureSession.ts). */
+  /**
+   * Development only: a fixture member (src/dev/fixtureSession.ts), as iOS
+   * `ScreenshotFixtures.apply(to:)` stands one up: signed in, the fixture
+   * profile, and no plan, read (a nil plan iOS treats as known). There is no
+   * session: the navigator gates on `isAuthenticated` (iOS ContentView does),
+   * not on a session object.
+   */
   function applyFixture(): boolean {
     if (!__DEV__) return false;
     const state = requestedFixtureState();
     if (!state) return false;
     generation += 1;
+    fixtureApplied = true;
     set({
       userId: FIXTURE_PROFILE_ID,
       isAuthenticated: true,
       profile: fixtureProfile(state),
       subscription: null,
+      subscriptionLoaded: true,
     });
     return true;
   }
@@ -508,6 +552,9 @@ export const useAppStore = create<AppStore>()((set, get) => {
     const state = get();
     switch (event) {
       case 'SIGNED_OUT':
+        // A real stored session ending is not the fixture member's sign-out
+        // (theirs runs `handleSignOut` itself).
+        if (fixtureApplied) return;
         // Once per sign-out: `signOut()` may have run it already.
         if (state.isAuthenticated || state.userId !== null) await state.handleSignOut();
         return;
@@ -527,12 +574,13 @@ export const useAppStore = create<AppStore>()((set, get) => {
         // the server too, as the sign-out meant. If another member has signed
         // in since, the session the phone now holds is not theirs either, and
         // the SIGNED_OUT this fires signs them out rather than leave them
-        // reading someone else's account.
-        if (!bootstrapping && refreshed === signedOutMember) await endSession();
+        // reading someone else's account. The logout carries the refreshed
+        // token (theirs), never the store's (which may be the new member's).
+        if (!bootstrapping && refreshed === signedOutMember) await endSession(session.access_token);
         return;
       }
       case 'SIGNED_IN': {
-        if (!session) return;
+        if (!session || fixtureApplied) return;
         if (bootstrapping) {
           signInDuringLaunch = session;
           return;
@@ -585,32 +633,38 @@ export const useAppStore = create<AppStore>()((set, get) => {
   }
 
   /**
-   * Ends the Supabase session: everywhere when the auth server answers, else
-   * on this phone (supabase-js keeps a session whose logout failed on the
-   * way; iOS ends it regardless). The SIGNED_OUT this fires is handled once.
+   * Ends the Supabase session in supabase-swift's order: off this phone
+   * first (the stored session removed, SIGNED_OUT emitted, handled once),
+   * THEN the auth server is told, in the background. Neither a missing or
+   * slow network nor a refresh still retrying keeps a member signed in after
+   * Log out: supabase-js's own `signOut()` waited behind its session lock and on
+   * the server first (10 s offline with an expired token, 20 s with a logout
+   * that hung), with the member still on screen the whole time.
+   *
+   * `accessToken` is the session being ended, for the logout; it is read
+   * BEFORE the session goes, from where the SDK stores it (no refresh, no
+   * lock). The server's copy of a session already off the phone needs no
+   * one to wait for it: offline it is not asked at all, and it expires on
+   * its own.
    */
-  async function endSession(): Promise<void> {
-    if (!(await deviceDisconnected())) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const result = await Promise.race([
-          supabase.auth.signOut(),
-          new Promise<undefined>((resolve) => {
-            timer = setTimeout(() => resolve(undefined), LOGOUT_WAIT_MS);
-          }),
-        ]);
-        if (result && !result.error) return;
-      } catch {
-        // Fall through to the local end.
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-      }
-    }
-    try {
-      await supabaseSessionDeps(supabase).endRevokedSession();
-    } catch {
-      // The state is cleared by `handleSignOut` either way.
-    }
+  async function endSession(accessToken: string | null): Promise<void> {
+    await endSessionOnPhone();
+    if (accessToken) void revokeInBackground(accessToken);
+  }
+
+  function revokeInBackground(accessToken: string): Promise<void> {
+    const revoke = (async () => {
+      if (await deviceDisconnected()) return;
+      await revokeSessionOnServer(accessToken, LOGOUT_WAIT_MS);
+    })().catch(() => undefined);
+    serverLogout = revoke;
+    return revoke;
+  }
+
+  /** The token of the session on the phone now, read without a refresh; the store's copy otherwise. */
+  async function sessionTokenOnPhone(): Promise<string | null> {
+    const stored = await readStoredSession(SUPABASE_STORAGE_KEY);
+    return stored?.access_token ?? get().session?.access_token ?? null;
   }
 
   return {
@@ -622,6 +676,9 @@ export const useAppStore = create<AppStore>()((set, get) => {
         bootstrapping = true;
         set({ isLoading: true });
         try {
+          // Every feature's hooks, before the first session decision (they
+          // load here, not when this module does: see src/app/signOut.ts).
+          loadRegistrations();
           await hydrateCachedAccountLanguage();
           startAuthListener();
           startForegroundWatch();
@@ -644,7 +701,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
         const late = signInDuringLaunch;
         signInDuringLaunch = null;
         const state = get();
-        if (late && !(state.isAuthenticated && state.userId === wireId(late.user.id))) {
+        if (late && !fixtureApplied && !(state.isAuthenticated && state.userId === wireId(late.user.id))) {
           await state.handleSignIn(late.user.id, { session: late });
         }
       })();
@@ -653,15 +710,21 @@ export const useAppStore = create<AppStore>()((set, get) => {
 
     handleSignIn(rawUserId, options = {}) {
       const userId = wireId(rawUserId);
+      // A password-recovery sign-in never shows the nudge, whichever sign-in
+      // of this member armed it (the link's own SIGNED_IN may have come first).
+      if (options.suppressKennitalaPrompt) set({ pendingKennitalaPrompt: false });
+      // The same member's sign-in STILL RUNNING (a screen's call and the
+      // SIGNED_IN it produced) is one sign-in. Once it has finished, a new
+      // call runs in full, as iOS `handleSignIn` does on every call (an auth
+      // link for a member already signed in re-reads the profile and plan).
       if (signInFlight && signInFlight.userId === userId && signInFlight.generation === generation) {
-        if (options.suppressKennitalaPrompt) {
-          signInFlight.suppressKennitalaPrompt = true;
-          set({ pendingKennitalaPrompt: false });
-        }
+        if (options.suppressKennitalaPrompt) signInFlight.suppressKennitalaPrompt = true;
         if (options.session) set({ session: options.session });
         return signInFlight.promise;
       }
       generation += 1;
+      // An explicit sign-in replaces a development fixture.
+      fixtureApplied = false;
       const flight: SignInFlight = {
         userId,
         generation,
@@ -669,20 +732,39 @@ export const useAppStore = create<AppStore>()((set, get) => {
         promise: Promise.resolve(),
       };
       signInFlight = flight;
-      flight.promise = signedIn(options.session ?? null, userId, options.restoredSession === true, flight).catch((error: unknown) => {
-        track('service_error', { op: 'handleSignIn', error: errorDescription(error) });
-      });
+      flight.promise = signedIn(options.session ?? null, userId, options.restoredSession === true, flight)
+        .catch((error: unknown) => {
+          track('service_error', { op: 'handleSignIn', error: errorDescription(error) });
+        })
+        .finally(() => {
+          if (signInFlight === flight) signInFlight = null;
+        });
       return flight.promise;
     },
 
-    async signOut() {
-      const state = get();
-      const memberId = state.profile?.id ?? state.userId;
-      await runPreSignOutHooks({ memberId });
-      await endSession();
-      // The SIGNED_OUT event runs `handleSignOut` too; whichever comes first does it.
-      const after = get();
-      if (after.isAuthenticated || after.userId !== null) await after.handleSignOut();
+    signOut() {
+      if (signOutFlight) return signOutFlight;
+      const flight = (async () => {
+        const state = get();
+        const memberId = state.profile?.id ?? state.userId;
+        try {
+          await runPreSignOutHooks({ memberId });
+          // The token while the session still stands, then off the phone at
+          // once (iOS: supabase-swift removes the session and emits
+          // signedOut, which runs `handleSignOut`, before its logout request).
+          await endSession(await sessionTokenOnPhone());
+        } catch (error) {
+          track('service_error', { op: 'signOut', error: errorDescription(error) });
+        }
+        // The SIGNED_OUT event runs `handleSignOut` too; whichever comes
+        // first does it. Signed out on screen whatever happened above.
+        const after = get();
+        if (after.isAuthenticated || after.userId !== null) await after.handleSignOut();
+      })().finally(() => {
+        if (signOutFlight === flight) signOutFlight = null;
+      });
+      signOutFlight = flight;
+      return flight;
     },
 
     async handleSignOut() {
@@ -694,6 +776,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
       generation += 1;
       signInFlight = null;
       activatedFor = null;
+      fixtureApplied = false;
       if (memberId !== null) signedOutMember = memberId;
       set({
         session: null,
@@ -741,6 +824,13 @@ export const useAppStore = create<AppStore>()((set, get) => {
           ...(health ? { serverFeatures: uniqueFeatures(health.features), healthAccessOverride: null } : {}),
         });
         await rememberAccountLanguage(loaded);
+        // Last, and every time (iOS `await health.reconcile(profile:)`): the
+        // profile is where the phone learns that tracking was switched off
+        // on the web, or that a Kenni verification made this member a minor,
+        // and what the phone still holds is reconciled before anything else
+        // reads it. Awaited, so a launch shows nothing before it.
+        if (mine !== generation) return;
+        await runProfileReadHooks({ memberId: loaded.id, profile: loaded });
         if (mine === generation && get().isAuthenticated) activateOnce(loaded.id);
       } catch (error) {
         if (mine === generation) track('service_error', { op: 'loadProfile', error: errorDescription(error) });
@@ -853,10 +943,18 @@ export function resetAppStoreForTests(): void {
   bootstrapping = false;
   signInDuringLaunch = null;
   signInFlight = null;
+  signOutFlight = null;
+  serverLogout = null;
+  fixtureApplied = false;
   activatedFor = null;
   signedOutMember = null;
   kennitalaPromptBlockers.clear();
   useAppStore.setState({ ...initialState, language: deviceLanguage() });
+}
+
+/** The logout sent to the auth server after the last session ended, once it has settled (tests). */
+export async function serverLogoutSettledForTests(): Promise<void> {
+  await serverLogout;
 }
 
 /** Reads the cached account language, as a relaunch does before the session (tests). */
