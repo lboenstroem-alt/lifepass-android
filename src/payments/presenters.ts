@@ -8,13 +8,18 @@
  * welcome; ACCT-2 and ACCT-3 to refresh Account). Until one has, the default
  * below shows the same alert the rail's screen would have shown, in the same
  * words (iOS `BookingCopy` and `CheckInView` pay outcomes, `PlansView`'s
- * welcome and payment issue). Card setup and co-pay are quiet, as on iOS:
- * Account re-renders from what it reads.
+ * welcome and payment issue), and a booking that landed gets the check-in
+ * reminders iOS schedules when any booking lands. Card setup and co-pay are
+ * quiet, as on iOS: Account re-renders from what it reads.
+ *
+ * A rail's own presenter replaces the default whole: BOOK-1's must schedule
+ * the reminders itself.
  */
 import { refusalMessage } from '../api';
 import { MerchantInfo } from '../config/merchantInfo';
 import { showDialog, type DialogButton } from '../components/ui/Dialog';
 import { t } from '../i18n';
+import { scheduleBookingReminders } from '../services/notifications';
 
 import type { PaySettlement } from './bookingPaymentSession';
 import type { ConfirmedCard } from './cardSetup';
@@ -127,6 +132,35 @@ function outcomeButtons(settlement: PaySettlement, walkIn: boolean, actions: Pre
   }
 }
 
+/**
+ * The check-in reminders for a booking that landed while its screen was gone.
+ * iOS schedules them the moment any booking lands (`BookingConfirmComponents`
+ * on `bookingComplete`, `ClassReminderService.scheduleCheckInReminder`): the
+ * class's name, else the activity's, at the class's or the slot's start,
+ * with the notification permission asked right there, in context. A refusal
+ * or a failure never touches the booking.
+ *
+ * Through the legacy notification shim's `scheduleBookingReminders`, which
+ * F7 turns into iOS's T-30 and T-10 reminders, until BOOK-1 registers its
+ * own presenter (and with it its own reminder call).
+ */
+function scheduleCheckInReminders(record: BookingInflight): void {
+  const { booking } = record;
+  const startsAt = booking.startsAt ? new Date(booking.startsAt) : null;
+  if (!startsAt || Number.isNaN(startsAt.getTime())) return;
+  const name = booking.className?.trim() || booking.activityName?.trim() || '';
+  try {
+    void scheduleBookingReminders({
+      bookingId: record.key,
+      venueName: booking.venueName?.trim() ?? '',
+      activityName: name,
+      bookingTime: startsAt,
+    }).catch(() => undefined);
+  } catch {
+    // Reminders are a courtesy: nothing about them may reach the member's booking.
+  }
+}
+
 function presentPaySettlement(resolution: PaymentResolution & { rail: 'booking' | 'walk_in' }, actions: PresenterActions) {
   const { settlement, record } = resolution;
   const walkIn = resolution.rail === 'walk_in';
@@ -156,6 +190,7 @@ function presentPaySettlement(resolution: PaymentResolution & { rail: 'booking' 
           message: confirmedBody(true, resolution.record.booking.kind === 'class'),
           buttons: [{ label: t('common.done') }],
         });
+        scheduleCheckInReminders(resolution.record);
       }
       return;
     case 'outcome':

@@ -10,6 +10,7 @@
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as WebBrowser from 'expo-web-browser';
+import { notificationsState } from '@test/mocks/expoNotifications';
 import { api, Reply, type StubReply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../api/testing';
@@ -339,6 +340,43 @@ describe('a payment the app lost behind the page', () => {
     await foreground();
     expect(confirms()).toHaveLength(2);
     expect(screen.queryByText(lookup('error.server', 'en'))).toBeNull();
+  });
+
+  it('a booking confirmed after process death gets its check-in reminders, before its start', async () => {
+    notificationsState.setPermission('granted');
+    // Two days out, so every reminder rung is still ahead.
+    const startsAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    signIn();
+    await saveInflight({ ...classAttempt(), booking: { ...hotYoga, startsAt: startsAt.toISOString() } } as NewInflightRecord);
+    killProcess();
+    launchedWith('lifepass://payment-success');
+    confirmReplies(fulfilledBooking);
+    await render(<DialogHost />);
+    await launch();
+
+    expect(screen.getByText(lookup('booking.confirmed_title', 'en'))).toBeTruthy();
+    const scheduled = notificationsState.scheduled();
+    expect(scheduled.length).toBeGreaterThan(0);
+    for (const request of scheduled) {
+      const fireAt = new Date((request.trigger as { date: Date | number | string }).date).getTime();
+      expect(fireAt).toBeLessThan(startsAt.getTime());
+      expect(fireAt).toBeGreaterThan(Date.now());
+    }
+  });
+
+  it('a booking with no start, or one not booked, schedules nothing', async () => {
+    notificationsState.setPermission('granted');
+    signIn();
+    await saveInflight({ ...classAttempt(), booking: { ...hotYoga, startsAt: null } } as NewInflightRecord);
+    await saveInflight(classAttempt(MEMBER_A, 'booking-key-0002'));
+    killProcess();
+    launchedWith('lifepass://payment-canceled');
+    // The first (no start) is booked; the newest (the link's) was never paid.
+    confirmReplies(fulfilledBooking, unpaid);
+    await render(<DialogHost />);
+    await launch();
+    expect(confirms()).toHaveLength(2);
+    expect(notificationsState.scheduled()).toEqual([]);
   });
 
   it('a rail’s own presenter replaces the default (BOOK-1 schedules the reminders there)', async () => {

@@ -12,7 +12,8 @@
  *   `payOutcomeTitle` / `payOutcomeMessage` / `confirmedBody` for the words;
  *   `registerPaymentOutcomePresenter('booking' | 'walk_in', ...)` for the
  *   outcome after process death (BOOK-1 schedules the check-in reminders
- *   there; CHECKIN-2 shows the proof).
+ *   there, as the default presenter does until then; CHECKIN-2 shows the
+ *   proof).
  * - PLANS-2: src/api/planCheckout.ts for the checkout, `checkoutOnHostedPage`
  *   for the page and its verification, `registerPaymentOutcomePresenter('plan', ...)`.
  * - ACCT-2: `cardSetupOnHostedPage`; ACCT-3: `copayOnHostedPage`.
