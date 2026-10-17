@@ -209,7 +209,7 @@ export default function HomeScreen() {
       }
       testID="home.scroll"
     >
-      <View onTouchStart={onContentTouchStart}>
+      <View onTouchStart={onContentTouchStart} testID="home.content">
         <HomeProofBanner />
 
         {hero ? (

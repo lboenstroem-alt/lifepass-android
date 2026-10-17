@@ -121,6 +121,7 @@ const TryNewSection = forwardRef<TryNewSectionHandle, Props>(function TryNewSect
       <View style={styles.askCard}>
         <View
           style={styles.inputRow}
+          testID="home.coachInput.row"
           // Seen before Home's own touch handler (touches bubble up): a tap
           // here is the member placing the cursor or sending, not leaving.
           onTouchStart={(_event: GestureResponderEvent) => {

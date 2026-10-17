@@ -7,9 +7,9 @@
  * refresh.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { act, fireEvent, screen, within } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
-import { Keyboard } from 'react-native';
+import { Keyboard, TextInput } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { translate } from '../../../i18n';
@@ -18,6 +18,7 @@ import { UPGRADED_FROM_PROFILE_TAB_KEY } from '../../../navigation/navPrefs';
 import { profileOpenedKey } from '../../../navigation/profile';
 import { useIntentStore } from '../../../stores/intentStore';
 import { greetingKey } from '../greeting';
+import TryNewSection, { type TryNewSectionHandle } from '../TryNewSection';
 import { HOME_ASK_CHIPS, HOME_COACH_CATEGORIES } from '../coachPrompts';
 import {
   analytics,
@@ -357,6 +358,43 @@ describe('the Coach hand-off', () => {
     const scroll = screen.getByTestId('home.scroll');
     expect(scroll.props.keyboardDismissMode).toBe('on-drag');
     expect(scroll.props.keyboardShouldPersistTaps).toBe('handled');
+  });
+});
+
+describe('the keyboard leaves on a tap outside the field', () => {
+  it('a touch that starts in the field row (the field or its send button) is the member placing the cursor', async () => {
+    const ref = { current: null as TryNewSectionHandle | null };
+    await render(<TryNewSection ref={ref} onPrompt={() => undefined} />);
+    await fireEvent(screen.getByTestId('home.coachInput.row'), 'touchStart', {});
+    expect(ref.current!.touchStartedInInput()).toBe(true);
+    // Read once: the next touch starts outside unless the row says otherwise.
+    expect(ref.current!.touchStartedInInput()).toBe(false);
+  });
+
+  it('Home puts the keyboard away on a touch outside the field while it has focus, and only then', async () => {
+    freshHome();
+    serve();
+    await renderHome();
+    const dismiss = jest.spyOn(Keyboard, 'dismiss');
+    // The mocked TextInput answers `isFocused` from its prototype.
+    const focused = jest.spyOn(TextInput.prototype as unknown as { isFocused(): boolean }, 'isFocused').mockReturnValue(true);
+    const page = screen.getByTestId('home.content');
+
+    // A touch inside the field's row reaches the row first, then the page.
+    await fireEvent(screen.getByTestId('home.coachInput.row'), 'touchStart', {});
+    await fireEvent(page, 'touchStart', {});
+    expect(dismiss).not.toHaveBeenCalled();
+
+    // A touch anywhere else, with the field focused: the keyboard goes.
+    await fireEvent(page, 'touchStart', {});
+    expect(dismiss).toHaveBeenCalledTimes(1);
+
+    // Without focus there is nothing to put away.
+    focused.mockReturnValue(false);
+    await fireEvent(page, 'touchStart', {});
+    expect(dismiss).toHaveBeenCalledTimes(1);
+    focused.mockRestore();
+    dismiss.mockRestore();
   });
 });
 
