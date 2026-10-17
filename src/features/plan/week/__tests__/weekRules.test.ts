@@ -5,7 +5,17 @@
  */
 import { decodeWeekView, type WeekDayCell } from '../../../../health';
 import { translate, type Lang } from '../../../../i18n';
-import { cellAccessibilityLabel, cellStatus, cellWeekday, dayNumber, movedWeekStart, relativeDay, statusWord } from '../weekRules';
+import {
+  cellAccessibilityLabel,
+  cellStatus,
+  cellWeekday,
+  dayNumber,
+  movedWeekStart,
+  relativeDay,
+  statusWord,
+  swipeWeekDelta,
+  SWIPE_MIN_DISTANCE,
+} from '../weekRules';
 
 const tFor = (lang: Lang) => (key: string) => translate(key, lang);
 const t = tFor('en');
@@ -104,5 +114,25 @@ describe('the selection analytics', () => {
     expect(relativeDay('2026-10-17', '2026-10-17')).toBe('today');
     expect(relativeDay('2026-10-16', '2026-10-17')).toBe('past');
     expect(relativeDay('2026-10-18', '2026-10-17')).toBe('future');
+  });
+});
+
+describe('a swipe on the strip', () => {
+  it('moves forward on a swipe left and back on a swipe right, where the week allows', () => {
+    expect(swipeWeekDelta(-60, 4, true, true)).toBe(1);
+    expect(swipeWeekDelta(60, -4, true, true)).toBe(-1);
+    expect(swipeWeekDelta(-60, 0, true, false)).toBe(0);
+    expect(swipeWeekDelta(60, 0, false, true)).toBe(0);
+  });
+
+  it('ignores a drag shorter than the minimum distance (iOS 24 pt)', () => {
+    expect(SWIPE_MIN_DISTANCE).toBe(24);
+    expect(swipeWeekDelta(-20, 0, true, true)).toBe(0);
+    expect(swipeWeekDelta(-24, 0, true, true)).toBe(1);
+  });
+
+  it('leaves a mostly vertical drag to the page scroll', () => {
+    expect(swipeWeekDelta(-40, 60, true, true)).toBe(0);
+    expect(swipeWeekDelta(40, 40, true, true)).toBe(0);
   });
 });

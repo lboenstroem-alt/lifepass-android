@@ -75,3 +75,19 @@ export function relativeDay(date: string, today: string): 'today' | 'past' | 'fu
   if (date === today) return 'today';
   return date < today ? 'past' : 'future';
 }
+
+/** How far a drag must travel before it counts as a swipe (iOS `DragGesture(minimumDistance: 24)`). */
+export const SWIPE_MIN_DISTANCE = 24;
+
+/**
+ * What a finished horizontal drag on the strip does: a swipe left is the next
+ * week, a swipe right the previous one, each only where the week allows it.
+ * A drag that is more vertical than horizontal is the page scrolling.
+ */
+export function swipeWeekDelta(dx: number, dy: number, canGoBack: boolean, canGoForward: boolean): -1 | 0 | 1 {
+  if (Math.hypot(dx, dy) < SWIPE_MIN_DISTANCE) return 0;
+  if (Math.abs(dx) <= Math.abs(dy)) return 0;
+  if (dx < 0 && canGoForward) return 1;
+  if (dx > 0 && canGoBack) return -1;
+  return 0;
+}
