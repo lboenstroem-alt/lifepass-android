@@ -18,9 +18,12 @@
  *     iOS passes `p.status ?? 0`.
  *   - The client already fails at once offline. A phone with no connection
  *     (NetInfo, confirmed by a fresh read) fails a required route with
- *     `TransportError('offline')` before the auth SDK is asked, and a call
- *     that starts while a token refresh is failing fails at once (offline or
- *     network). Every step has the call's ceiling. Do not wrap calls in an
+ *     `TransportError('offline')` before the auth SDK is asked (or
+ *     `NotAuthenticatedError` when no session is on the phone at all, as on
+ *     iOS), and a call that starts while a token refresh is failing fails at
+ *     once (offline or network); once the phone is back online, a refresh
+ *     that failed only for want of a network no longer stops a call. Every
+ *     step has the call's ceiling. Do not wrap calls in an
  *     offline check or a timer of your own; pass `timeoutMs` from
  *     `API_TIMEOUTS` where iOS sets one.
  *   - A revoked session is always cleared on the phone. A refused refresh,
@@ -49,6 +52,7 @@ export {
   setSharedApiClient,
   supabaseAccessToken,
   supabaseEndRevokedSession,
+  supabaseHasStoredSession,
   supabaseRefreshAccessToken,
   supabaseSessionDeps,
   LOGOUT_WAIT_MS,

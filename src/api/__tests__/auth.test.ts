@@ -3,7 +3,8 @@
  * `APIClientAuthTests` (the same eight cases), the limits on the wait for the
  * session (iOS fails at once where supabase-js retries for 25 s), then the
  * same rules through the real Supabase client against the stub auth server,
- * with and without ./authFetch.
+ * with and without ./authFetch, and what a phone with no network reads from
+ * the stored session.
  *
  * Before iOS 2.5.0 an offline refresh of an expired token read as "Please
  * sign in", and a session revoked elsewhere (a password reset, "sign out
@@ -31,7 +32,8 @@ import {
   type StubReply,
 } from '@test/server';
 
-import { supabase } from '../../supabase/lib/client';
+import { secureSessionStorage } from '../../lib/secureSessionStorage';
+import { SUPABASE_STORAGE_KEY, supabase } from '../../supabase/lib/client';
 import { createAuthFetch, knownRefreshTrouble, resetRefreshTrouble, type RefreshTrouble } from '../authFetch';
 import {
   createApiClient,
@@ -39,6 +41,7 @@ import {
   RefreshRefusedError,
   refreshRefused,
   supabaseAccessToken,
+  supabaseHasStoredSession,
   supabaseSessionDeps,
 } from '../client';
 import { ApiError, NotAuthenticatedError, ProblemError, TransportError } from '../errors';
@@ -299,6 +302,29 @@ describe('the wait on the session', () => {
     expect(api.requests).toHaveLength(0);
   });
 
+  it('a phone with no network and no session asks to sign in, as iOS reads the session first', async () => {
+    // supabase-swift's `auth.session` throws `sessionMissing` before it needs
+    // the network; only a URLError while reading it is a transport failure.
+    const token = jest.fn(async () => null);
+    const hasStoredSession = jest.fn(async () => false);
+    const session = createStubApiClient({ token, hasStoredSession, isDeviceDisconnected: async () => true });
+    expect(await failure(session.client.get('/profile'))).toBeInstanceOf(NotAuthenticatedError);
+    expect(hasStoredSession).toHaveBeenCalledTimes(1);
+    expect(token).not.toHaveBeenCalled();
+    expect(api.requests).toHaveLength(0);
+
+    // A store that cannot be read says nothing either way: offline stands.
+    const unreadable = createStubApiClient({
+      token,
+      isDeviceDisconnected: async () => true,
+      hasStoredSession: async () => {
+        throw new Error('keystore unavailable');
+      },
+    });
+    expect(((await failure(unreadable.client.get('/profile'))) as TransportError).transport).toBe('offline');
+    expect(token).not.toHaveBeenCalled();
+  });
+
   it('an optional route on a phone with no network goes out without asking for a token', async () => {
     api.on('GET', '/attractions', Reply.ok([]));
     const token = jest.fn(async () => 'test-token');
@@ -410,6 +436,62 @@ describe('the wait on the session', () => {
     api.on('GET', '/profile', Reply.ok({ id: 'p1' }));
     token.mockImplementation(async () => 'test-token');
     await expect(session.client.get('/profile')).resolves.toEqual({ id: 'p1' });
+  });
+
+  it('a refresh known unreachable stops no call once the phone is back online: the call goes out', async () => {
+    // The last attempt failed for want of a network (Wi-Fi reconnecting as
+    // the app resumes). iOS keeps nothing from it: each call reads the
+    // session afresh, and succeeds once the network is back.
+    api.on('GET', '/profile', Reply.ok({ id: 'p1' }));
+    const token = jest.fn(async () => 'test-token');
+    const offline = jest.fn(async () => false);
+    const session = createStubApiClient({ token, knownRefreshTrouble: () => 'unreachable', isDeviceOffline: offline });
+    await expect(session.client.get('/profile')).resolves.toEqual({ id: 'p1' });
+    // A fresh read decided, and the token was asked for.
+    expect(offline).toHaveBeenCalled();
+    expect(token).toHaveBeenCalledTimes(1);
+    expect(api.sent('/profile').headers.authorization).toBe('Bearer test-token');
+  });
+
+  it("online again, the wait still ends at the SDK's next failed attempt", async () => {
+    const feed = troubleFeed();
+    const session = createStubApiClient({
+      token: never,
+      knownRefreshTrouble: () => 'unreachable',
+      onRefreshTrouble: feed.subscribe,
+    });
+    const pending = timedFailure(session.client.get('/profile', undefined, { timeoutMs: 5000 }));
+    await sleep(10);
+    feed.emit('unreachable');
+    const { error, ms } = await pending;
+    expect((error as TransportError).transport).toBe('network');
+    expect(ms).toBeLessThan(1000);
+    expect(feed.listening).toBe(0);
+  });
+
+  it('after a 401, a refresh known unreachable is waited on once the phone is back online, and the GET resent', async () => {
+    api.on('GET', '/profile', (request) =>
+      request.headers.authorization === 'Bearer refreshed-token'
+        ? Reply.ok({ value: 'fresh' })
+        : Reply.problem(401, 'authentication_required'),
+    );
+    const session = createStubApiClient({ knownRefreshTrouble: () => 'unreachable' });
+    await expect(session.client.get('/profile')).resolves.toEqual({ value: 'fresh' });
+    expect(authorizations()).toEqual(['Bearer test-token', 'Bearer refreshed-token']);
+    expect(session.refreshes).toBe(1);
+    expect(session.revoked).toBe(0);
+
+    // Still offline by a fresh read: the 401 stands at once, the session kept.
+    let asked = 0;
+    const offline = createStubApiClient({
+      refreshedToken: never,
+      knownRefreshTrouble: () => (asked++ === 0 ? null : 'unreachable'),
+      isDeviceOffline: async () => true,
+    });
+    const { error, ms } = await timedFailure(offline.client.get('/profile', undefined, { timeoutMs: 5000 }));
+    expect((error as ProblemError).status).toBe(401);
+    expect(ms).toBeLessThan(1000);
+    expect(offline.revoked).toBe(0);
   });
 
   it('after a 401, a refresh that started failing meanwhile rethrows the 401 at once', async () => {
@@ -529,6 +611,10 @@ function refreshEndpoint(failure: () => StubReply, freshToken: string) {
   let up = false;
   authHost.on('POST', '/auth/v1/token', () => (up ? sessionReply(freshToken) : failure()));
   return {
+    /** Answers from now on, without waiting for the SDK. */
+    answer(): void {
+      up = true;
+    },
     async recover(client: SupabaseClient): Promise<string | undefined> {
       up = true;
       // Waits behind the SDK's lock until its retrying refresh has finished.
@@ -797,7 +883,7 @@ describe('through Supabase with the auth fetch', () => {
     expect(events).not.toContain('SIGNED_OUT');
   });
 
-  it('a second call inside the same failing retry window fails at once too, without another attempt', async () => {
+  it('a second call inside the same failing retry window, the phone still offline, fails at once without another attempt', async () => {
     const client = wrappedClient();
     const events = await signIn(client, jwt(60));
     const endpoint = refreshEndpoint(() => Reply.fail(), freshToken);
@@ -807,19 +893,92 @@ describe('through Supabase with the auth fetch', () => {
     const attempts = authHost.sentAll('/auth/v1/token').length;
     expect(knownRefreshTrouble()).toBe('unreachable');
 
+    // Connected, but a fresh read says the internet is still out of reach.
     // supabase-js is sleeping before its next attempt, holding its lock: the
     // next call does not queue for that attempt.
+    netInfo({ isConnected: true, isInternetReachable: false });
     const { error, ms } = await timedFailure(app.get('/profile', undefined, { timeoutMs: 5000 }));
-    expect((error as TransportError).transport).toBe('network');
+    expect((error as TransportError).transport).toBe('offline');
     expect(ms).toBeLessThan(150); // the SDK's next attempt is due 200 ms after the first
     expect(authHost.sentAll('/auth/v1/token')).toHaveLength(attempts);
     expect(api.requests).toHaveLength(0);
 
     // The auth server is back: the refresh answers and calls go through.
+    netInfo({ isConnected: true, isInternetReachable: true });
     expect(await endpoint.recover(client)).toBe(freshToken);
     expect(knownRefreshTrouble()).toBeNull();
     api.on('GET', '/profile', Reply.ok({ id: user.id }));
     await expect(app.get('/profile')).resolves.toEqual({ id: user.id });
     expect(events).not.toContain('SIGNED_OUT');
+  });
+
+  it('a refresh that failed unreachable stops no later call once the auth server answers again', async () => {
+    const client = wrappedClient();
+    const events = await signIn(client, jwt(60));
+    const endpoint = refreshEndpoint(() => Reply.fail(), freshToken);
+    const app = createApiClient(supabaseSessionDeps(client));
+
+    // The expired token's first refresh fails on the way (the app resuming
+    // while Wi-Fi reconnects).
+    expect(((await failure(app.get('/profile'))) as TransportError).transport).toBe('network');
+    expect(knownRefreshTrouble()).toBe('unreachable');
+
+    // The network is back inside the SDK's retry window, and nothing waits
+    // for the SDK here: the next call reads the token, the SDK's next attempt
+    // is answered, and the call goes out with the fresh token.
+    endpoint.answer();
+    api.on('GET', '/profile', Reply.ok({ id: user.id }));
+    await expect(app.get('/profile', undefined, { timeoutMs: 5000 })).resolves.toEqual({ id: user.id });
+    expect(authorizations()).toEqual([`Bearer ${freshToken}`]);
+    expect(knownRefreshTrouble()).toBeNull();
+    expect(events).not.toContain('SIGNED_OUT');
+  });
+});
+
+/**
+ * A phone with no network: whether a session is stored decides between
+ * "offline" and "please sign in", read from storage without the SDK (which
+ * would first spend about 25 s refreshing an expired token).
+ */
+describe('with no network, the session on the phone decides', () => {
+  it("reads the app's own session from the Keystore, never through the SDK, and an expired one counts", async () => {
+    netInfo({ isConnected: false, isInternetReachable: false });
+    const getSession = jest.spyOn(supabase.auth, 'getSession');
+    const app = createApiClient();
+    // Nobody is signed in on this phone: sign in, as on iOS.
+    expect(await failure(app.get('/profile'))).toBeInstanceOf(NotAuthenticatedError);
+
+    const expiresAt = Math.floor(Date.now() / 1000) - 60;
+    const stored = { access_token: jwt(-60), refresh_token: 'refresh-1', expires_at: expiresAt, user };
+    await secureSessionStorage.setItem(SUPABASE_STORAGE_KEY, JSON.stringify(stored));
+    try {
+      expect(await supabaseHasStoredSession()).toBe(true);
+      expect(((await failure(app.get('/profile'))) as TransportError).transport).toBe('offline');
+    } finally {
+      await secureSessionStorage.removeItem(SUPABASE_STORAGE_KEY);
+    }
+    expect(getSession).not.toHaveBeenCalled();
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it("reads another client's session where that client keeps it", async () => {
+    const client = createClient(TEST_SUPABASE_URL, TEST_SUPABASE_ANON_KEY, {
+      auth: {
+        storage: AsyncStorage,
+        storageKey: 'sb-offline-test-auth-token',
+        autoRefreshToken: false,
+        persistSession: true,
+        detectSessionInUrl: false,
+      },
+    });
+    const app = createApiClient(supabaseSessionDeps(client));
+    netInfo({ isConnected: false, isInternetReachable: false });
+    expect(await failure(app.get('/profile'))).toBeInstanceOf(NotAuthenticatedError);
+
+    netInfo({ isConnected: true, isInternetReachable: true });
+    await signIn(client, jwt(3600));
+    netInfo({ isConnected: false, isInternetReachable: false });
+    expect(((await failure(app.get('/profile'))) as TransportError).transport).toBe('offline');
+    expect(api.requests).toHaveLength(0);
   });
 });

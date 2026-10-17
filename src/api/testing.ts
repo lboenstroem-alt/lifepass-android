@@ -41,6 +41,11 @@ export interface StubApiClientOptions {
   readonly isDeviceOffline?: () => Promise<boolean>;
   /** Whether NetInfo says there is no connection at all before a call. Default connected. */
   readonly isDeviceDisconnected?: () => Promise<boolean>;
+  /**
+   * Whether a session is stored on the phone (asked only before a call with
+   * no network). Default: stored unless `token` is `null`.
+   */
+  readonly hasStoredSession?: () => Promise<boolean>;
   /** Failed-refresh reports (./authFetch). Default none: the stub session never refreshes through Supabase. */
   readonly onRefreshTrouble?: ApiClientDeps['onRefreshTrouble'];
   /** A refresh known to be failing when a call starts (./authFetch). Default none. */
@@ -73,6 +78,7 @@ export function createStubApiClient(options: StubApiClientOptions = {}): StubApi
     },
     isDeviceOffline: options.isDeviceOffline ?? (async () => false),
     isDeviceDisconnected: options.isDeviceDisconnected ?? (async () => false),
+    hasStoredSession: options.hasStoredSession ?? (async () => token !== null),
     onRefreshTrouble: options.onRefreshTrouble ?? (() => () => undefined),
     knownRefreshTrouble: options.knownRefreshTrouble ?? (() => null),
     defaultTimeoutMs: options.defaultTimeoutMs,
