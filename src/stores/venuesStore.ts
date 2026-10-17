@@ -22,9 +22,10 @@
 // (`resolvedSurchargePrice`: a member or pass price), so a list must not
 // outlive them. iOS drops it with the signed-in view that owns it; here a
 // store outlives its screen, so it is reset by a sign-out cleaner:
-//   - the shared `venuesStore`: `resetVenuesStore`, registered by the app's
-//     registry (src/app/registrations.ts, F3; F6 contract request, not wired
-//     until F3 merges);
+//   - the shared `venuesStore`: `resetVenuesStore`, registered below as
+//     'venues.list' when this module loads. F6 has no feature folder, so it
+//     registers from its own module as src/app/signOut.ts asks of a
+//     foundation package; a list that was never imported holds nothing.
 //   - a list a screen makes for itself (Explore): that screen's package
 //     registers its own `reset()` in its `src/features/<area>/register.ts`.
 import { useMemo } from 'react';
@@ -33,6 +34,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import { errorMessage } from '../api/errorFormatter';
 import { fetchVenues, type VenueQuery } from '../api/venues';
+import { registerSignOutCleaner } from '../app/signOut';
 import { browseOrderWithin } from '../lib/browseOrder';
 import type { Venue } from '../types/venue';
 import { browseSession, type BrowseSessionStore } from './browseSession';
@@ -158,12 +160,15 @@ export const venuesStore: VenueListStore = createVenueListStore();
 
 /**
  * Sign-out cleaner for the shared list: venue prices are resolved for the
- * member who asked. To be registered as 'venues.list' in
- * src/app/registrations.ts (see the file comment).
+ * member who asked, so the next member never sees them, nor an answer that
+ * was still on the way for the one who left.
  */
 export function resetVenuesStore(): void {
   venuesStore.getState().reset();
 }
+
+// Every sign-out, forced ones after a 401 included, runs the cleaners.
+registerSignOutCleaner('venues.list', () => resetVenuesStore());
 
 /** React: a slice of the shared list (or of `store`). */
 export function useVenueList<T>(selector: (state: VenueListState) => T, store: VenueListStore = venuesStore): T {

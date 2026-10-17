@@ -1,13 +1,15 @@
 /**
  * The venue list store (iOS VenueListViewModel): VenueLoadErrorTests, the
- * catalogue a search is ordered within, the latest load winning, sign-out,
- * and the hook that re-orders when the visit changes.
+ * catalogue a search is ordered within, the latest load winning, sign-out
+ * (and its cleaner in the app's registry), and the hook that re-orders when
+ * the visit changes.
  */
 import { act, renderHook } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../api/testing';
 import { decodeVenue, venueToApi } from '../../api/venues';
+import { registeredHookIds, runSignOutCleaners } from '../../app/signOut';
 import { setCurrentLanguage } from '../../i18n';
 import { browseOrder, browseOrderWithin } from '../../lib/browseOrder';
 import type { Venue } from '../../types/venue';
@@ -166,6 +168,16 @@ it('sign-out forgets the list, and an answer still on the way', async () => {
   await loading;
   expect(venuesStore.getState()).toMatchObject({ catalog: [], fetched: [], error: null, isLoading: false });
   expect(venuesStore.getState().ordered()).toEqual([]);
+});
+
+it("every sign-out runs the list's cleaner, so the next member starts empty", async () => {
+  api.on('GET', '/venues', page(catalog));
+  await venuesStore.getState().load();
+  expect(venuesStore.getState().fetched).toHaveLength(catalog.length);
+
+  expect(registeredHookIds().signOut).toContain('venues.list');
+  await runSignOutCleaners({ memberId: null });
+  expect(venuesStore.getState()).toMatchObject({ catalog: [], fetched: [], error: null, isLoading: false });
 });
 
 it('the hook re-orders when the first fix arrives, without a reload', async () => {
