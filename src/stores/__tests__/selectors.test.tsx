@@ -21,7 +21,7 @@ freshStorePerTest();
 type Selector = (state: AppStoreState) => unknown;
 
 /** Every `select*` the store exports, so a new one is covered without being listed here. */
-const selectors = Object.entries(appStore).filter(
+const selectors = Object.entries(appStore as Record<string, unknown>).filter(
   (entry): entry is [string, Selector] => entry[0].startsWith('select') && typeof entry[1] === 'function',
 );
 
