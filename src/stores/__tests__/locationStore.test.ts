@@ -3,18 +3,24 @@
  * dialog is shown at most once, only a granted fix orders anything, and the
  * app's lifecycle re-reads the permission and starts new browse visits.
  */
+import { setEnv } from '@test/harness';
 import * as Location from 'expo-location';
+import { AppState, Linking } from 'react-native';
 
 import { REYKJAVIK_CENTRE } from '../../lib/geo';
 import { createBrowseSession, VISIT_GAP_MS } from '../browseSession';
 import {
   createLocationStore,
+  ensureLocationLifecycle,
   expoLocationPlatform,
+  locationStore,
   MAX_FIX_AGE_MS,
+  openLocationSettings,
   permissionMeaning,
   selectEffectiveLocation,
   selectGrantedLocation,
   selectLocationOff,
+  selectLocationOffReason,
   startLocationAtLaunch,
   startLocationLifecycle,
   type LocationFix,
@@ -23,12 +29,13 @@ import {
   type PermissionSnapshot,
 } from '../locationStore';
 
-// The real module's enums and types, with the three calls the store makes as fakes.
+// The real module's enums and types, with the calls the store makes as fakes.
 jest.mock('expo-location', () => ({
   ...jest.requireActual('expo-location'),
   getForegroundPermissionsAsync: jest.fn(),
   requestForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
+  hasServicesEnabledAsync: jest.fn(),
 }));
 
 const NOW = 1_790_000_000_000;
@@ -57,6 +64,8 @@ class FakePhone implements LocationPlatform {
   /** What the member does with the dialog. */
   answer: 'granted' | 'denied' | 'dismissed' = 'granted';
   approximate = false;
+  /** The phone's location toggle. */
+  servicesOn = true;
   fix: LocationFix | Error = reykjavikFix;
   reads = 0;
   /** Calls to `requestPermission`. */
@@ -72,6 +81,7 @@ class FakePhone implements LocationPlatform {
       permission,
       canAskAgain: this.state !== 'refusedForGood' && this.state !== 'lapsed',
       approximate: this.approximate,
+      servicesEnabled: this.servicesOn,
     };
   }
 
@@ -96,14 +106,16 @@ class FakePhone implements LocationPlatform {
 
   async currentFix() {
     this.fixes += 1;
+    // With location off a fix fails, without a word (no settings dialog).
+    if (!this.servicesOn) throw new Error('Current location is unavailable');
     if (this.fix instanceof Error) throw this.fix;
     return this.fix;
   }
 }
 
-function setup(phone = new FakePhone()) {
+function setup(phone = new FakePhone(), suppressPrompts = () => false) {
   const session = createBrowseSession({ seed: 7 });
-  const store = createLocationStore({ platform: phone, session, now: () => NOW });
+  const store = createLocationStore({ platform: phone, session, now: () => NOW, suppressPrompts });
   return { phone, session, store };
 }
 
@@ -239,6 +251,11 @@ it('what a read means, in iOS terms', () => {
   expect(permissionMeaning(read('denied', false), null)).toBe('undetermined');
   expect(permissionMeaning(read('denied', false), 'granted')).toBe('undetermined');
   expect(permissionMeaning(read('denied', false), 'denied')).toBe('denied');
+  // Location switched off for the phone is iOS `.denied`, whatever the permission.
+  const off = (permission: LocationPermission): PermissionSnapshot => ({ ...read(permission, true), servicesEnabled: false });
+  expect(permissionMeaning(off('granted'), null)).toBe('denied');
+  expect(permissionMeaning(off('undetermined'), null)).toBe('denied');
+  expect(permissionMeaning({ ...read('granted', true), servicesEnabled: true }, null)).toBe('granted');
 });
 
 it('two callers at once share one dialog', async () => {
@@ -334,6 +351,125 @@ it('the granted fix keeps its identity between renders', async () => {
   expect(selectGrantedLocation(store.getState())).toBe(selectGrantedLocation(store.getState()));
 });
 
+/**
+ * Location switched off for the whole phone. Android still reports the
+ * permission as granted; iOS reports `.denied` ("disabled globally in
+ * Settings"), shows the banner, and has no fix and no distance order.
+ */
+describe('location switched off on the phone', () => {
+  it('reads as off: the banner shows, nothing orders by a fix, no dialog', async () => {
+    const phone = new FakePhone();
+    phone.state = 'granted';
+    const { store, session } = setup(phone);
+    await store.getState().requestLocation();
+    expect(session.getState().origin).toEqual(reykjavikFix);
+    expect(selectLocationOffReason(store.getState())).toBeNull();
+
+    phone.servicesOn = false;
+    await store.getState().refreshPermission();
+    expect(store.getState()).toMatchObject({ permission: 'denied', servicesEnabled: false });
+    expect(selectLocationOff(store.getState())).toBe(true);
+    expect(selectLocationOffReason(store.getState())).toBe('services');
+    // The fix kept from before no longer orders anything ("Mixed for you").
+    expect(selectGrantedLocation(store.getState())).toBeNull();
+    expect(session.getState().origin).toBeNull();
+    // Filters keep measuring from the last point, as after a revoke.
+    expect(selectEffectiveLocation(store.getState())).toEqual(reykjavikFix);
+
+    const fixes = phone.fixes;
+    await store.getState().refreshIfAuthorized();
+    await store.getState().requestLocation();
+    expect(phone.fixes).toBe(fixes);
+    expect(phone.requests).toBe(0);
+  });
+
+  it('a member who has not decided is not asked while it is off, and is once it is on', async () => {
+    const phone = new FakePhone();
+    phone.servicesOn = false;
+    const { store } = setup(phone);
+    await store.getState().requestLocation();
+    expect(phone.requests).toBe(0);
+    expect(selectLocationOffReason(store.getState())).toBe('services');
+
+    phone.servicesOn = true;
+    await store.getState().refreshPermission();
+    expect(store.getState().permission).toBe('undetermined');
+    expect(selectLocationOff(store.getState())).toBe(false);
+    await store.getState().requestLocation();
+    expect(phone.prompts).toBe(1);
+    expect(selectGrantedLocation(store.getState())).toEqual(reykjavikFix);
+  });
+
+  it('a refused permission is the app settings, not the location toggle', async () => {
+    const phone = new FakePhone();
+    phone.state = 'refused';
+    const { store } = setup(phone);
+    await store.getState().refreshPermission();
+    expect(selectLocationOffReason(store.getState())).toBe('permission');
+
+    // Both: the toggle first, as allowing the app changes nothing while it is off.
+    phone.servicesOn = false;
+    await store.getState().refreshPermission();
+    expect(selectLocationOffReason(store.getState())).toBe('services');
+  });
+});
+
+describe("the banner's Open", () => {
+  beforeEach(() => {
+    jest.mocked(Linking.sendIntent).mockReset();
+    jest.mocked(Linking.openSettings).mockReset();
+  });
+
+  it("opens the phone's location settings when location is switched off", async () => {
+    jest.mocked(Linking.sendIntent).mockResolvedValue(undefined);
+    await openLocationSettings('services');
+    expect(Linking.sendIntent).toHaveBeenCalledWith('android.settings.LOCATION_SOURCE_SETTINGS');
+    expect(Linking.openSettings).not.toHaveBeenCalled();
+  });
+
+  it("opens the app's settings when the member refused, or when the location screen will not open", async () => {
+    await openLocationSettings('permission');
+    expect(Linking.sendIntent).not.toHaveBeenCalled();
+    expect(Linking.openSettings).toHaveBeenCalledTimes(1);
+
+    jest.mocked(Linking.sendIntent).mockRejectedValue(new Error('No activity found'));
+    await openLocationSettings('services');
+    expect(Linking.openSettings).toHaveBeenCalledTimes(2);
+  });
+});
+
+/** A screenshot or fixture run is never covered by the dialog (iOS `suppressesSystemPrompts`). */
+describe('a fixture run', () => {
+  it('never shows the dialog, but still reads and refreshes a granted fix', async () => {
+    const phone = new FakePhone();
+    const { store } = setup(phone, () => true);
+    await store.getState().requestLocation();
+    expect(phone.requests).toBe(0);
+    expect(store.getState().permission).toBe('undetermined');
+    expect(selectLocationOff(store.getState())).toBe(false);
+
+    phone.state = 'granted'; // allowed before the run
+    await store.getState().requestLocation();
+    expect(phone.fixes).toBe(1);
+    expect(selectGrantedLocation(store.getState())).toEqual(reykjavikFix);
+  });
+
+  it('is read from the fixture switch by default', async () => {
+    setEnv({ EXPO_PUBLIC_FIXTURE: 'state=active-plan,tab=1' });
+    const phone = new FakePhone();
+    const store = createLocationStore({ platform: phone, session: createBrowseSession({ seed: 7 }), now: () => NOW });
+    await store.getState().requestLocation();
+    expect(phone.requests).toBe(0);
+  });
+
+  it('without one, the default asks as usual', async () => {
+    const phone = new FakePhone();
+    const store = createLocationStore({ platform: phone, session: createBrowseSession({ seed: 7 }), now: () => NOW });
+    await store.getState().requestLocation();
+    expect(phone.prompts).toBe(1);
+  });
+});
+
 describe('the lifecycle', () => {
   /** An AppState that the test drives. */
   function fakeAppState() {
@@ -386,6 +522,30 @@ describe('the lifecycle', () => {
     expect(selectGrantedLocation(location.getState())).toEqual(reykjavikFix);
     expect(session.getState().origin).toEqual(reykjavikFix);
     expect(phone.prompts).toBe(0);
+    stop();
+  });
+
+  /** Location switched back on in the phone's settings: the banner goes and the fix comes in. */
+  it('coming back with location switched on re-reads the toggle', async () => {
+    const phone = new FakePhone();
+    phone.state = 'granted';
+    phone.servicesOn = false;
+    const session = createBrowseSession({ seed: 7 });
+    const location = createLocationStore({ platform: phone, session, now: () => NOW });
+    const appState = fakeAppState();
+    const stop = startLocationLifecycle({ appState, location, session, now: () => NOW });
+    await flush();
+    expect(selectLocationOffReason(location.getState())).toBe('services');
+    expect(phone.fixes).toBe(0);
+
+    phone.servicesOn = true;
+    appState.emit('background');
+    appState.emit('active');
+    await flush();
+    await flush();
+    expect(selectLocationOff(location.getState())).toBe(false);
+    expect(selectGrantedLocation(location.getState())).toEqual(reykjavikFix);
+    expect(session.getState().origin).toEqual(reykjavikFix);
     stop();
   });
 
@@ -466,6 +626,29 @@ describe('the lifecycle', () => {
     expect(again).not.toBe(first);
     again();
   });
+
+  /**
+   * Whichever screen uses the shared store first (Explore, Home, Coach,
+   * classes) brings the app's lifecycle up with it, as iOS has it from the
+   * app root: a member who never opens Home still gets new visits and a
+   * re-read on return from Settings.
+   */
+  it("the shared store's first use starts the app's lifecycle, once", async () => {
+    const listen = jest.spyOn(AppState, 'addEventListener');
+    try {
+      await locationStore.getState().refreshIfAuthorized();
+      await locationStore.getState().refreshIfAuthorized();
+      expect(listen).toHaveBeenCalledTimes(1);
+      expect(listen).toHaveBeenCalledWith('change', expect.any(Function));
+      // The root's launch call finds it running and adds nothing.
+      const stop = startLocationLifecycle();
+      expect(listen).toHaveBeenCalledTimes(1);
+      expect(ensureLocationLifecycle()).toBe(stop);
+      stop();
+    } finally {
+      listen.mockRestore();
+    }
+  });
 });
 
 describe('expo-location', () => {
@@ -485,6 +668,7 @@ describe('expo-location', () => {
       permission: 'undetermined',
       canAskAgain: true,
       approximate: false,
+      servicesEnabled: true,
     });
     read.mockResolvedValueOnce(response(Location.PermissionStatus.DENIED));
     expect((await expoLocationPlatform.getPermission()).permission).toBe('denied');
@@ -493,6 +677,7 @@ describe('expo-location', () => {
       permission: 'granted',
       canAskAgain: true,
       approximate: true,
+      servicesEnabled: true,
     });
   });
 
@@ -502,7 +687,22 @@ describe('expo-location', () => {
       timestamp: NOW,
     });
     expect(await expoLocationPlatform.currentFix()).toEqual({ latitude: 64.1, longitude: -21.9, accuracy: 50, timestamp: NOW });
-    expect(current).toHaveBeenCalledWith({ accuracy: Location.Accuracy.Balanced });
+    // Never Google Play services' "Turn on location" dialog: a fix is asked
+    // for on reads, and iOS never shows one.
+    expect(current).toHaveBeenCalledWith({ accuracy: Location.Accuracy.Balanced, mayShowUserSettingsDialog: false });
+  });
+
+  it("reads the phone's location toggle with the permission; only a definite off counts", async () => {
+    jest.mocked(Location.getForegroundPermissionsAsync).mockResolvedValue(response(Location.PermissionStatus.GRANTED, 'fine'));
+    const services = jest.mocked(Location.hasServicesEnabledAsync);
+    services.mockResolvedValueOnce(false);
+    expect((await expoLocationPlatform.getPermission()).servicesEnabled).toBe(false);
+    services.mockResolvedValueOnce(true);
+    expect((await expoLocationPlatform.getPermission()).servicesEnabled).toBe(true);
+    services.mockResolvedValueOnce(undefined as unknown as boolean);
+    expect((await expoLocationPlatform.getPermission()).servicesEnabled).toBe(true);
+    services.mockRejectedValueOnce(new Error('no location manager'));
+    expect((await expoLocationPlatform.getPermission()).servicesEnabled).toBe(true);
   });
 
   it('the dialog answer is read the same way', async () => {
@@ -511,6 +711,7 @@ describe('expo-location', () => {
       permission: 'granted',
       canAskAgain: true,
       approximate: false,
+      servicesEnabled: true,
     });
   });
 });

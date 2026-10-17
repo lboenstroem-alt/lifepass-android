@@ -9,7 +9,7 @@
 import { useEffect } from 'react';
 
 import type { Coordinate } from '../lib/geo';
-import { locationStore, startLocationLifecycle, useGrantedLocation } from '../stores/locationStore';
+import { locationStore, useGrantedLocation } from '../stores/locationStore';
 
 export type Coords = Coordinate;
 
@@ -17,12 +17,9 @@ export type Coords = Coordinate;
 export function useLocation(): Coords | null {
   const granted = useGrantedLocation();
   useEffect(() => {
-    // The app-wide wiring (idempotent). The app root is to start it at launch
-    // with `startLocationAtLaunch` (F6 contract request to F4); until that
-    // lands, THIS is the only place it starts, so a cold start into another
-    // tab has no lifecycle until Home mounts. Keep this call until the root
-    // has its own.
-    startLocationLifecycle();
+    // The shared store's first use also starts the app-wide lifecycle
+    // (background, active, a return from Settings), so nothing else is
+    // needed here; the app root asks at launch (`startLocationAtLaunch`).
     void locationStore.getState().requestLocation();
   }, []);
   return granted;

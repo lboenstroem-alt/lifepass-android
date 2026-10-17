@@ -13,6 +13,7 @@ jest.mock('expo-location', () => ({
   getForegroundPermissionsAsync: jest.fn(),
   requestForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
+  hasServicesEnabledAsync: jest.fn(async () => true),
 }));
 
 /** Lets the store's promise chains (all microtasks here) run to the end. */
