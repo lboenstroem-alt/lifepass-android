@@ -238,14 +238,15 @@ export const STATUS_BAND_FADE = 80;
 
 /**
  * Where the band is fully in: the hero's title block (its bottom third) has
- * reached the covered strip (iOS statusBarBandOpacity).
+ * reached the covered strip (iOS statusBarBandOpacity). `heroHeight` is the
+ * designed 420 unless large text made the hero taller.
  */
-export function statusBarBandFullAt(coveredTop: number): number {
-  return (HERO_HEIGHT * 2) / 3 - coveredTop;
+export function statusBarBandFullAt(coveredTop: number, heroHeight: number = HERO_HEIGHT): number {
+  return (heroHeight * 2) / 3 - coveredTop;
 }
 
 /** 0 while the hero sits at the top, 1 once its title block reaches the band, with an 80 pt fade before. */
-export function statusBarBandOpacity(scrollOffset: number, coveredTop: number): number {
-  const fullAt = statusBarBandFullAt(coveredTop);
+export function statusBarBandOpacity(scrollOffset: number, coveredTop: number, heroHeight: number = HERO_HEIGHT): number {
+  const fullAt = statusBarBandFullAt(coveredTop, heroHeight);
   return Math.min(1, Math.max(0, (scrollOffset - (fullAt - STATUS_BAND_FADE)) / STATUS_BAND_FADE));
 }

@@ -92,6 +92,8 @@ export default function VenueDetailScreen({ navigation, route }: SharedRouteProp
   const scrollRef = useRef<ScrollView>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   const geometry = useRef({ viewport: 0, activities: 0, classes: 0 });
+  // 420 as designed; taller only when large text grows the hero.
+  const [heroHeight, setHeroHeight] = useState(HERO_HEIGHT);
   const [directionsOpen, setDirectionsOpen] = useState(false);
 
   // iOS reloads the reviews when the reviews page reports a new one; here the
@@ -133,9 +135,9 @@ export default function VenueDetailScreen({ navigation, route }: SharedRouteProp
 
   const scrollToClasses = useCallback(() => {
     const { viewport, activities, classes } = geometry.current;
-    const y = HERO_HEIGHT + activities + classes - viewport * CLASSES_ANCHOR;
+    const y = heroHeight + activities + classes - viewport * CLASSES_ANCHOR;
     scrollRef.current?.scrollTo({ y: Math.max(0, y), animated: !reduceMotion });
-  }, [reduceMotion]);
+  }, [heroHeight, reduceMotion]);
 
   const share = useCallback(() => {
     if (!venue) return;
@@ -158,7 +160,7 @@ export default function VenueDetailScreen({ navigation, route }: SharedRouteProp
       ]
     : [];
 
-  const fullAt = statusBarBandFullAt(coveredTop);
+  const fullAt = statusBarBandFullAt(coveredTop, heroHeight);
   const bandOpacity = scrollY.interpolate({
     inputRange: [fullAt - STATUS_BAND_FADE, fullAt],
     outputRange: [0, 1],
@@ -184,7 +186,13 @@ export default function VenueDetailScreen({ navigation, route }: SharedRouteProp
           </View>
         ) : venue ? (
           <>
-            <VenueHero venue={venue} topInset={coveredTop} onBack={() => navigation.goBack()} onShare={share} />
+            <VenueHero
+              venue={venue}
+              topInset={coveredTop}
+              onBack={() => navigation.goBack()}
+              onShare={share}
+              onHeight={setHeroHeight}
+            />
             <View style={styles.content}>
               <MetaRow venue={venue} onOpenReviews={openReviews} onDirections={() => setDirectionsOpen(true)} />
               <DescriptionBlock venue={venue} />
@@ -260,11 +268,13 @@ function VenueHero({
   topInset,
   onBack,
   onShare,
+  onHeight,
 }: {
   readonly venue: Venue;
   readonly topInset: number;
   readonly onBack: () => void;
   readonly onShare: () => void;
+  readonly onHeight: (height: number) => void;
 }) {
   const favourite = useFavourite(venue.id);
   const toggle = favourite.toggle;
@@ -281,6 +291,7 @@ function VenueHero({
       onBack={onBack}
       onToggleFavourite={onToggleFavourite}
       onShare={onShare}
+      onHeight={onHeight}
     />
   );
 }

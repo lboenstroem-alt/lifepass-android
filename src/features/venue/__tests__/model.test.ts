@@ -266,4 +266,10 @@ describe('the status-bar band', () => {
     expect(statusBarBandOpacity(256, 24)).toBe(1);
     expect(statusBarBandOpacity(900, 24)).toBe(1);
   });
+
+  it('follows a hero that large text made taller', () => {
+    // 2/3 of 540 is 360: fully in at 336 with a 24 pt strip.
+    expect(statusBarBandOpacity(256, 24, 540)).toBe(0);
+    expect(statusBarBandOpacity(336, 24, 540)).toBe(1);
+  });
 });

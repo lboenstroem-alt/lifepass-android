@@ -154,6 +154,11 @@ describe('a gym with walk-ins and classes, in the plan', () => {
     await fireEvent.press(screen.getByTestId('venue.bar.classes'));
     // Hero 420 + block 300 + list 250, less 10 % of 800.
     expect(scrollTo).toHaveBeenCalledWith({ y: 890, animated: true });
+
+    // Large text grew the hero: the list moved down with it.
+    await fireEvent(screen.getByTestId('venue.hero'), 'layout', { nativeEvent: { layout: { y: 0, height: 520 } } });
+    await fireEvent.press(screen.getByTestId('venue.bar.classes'));
+    expect(scrollTo).toHaveBeenLastCalledWith({ y: 990, animated: true });
   });
 
   it('the rating opens the reviews, and coming back reads them again', async () => {

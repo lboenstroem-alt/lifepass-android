@@ -6,12 +6,16 @@
 // and share. Only that chrome moves down by the covered strip (`topInset`);
 // the hero keeps its designed height, as on iOS.
 //
+// LARGE TEXT. The hero is 420 pt as designed, but grows rather than letting a
+// long name at a large font size ride up under the round buttons (iOS lets
+// them overlap); the page measures it (`onLayout`) for its scroll maths.
+//
 // No photo: a paper gradient with a photo glyph, never a stock picture. The
 // carousel dots of iOS only show for more than one image, which no venue has
 // today (`venueImages` returns at most one), so there are none here.
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import { Kicker, LPText, VenueImage } from '../../../components/ui';
 import { useT } from '../../../i18n';
@@ -28,19 +32,25 @@ export interface HeroProps {
   readonly onBack: () => void;
   readonly onToggleFavourite: () => void;
   readonly onShare: () => void;
+  /** The hero's drawn height (420 unless large text grew it). */
+  readonly onHeight?: (height: number) => void;
 }
 
 const WASH = [paperAt(0.35), paperAt(0.05), paperAt(0.7), colors.ink] as const;
 const WASH_STOPS = [0, 0.35, 0.85, 1] as const;
 
-export default function Hero({ venue, topInset, isFavourite, onBack, onToggleFavourite, onShare }: HeroProps) {
+export default function Hero({ venue, topInset, isFavourite, onBack, onToggleFavourite, onShare, onHeight }: HeroProps) {
   const { t } = useT();
   const image = venueImages(venue)[0] ?? null;
   const kicker = heroKicker(venue, t);
   return (
-    <View style={styles.hero} testID="venue.hero">
+    <View
+      style={styles.hero}
+      testID="venue.hero"
+      onLayout={(event: LayoutChangeEvent) => onHeight?.(event.nativeEvent.layout.height)}
+    >
       {image ? (
-        <VenueImage uri={image} height={HERO_HEIGHT} style={StyleSheet.absoluteFill} recyclingKey={venue.id} />
+        <VenueImage uri={image} style={StyleSheet.absoluteFill} recyclingKey={venue.id} />
       ) : (
         <LinearGradient colors={[colors.ink3, colors.ink2]} style={[StyleSheet.absoluteFill, styles.placeholder]}>
           <Ionicons name="image-outline" size={34} color={colors.paper3} accessibilityElementsHidden importantForAccessibility="no" />
@@ -86,7 +96,7 @@ export default function Hero({ venue, topInset, isFavourite, onBack, onToggleFav
 }
 
 const styles = StyleSheet.create({
-  hero: { height: HERO_HEIGHT, width: '100%', overflow: 'hidden', backgroundColor: colors.ink3 },
+  hero: { minHeight: HERO_HEIGHT, width: '100%', overflow: 'hidden', backgroundColor: colors.ink3 },
   placeholder: { alignItems: 'center', justifyContent: 'center' },
   nav: {
     flexDirection: 'row',
@@ -95,5 +105,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   navTrailing: { flexDirection: 'row', gap: 8 },
-  title: { position: 'absolute', left: 24, right: 24, bottom: 20, gap: 8 },
+  // Pushed to the bottom by the free space between it and the buttons.
+  title: { marginTop: 'auto', paddingTop: 16, paddingHorizontal: 24, paddingBottom: 20, gap: 8 },
 });
