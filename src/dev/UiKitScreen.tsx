@@ -137,6 +137,14 @@ export default function UiKitScreen() {
           <PrimaryButton title="Meal toast, no action (4 s)" onPress={() => showToast('Saved offline', { kind: 'meal' })} />
           <PrimaryButton title="Health toast (3.2 s)" onPress={() => showToast('Changed on another device')} />
           <PrimaryButton title="Confirm" tone="action" shape="booking" disabled onPress={() => undefined} />
+          {/* TalkBack reads the charge with the name, as iOS's class sheet Confirm. */}
+          <PrimaryButton
+            title="Confirm"
+            accessibilityLabel="Confirm booking: Yoga, Fri 18:00. ISK 1,990 charged when you confirm"
+            tone="action"
+            shape="booking"
+            onPress={() => showToast('Booked')}
+          />
           {callout ? (
             <View style={styles.callout}>
               <Callout text={t('home.profile_moved')} onDismiss={() => setCallout(false)} />
@@ -196,6 +204,14 @@ export default function UiKitScreen() {
         <Card style={styles.cardPad}>
           <LPText size={13}>A card inside the sheet.</LPText>
         </Card>
+        {/* Device check: a sheet closed and opened again mid-slide must come back up. */}
+        <PrimaryButton
+          title="Close and reopen at once"
+          onPress={() => {
+            setSheetOpen(false);
+            setTimeout(() => setSheetOpen(true), 100);
+          }}
+        />
       </Sheet>
       <ConfirmSheet
         visible={confirmOpen}
