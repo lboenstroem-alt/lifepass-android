@@ -9,7 +9,7 @@
  *
  *   See plans                    the Plans modal (closing it re-checks)
  *   Manage / Resume membership   Account
- *   Cancel deletion              the deletion sheet (ACCT-4), Account until it lands
+ *   Cancel deletion              the deletion sheet (ACCT-4; closing it re-checks), Account until it lands
  *   Verify identity              the Kenni sheet, in the app
  *   My bookings, Refresh         Profile on Bookings
  *   Book a time                  the venue's page, when the screen knows its slug
@@ -119,15 +119,41 @@ export interface RefusalStepDeps {
 }
 
 /**
- * Takes one step. Returns what it did: `local` (the screen took it), the
- * destination opened, `link`, or `none` (nothing can take it; a screen that
- * only offers what `presentsRefusalStep` allows never gets here).
+ * What a step did: `local` (the screen took it), the destination opened
+ * (`deletion` is Account standing in for the deletion sheet), `deletionSheet`
+ * (ACCT-4's sheet opened over the screen), `link`, or `none` (nothing can
+ * take it; a screen that only offers what `presentsRefusalStep` allows never
+ * gets here).
  */
+export type RefusalStepOutcome = RefusalDestination['kind'] | 'deletionSheet' | 'local' | 'link' | 'none';
+
+/**
+ * Where the member comes back from a step that opened something: a page or a
+ * modal (`focus`, the refusing screen's next focus) or a sheet over the
+ * screen (`sheetClose`: `onClosed` runs; no focus change follows a sheet).
+ */
+export function refusalReturnBy(outcome: RefusalStepOutcome): 'focus' | 'sheetClose' | null {
+  switch (outcome) {
+    case 'plans':
+    case 'account':
+    case 'bookings':
+    case 'venue':
+    case 'deletion':
+      return 'focus';
+    case 'identity':
+    case 'deletionSheet':
+      return 'sheetClose';
+    default:
+      return null;
+  }
+}
+
+/** Takes one step (see `RefusalStepOutcome`). */
 export function takeRefusalStep(
   cta: RefusalCta,
   deps: RefusalStepDeps,
   options: RefusalStepOptions & { readonly onClosed?: () => void } = {},
-): RefusalDestination['kind'] | 'local' | 'link' | 'none' {
+): RefusalStepOutcome {
   if (options.local?.(cta)) return 'local';
   const link = refusalLink(cta);
   if (link) {
@@ -149,11 +175,13 @@ export function takeRefusalStep(
       openSharedRoute(navigation, 'Account');
       break;
     case 'deletion':
-      // The deletion sheet when ACCT-4 has it; Account (where deletion lives) until then.
-      if (!(deps.openDeletion ?? openAccountDeletion)()) {
-        beforeOpen();
-        openSharedRoute(navigation, 'Account');
+      // The deletion sheet when ACCT-4 has it (closing it re-checks, as the
+      // Kenni sheet does); Account (where deletion lives) until then.
+      if ((deps.openDeletion ?? openAccountDeletion)({ onClose: () => options.onClosed?.() })) {
+        return 'deletionSheet';
       }
+      beforeOpen();
+      openSharedRoute(navigation, 'Account');
       break;
     case 'identity':
       (deps.openKenni ?? openKenniSheet)({
@@ -177,7 +205,8 @@ export function takeRefusalStep(
  * The hook a refusing screen uses: `offers(cta)` says whether to draw the
  * step's button, `take(cta)` takes it. `onReturn` runs once the member is
  * back on this screen after a step that left it (the next focus), or when
- * the Kenni sheet closes.
+ * the Kenni or deletion sheet closes (never also at a later focus: a sheet
+ * opens over this screen, so no focus marks the return).
  */
 export function useRefusalStep(options: RefusalStepOptions = {}): {
   offers: (cta: RefusalCta, screenTakes?: (cta: RefusalCta) => boolean) => boolean;
@@ -210,8 +239,9 @@ export function useRefusalStep(options: RefusalStepOptions = {}): {
         { navigation },
         { venueSlug, local, onReturn, beforeOpen, onClosed: () => latest.current.onReturn?.() },
       );
-      // A step that pushed or presented a screen: re-check when the member is back here.
-      awaitingReturn.current = outcome === 'plans' || outcome === 'account' || outcome === 'bookings' || outcome === 'venue' || outcome === 'deletion';
+      // A step that pushed or presented a screen: re-check when the member is
+      // back here. A sheet re-checks as it closes (`onClosed`) instead.
+      awaitingReturn.current = refusalReturnBy(outcome) === 'focus';
     },
     [navigation],
   );

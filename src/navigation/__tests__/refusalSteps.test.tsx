@@ -1,9 +1,9 @@
 /**
  * Where a refusal's next step goes (iOS RefusalStepPresenter, 2.5.5): the
  * destination table, which steps can be offered at all, and the re-check
- * when the member comes back from the plans page.
+ * when the member comes back from the plans page or the deletion sheet.
  */
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, useNavigation } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { Pressable, Text } from 'react-native';
@@ -21,6 +21,12 @@ import {
 
 // The Kenni sheet's first-build modal draws icons, whose font loader needs expo-asset.
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
+
+// ACCT-4's deletion sheet, as the hook reaches it: opens (true) and closes on demand.
+const mockOpenDeletion = jest.fn((_options: { onClose: () => void }) => false);
+jest.mock('../../features/account/deletion', () => ({
+  openAccountDeletion: (options: { onClose: () => void }) => mockOpenDeletion(options),
+}));
 
 describe('the destination table', () => {
   it('matches iOS RefusalStepPresenter.destination', () => {
@@ -112,9 +118,14 @@ describe('taking a step', () => {
     expect(takeRefusalStep('cancelDeletion', first.deps)).toBe('deletion');
     expect(first.navigate).toHaveBeenCalledWith('Account');
 
-    const second = deps({ openDeletion: () => true });
-    takeRefusalStep('cancelDeletion', second.deps);
+    const openDeletion = jest.fn((_options: { onClose: () => void }) => true);
+    const second = deps({ openDeletion });
+    const onClosed = jest.fn();
+    expect(takeRefusalStep('cancelDeletion', second.deps, { onClosed })).toBe('deletionSheet');
     expect(second.navigate).not.toHaveBeenCalled();
+    // Closing the sheet is the return (iOS onSheetDismiss).
+    openDeletion.mock.calls[0][0].onClose();
+    expect(onClosed).toHaveBeenCalledTimes(1);
   });
 
   it('verify identity opens the Kenni sheet in the app, with the sign-up body', () => {
@@ -201,8 +212,15 @@ describe('useRefusalStep', () => {
 
   function Booking() {
     const { offers, take } = useRefusalStep({ onReturn: recheck });
+    const navigation = useNavigation<{ navigate(name: 'Plans'): void }>();
     return (
       <>
+        <Pressable accessibilityRole="button" onPress={() => take('cancelDeletion')}>
+          <Text>Cancel deletion</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={() => navigation.navigate('Plans')}>
+          <Text>Open another page</Text>
+        </Pressable>
         <Text>{offers('seePlans') ? 'View plans offered' : 'no step'}</Text>
         <Text>{offers('chooseAnotherTime') ? 'another time offered' : 'another time not offered'}</Text>
         <Text>
@@ -238,6 +256,31 @@ describe('useRefusalStep', () => {
     expect(recheck).not.toHaveBeenCalled();
 
     await act(async () => navigationRef.goBack());
+    expect(recheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-checks once when the deletion sheet closes, and not at a later focus', async () => {
+    recheck.mockClear();
+    mockOpenDeletion.mockImplementation(() => true);
+    await render(
+      <NavigationContainer ref={navigationRef}>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Booking" component={Booking} />
+          <Stack.Screen name="Plans" component={Plans} />
+        </Stack.Navigator>
+      </NavigationContainer>,
+    );
+    await fireEvent.press(screen.getByRole('button', { name: 'Cancel deletion' }));
+    expect(mockOpenDeletion).toHaveBeenCalledTimes(1);
+    expect(recheck).not.toHaveBeenCalled();
+
+    await act(async () => mockOpenDeletion.mock.calls[0][0].onClose());
+    expect(recheck).toHaveBeenCalledTimes(1);
+
+    // A page pushed and popped later is not a return from the sheet.
+    await fireEvent.press(screen.getByRole('button', { name: 'Open another page' }));
+    await act(async () => navigationRef.goBack());
+    expect(screen.getByText('View plans offered')).toBeOnTheScreen();
     expect(recheck).toHaveBeenCalledTimes(1);
   });
 });
