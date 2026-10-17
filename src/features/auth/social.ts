@@ -470,7 +470,18 @@ export async function signInWithSocialProvider(provider: SocialProvider): Promis
         return 'failed';
       }
       if (result.type === 'success' && typeof result.url === 'string') noteReturn(result.url);
-      else await awaitLateReturn(page, timing.lateReturnGraceMs);
+      else {
+        await awaitLateReturn(page, timing.lateReturnGraceMs);
+        // Android destroyed the app's screen behind the page but kept the
+        // process ("Don't keep activities", memory pressure): the return then
+        // started a NEW screen, and React Native hands such a link only to
+        // `getInitialURL`, never to the `url` event. The attempt id keeps an
+        // older launch link from being taken for this one.
+        if (page.returnUrl === null) {
+          const launch = await Linking.getInitialURL().catch(() => null);
+          if (launch) noteReturn(launch);
+        }
+      }
     } finally {
       subscription.remove();
       if (openPage === page) openPage = null;
@@ -543,13 +554,22 @@ export async function resumeSocialSignIn(): Promise<SocialSignInOutcome> {
     return 'ignored';
   }
   if (!url || !isSocialReturnUrl(url)) return 'ignored';
+  // The launch link stays the same for the life of the process: a sign-in
+  // screen appearing again later (after a sign-out, say) must not report that
+  // old attempt again.
+  if (url === resumedLaunchUrl) return 'ignored';
+  resumedLaunchUrl = url;
   return completeSocialReturn(url);
 }
+
+/** The launch link `resumeSocialSignIn` already acted on in this process. */
+let resumedLaunchUrl: string | null = null;
 
 /** Back to a fresh process (tests). The saved attempt is storage's: tests clear it themselves. */
 export function resetSocialSignInForTests(): void {
   openPage = null;
   completions.clear();
+  resumedLaunchUrl = null;
   timing = SOCIAL_TIMING_DEFAULTS;
   useSocialSignInStore.setState({ busy: false });
 }

@@ -392,6 +392,28 @@ describe('the return link reaching the app another way', () => {
     expect(store().isAuthenticated).toBe(true);
   });
 
+  it('after Android destroyed the screen behind the page but kept the process, the new screen’s launch link counts', async () => {
+    await store().bootstrap();
+    serveAuthServer();
+    serveMember();
+    openAuthSession.mockImplementation(async (url: string) => {
+      // React Native hands a link that starts a new screen only to getInitialURL.
+      jest.mocked(Linking.getInitialURL).mockResolvedValue(`${redirectOf(url)}&code=auth-code-1`);
+      return DISMISSED;
+    });
+    await expect(signInWithSocialProvider('google')).resolves.toBe('signedIn');
+    expect(store().isAuthenticated).toBe(true);
+  });
+
+  it('an older launch link (another attempt) is not taken for this one', async () => {
+    jest
+      .mocked(Linking.getInitialURL)
+      .mockResolvedValue('lifepass://auth/callback/social?attempt=an-old-one&code=old-code');
+    openAuthSession.mockResolvedValue(DISMISSED);
+    await expect(signInWithSocialProvider('google')).resolves.toBe('cancelled');
+    expect(authHost.requests).toHaveLength(0);
+  });
+
   it('through the deep-link router while the page is open: the page takes it', async () => {
     await store().bootstrap();
     serveAuthServer();
@@ -469,6 +491,18 @@ describe('the return link reaching the app another way', () => {
     ).resolves.toBe('ignored');
     expect(authHost.requests).toHaveLength(0);
     expect(await loadPendingSocialAttempt()).toBeNull();
+  });
+
+  it('reports a launch link’s attempt once, however often a sign-in screen appears', async () => {
+    await saveAttempt({ attempt: 'attempt-1', startedAt: Date.now() });
+    authHost.on('POST', '/auth/v1/token', Reply.json(400, { code: 400, error_code: 'bad_code_verifier', msg: 'x' }));
+    jest
+      .mocked(Linking.getInitialURL)
+      .mockResolvedValue('lifepass://auth/callback/social?attempt=attempt-1&code=auth-code-1');
+    await expect(resumeSocialSignIn()).resolves.toBe('failed');
+    // Log in again after a sign-out, in the same process: the launch link is the same, and old.
+    await expect(resumeSocialSignIn()).resolves.toBe('ignored');
+    expect(authHost.sentAll('/auth/v1/token')).toHaveLength(1);
   });
 
   it('a start that was not the page’s return does nothing', async () => {
