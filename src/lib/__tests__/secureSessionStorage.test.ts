@@ -120,13 +120,33 @@ describe('the storage', () => {
     expect(await createSecureSessionStorage().getItem(KEY)).toBe(value);
   });
 
-  it('a Keystore that cannot be read answers no session and deletes nothing', async () => {
+  it('a Keystore that cannot be read at launch answers no session and deletes nothing', async () => {
+    await createSecureSessionStorage().setItem(KEY, bigSession());
+    const relaunch = createSecureSessionStorage();
+    const read = jest.spyOn(SecureStore, 'getItemAsync').mockRejectedValue(new Error('keystore'));
+    expect(await relaunch.getItem(KEY)).toBeNull();
+    read.mockRestore();
+    expect(await relaunch.getItem(KEY)).toBe(bigSession());
+  });
+
+  it('a repeat read decrypts the head alone, and a changed or wiped value is read again', async () => {
     const storage = createSecureSessionStorage();
     await storage.setItem(KEY, bigSession());
-    const read = jest.spyOn(SecureStore, 'getItemAsync').mockRejectedValue(new Error('keystore'));
-    expect(await storage.getItem(KEY)).toBeNull();
+    const relaunch = createSecureSessionStorage();
+    const read = jest.spyOn(SecureStore, 'getItemAsync');
+    expect(await relaunch.getItem(KEY)).toBe(bigSession());
+    expect(read.mock.calls.length).toBeGreaterThan(2);
+    read.mockClear();
+    for (let i = 0; i < 5; i += 1) expect(await relaunch.getItem(KEY)).toBe(bigSession());
+    expect(read).toHaveBeenCalledTimes(5);
+    // Another writer (here: the other instance) replaces it.
+    const next = bigSession().replace('refresh-1', 'refresh-3');
+    await storage.setItem(KEY, next);
+    expect(await relaunch.getItem(KEY)).toBe(next);
+    // Wiped behind its back (a cleared app): no stale value.
+    secureStoreState.reset();
+    expect(await relaunch.getItem(KEY)).toBeNull();
     read.mockRestore();
-    expect(await storage.getItem(KEY)).toBe(bigSession());
   });
 });
 

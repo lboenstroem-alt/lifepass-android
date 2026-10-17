@@ -31,6 +31,12 @@
  * into SecureStore and deletes the plain copy, so nobody is signed out by the
  * update. Every later write and removal deletes any plain copy too.
  *
+ * A READ CACHE. supabase-js reads the session from storage on every token
+ * read, which is every API call; each SecureStore read is a Keystore decrypt,
+ * and a chunked session is several. A chunked value is kept in memory with
+ * the head it was read under, so a repeat read decrypts the head alone; a new
+ * generation in the head means a new value, read in full.
+ *
  * FAILURES. A Keystore that refuses a write keeps the value in memory for
  * this run (the member stays signed in until the app is closed) rather than
  * failing the sign-in or falling back to a plain file. A read that fails
@@ -114,8 +120,15 @@ export function createSecureSessionStorage(options: SecureSessionStorageOptions 
   const storeOptions: SecureStore.SecureStoreOptions = options.keychainService
     ? { keychainService: options.keychainService }
     : {};
-  /** Values the Keystore refused to store, kept for this run only. */
+  /** Values the Keystore refused to store, kept for this run only (see FAILURES). */
   const memory = new Map<string, string>();
+  /**
+   * The last chunked value read or written per key, with the head it was
+   * read under. A read compares one head with the cached one instead of
+   * decrypting every chunk again; a head that changed (or vanished) is read
+   * in full.
+   */
+  const cache = new Map<string, { readonly head: string; readonly value: string }>();
 
   // supabase-js serialises most of its storage use behind its own lock, but
   // not all of it; one queue here keeps a read from seeing half a write.
@@ -129,7 +142,12 @@ export function createSecureSessionStorage(options: SecureSessionStorageOptions 
   async function readSecure(key: string): Promise<string | null> {
     const head = await SecureStore.getItemAsync(key, storeOptions);
     const chunked = parseHead(head);
-    if (!chunked) return head;
+    if (!head || !chunked) {
+      cache.delete(key);
+      return head;
+    }
+    const cached = cache.get(key);
+    if (cached && cached.head === head) return cached.value;
     const parts: string[] = [];
     for (let i = 0; i < chunked.count; i += 1) {
       const part = await SecureStore.getItemAsync(chunkKey(key, chunked.generation, i), storeOptions);
@@ -137,7 +155,9 @@ export function createSecureSessionStorage(options: SecureSessionStorageOptions 
       if (part === null) return null;
       parts.push(part);
     }
-    return parts.join('');
+    const value = parts.join('');
+    cache.set(key, { head, value });
+    return value;
   }
 
   async function deleteChunks(key: string, chunked: { generation: string; count: number } | null): Promise<void> {
@@ -158,6 +178,7 @@ export function createSecureSessionStorage(options: SecureSessionStorageOptions 
     } catch {
       previous = null;
     }
+    cache.delete(key);
     if (byteLength(value) <= CHUNK_BYTES) {
       await SecureStore.setItemAsync(key, value, storeOptions);
     } else {
@@ -166,7 +187,9 @@ export function createSecureSessionStorage(options: SecureSessionStorageOptions 
       for (let i = 0; i < chunks.length; i += 1) {
         await SecureStore.setItemAsync(chunkKey(key, generation, i), chunks[i]!, storeOptions);
       }
-      await SecureStore.setItemAsync(key, `${HEAD_PREFIX}${generation}:${chunks.length}`, storeOptions);
+      const head = `${HEAD_PREFIX}${generation}:${chunks.length}`;
+      await SecureStore.setItemAsync(key, head, storeOptions);
+      cache.set(key, { head, value });
     }
     await deleteChunks(key, previous);
   }
@@ -222,6 +245,7 @@ export function createSecureSessionStorage(options: SecureSessionStorageOptions 
     removeItem: (key) =>
       serial(async () => {
         memory.delete(key);
+        cache.delete(key);
         let previous: { generation: string; count: number } | null = null;
         try {
           previous = parseHead(await SecureStore.getItemAsync(key, storeOptions));
