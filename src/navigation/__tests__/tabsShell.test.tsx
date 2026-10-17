@@ -62,7 +62,9 @@ jest.mock('../../screens/coach/CoachScreen', () => {
   }
   return { __esModule: true, default: Coach };
 });
-jest.mock('../../screens/checkin/CheckInScreen', () => require('./standIn').standInScreen('CheckIn'));
+// The scanners (CHECKIN-1) take a parked check-in link; the shell's tests stand them in so the link stays parked.
+jest.mock('../../features/checkin/scan/ScanScreen', () => require('./standIn').standInScreen('CheckIn'));
+jest.mock('../../features/checkin/scan/ScanPushedScreen', () => require('./standIn').standInScreen('ScanPushed'));
 jest.mock('../../screens/bookings/BookingsScreen', () => require('./standIn').standInScreen('Library'));
 jest.mock('../../screens/account/AccountScreen', () => require('./standIn').standInScreen('LegacyAccount'));
 jest.mock('../../screens/account/TopUpScreen', () => require('./standIn').standInScreen('TopUp'));

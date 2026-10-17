@@ -1,10 +1,11 @@
-// @f4-stub (plan 3.0.2): route `ScanPushed` (the scanner pushed from a page, with a back button), filled by CHECKIN-1.
-//
-// Keep the default export and its props type; replace the body (and this
-// marker). Until then it shows the first build's check-in screen.
-import LegacyCheckInScreen from '../../../screens/checkin/CheckInScreen';
+/**
+ * Route `ScanPushed`: the scanner a venue's "Scan QR" pushes on its own stack
+ * (iOS `CheckInView(showsBackButton: true)`): a back arrow in the bar, no meal
+ * entry, and every refusal explained. See ./CheckInScanView.tsx.
+ */
 import type { SharedRouteProps } from '../../../navigation/types';
+import CheckInScanView from './CheckInScanView';
 
 export default function ScanPushedScreen(_props: SharedRouteProps<'ScanPushed'>) {
-  return <LegacyCheckInScreen />;
+  return <CheckInScanView pushed />;
 }
