@@ -24,15 +24,24 @@
  *
  * WHEN IT SPEAKS. A final outcome is shown once. "Confirming your payment"
  * is shown once per attempt; later returns to the app check again quietly
- * and speak only when the payment settles. A confirm that did not answer is
- * said only right after the page (the member is waiting for it); on a
- * later return it is retried quietly, so a phone that is offline is not
- * nagged. Nothing is shown to anyone but the member who paid.
+ * and speak only when the payment settles. A confirm (or a plan's status
+ * check) that did not answer is said only right after the page (the member
+ * is waiting for it); on a later return it is retried quietly, so a phone
+ * that is offline is not nagged. Nothing is shown to anyone but the member
+ * who paid, and only once the app's tabs are on screen (./presenters).
+ * While it confirms after a return link or at launch, the member sees
+ * "Confirming your payment…" (./recoveryProgress), as iOS shows on the
+ * screen that waits.
+ *
+ * ONE AT A TIME. Every settling here (a recovery run, a presenter's Check
+ * again) runs in one queue per member, so `recoveryIdle` waits for all of
+ * it: a new attempt that waits for it then sees what it found (./attempts).
  */
 import { Linking } from 'react-native';
 
 import { useAppStore } from '../stores/appStore';
 
+import { noteResolved } from './earlier';
 import { noteReturnUrl } from './hostedPage';
 import {
   claimAttempt,
@@ -40,12 +49,14 @@ import {
   hasLiveAttempt,
   railFamily,
   readInflight,
+  releaseAbandonedHolds,
   releaseAttempt,
   updateInflight,
   type InflightRecord,
 } from './inflight';
-import { presentResolution, shouldPresent, type PaymentResolution } from './presenters';
-import { settleRecord, type Settled } from './resolve';
+import { presentResolution, shouldPresent } from './presenters';
+import { endRecoveryProgress, startRecoveryProgress } from './recoveryProgress';
+import { settleRecord, stillSettling, unanswered, type Settled } from './resolve';
 import { parseReturnUrl, type ParsedReturn } from './returnUrls';
 
 /** What started a recovery: a return link, a launch (first profile), or a return to the foreground. */
@@ -60,7 +71,8 @@ interface ReturnHint extends ParsedReturn {
 
 let pendingReturn: ReturnHint | null = null;
 let launchLinkRead = false;
-const running = new Map<string, Promise<RecoveryReport>>();
+/** The tail of each member's queue of settling work. */
+const running = new Map<string, Promise<unknown>>();
 
 /** What a recovery did, for tests and logs. */
 export interface RecoveryReport {
@@ -90,16 +102,17 @@ function stillSignedIn(memberId: string): boolean {
 /**
  * A `lifepass://payment-*` or `card-setup-*` link reached the app. Returns
  * false for any other URL (the router handles those). A link for a page open
- * in this process is that page's; a link while a flow here is settling a
+ * in this process is that page's; a link while a FLOW here is settling a
  * payment of that family belongs to that flow (it already knows how its page
  * closed). Otherwise it is the leg of a payment the app lost: kept, and the
- * recovery runs as soon as the member is known.
+ * recovery runs as soon as the member is known. A recovery already settling
+ * an older attempt does not own it: it waits for the attempt it belongs to.
  */
 export function handlePaymentReturnUrl(url: string | null | undefined): boolean {
   const link = parseReturnUrl(url);
   if (!link) return false;
   if (noteReturnUrl(link)) return true;
-  if (hasLiveAttempt(link.family)) return true;
+  if (hasLiveAttempt(link.family, 'flow')) return true;
   pendingReturn = { ...link, at: Date.now() };
   const memberId = signedInMember();
   if (memberId) void recoverPayments(memberId, 'return');
@@ -121,7 +134,7 @@ export async function readLaunchReturnOnce(): Promise<void> {
     return;
   }
   const link = parseReturnUrl(url);
-  if (!link || noteReturnUrl(link) || hasLiveAttempt(link.family)) return;
+  if (!link || noteReturnUrl(link) || hasLiveAttempt(link.family, 'flow')) return;
   pendingReturn ??= { ...link, at: Date.now() };
 }
 
@@ -138,6 +151,20 @@ function takeReturnLeg(family: 'payment' | 'cardSetup', now: number): 'done' | '
   return hint.leg === 'canceled' ? 'cancel' : 'done';
 }
 
+/** Runs `work` after everything already queued for `memberId` (see "ONE AT A TIME"). */
+function enqueue<T>(memberId: string, work: () => Promise<T>): Promise<T> {
+  const id = memberId.toLowerCase();
+  const previous = running.get(id) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(work);
+  running.set(id, run);
+  void run
+    .catch(() => undefined)
+    .finally(() => {
+      if (running.get(id) === run) running.delete(id);
+    });
+  return run;
+}
+
 /**
  * Settles every saved attempt of `memberId` that nothing in this process
  * holds. Runs one at a time per member: a trigger that arrives while one
@@ -145,23 +172,27 @@ function takeReturnLeg(family: 'payment' | 'cardSetup', now: number): 'done' | '
  */
 export function recoverPayments(memberId: string, trigger: RecoveryTrigger): Promise<RecoveryReport> {
   const id = memberId.toLowerCase();
-  const previous = running.get(id) ?? Promise.resolve(NOTHING);
-  const run = previous.catch(() => NOTHING).then(() => recover(id, trigger));
-  running.set(id, run);
-  void run.finally(() => {
-    if (running.get(id) === run) running.delete(id);
-  });
-  return run;
+  return enqueue(id, () => recover(id, trigger));
 }
 
-/** Waits for any recovery of `memberId` in progress (a new attempt waits for an old one to settle). */
+/** Waits for everything the recovery is settling for `memberId` (a new attempt waits for an old one to settle). */
 export async function recoveryIdle(memberId: string): Promise<void> {
-  const run = running.get(memberId.toLowerCase());
-  if (run) await run.catch(() => undefined);
+  const id = memberId.toLowerCase();
+  // Work queued while waiting is waited for too.
+  for (let run = running.get(id); run; run = running.get(id)) {
+    await run.catch(() => undefined);
+    if (running.get(id) === run) break;
+  }
 }
 
 async function recover(memberId: string, trigger: RecoveryTrigger): Promise<RecoveryReport> {
   if (!stillSignedIn(memberId)) return NOTHING;
+  // A screen that held an attempt for Check again and is gone lets go of it
+  // here (it had shown "Confirming your payment"), so it is settled below.
+  const abandoned = releaseAbandonedHolds();
+  for (const attemptId of abandoned) {
+    await updateInflight(memberId, attemptId, (saved) => ({ ...saved, presentedProcessing: true }));
+  }
   const records = await readInflight(memberId);
   if (records.length === 0) {
     // A link with nothing saved behind it (an attempt already settled, or a
@@ -190,20 +221,29 @@ async function recover(memberId: string, trigger: RecoveryTrigger): Promise<Reco
     try {
       const family = railFamily(record.rail);
       const linkLeg = newestByFamily.get(family) === record.attemptId ? takeReturnLeg(family, now) : null;
-      const settled = await settleRecord(record, linkLeg ?? 'done');
+      const leg = linkLeg ?? 'done';
+      const context: SpeakContext = { trigger, afterLink: linkLeg !== null };
+      if (showsProgress(record, leg, context)) startRecoveryProgress({ attemptId: record.attemptId, rail: record.rail });
+      const settled = await settleRecord(record, leg);
+      const says = shouldSpeak(record, settled, context);
       if (settled.record === 'clear') {
+        // Noted before the record goes, so a new attempt that finds it gone
+        // always finds what it came to (./attempts).
+        noteResolved(record, settled.resolution, says);
         await clearInflight(memberId, record.attemptId);
         resolved += 1;
       } else {
         pending += 1;
       }
-      await speak(record, settled, { trigger, afterLink: linkLeg !== null });
+      endRecoveryProgress(record.attemptId);
+      if (says) await speak(record, settled);
     } catch (error) {
       // One attempt that could not be settled must not stop the others; its
       // record stays for the next return to the app.
       pending += 1;
       if (__DEV__ && process.env.NODE_ENV !== 'test') console.warn('[payments] recovery failed', error);
     } finally {
+      endRecoveryProgress(record.attemptId);
       releaseAttempt(record.attemptId);
     }
   }
@@ -216,42 +256,64 @@ interface SpeakContext {
   readonly afterLink: boolean;
 }
 
-function isProcessing(resolution: PaymentResolution): boolean {
-  return (
-    (resolution.rail === 'booking' || resolution.rail === 'walk_in') &&
-    resolution.settlement.kind === 'outcome' &&
-    resolution.settlement.outcome.kind === 'processing'
-  );
+/**
+ * Whether the member sees "Confirming your payment…" while `record` settles:
+ * a booking, walk-in or plan, after its return link or at launch (the member
+ * may have just paid), unless its "still confirming" was already said. Not a
+ * plan's cancel link, which asks nothing.
+ */
+function showsProgress(record: InflightRecord, leg: 'done' | 'cancel', context: SpeakContext): boolean {
+  if (record.rail === 'card_setup' || record.rail === 'copay') return false;
+  if (record.rail === 'plan' && leg === 'cancel') return false;
+  if (record.presentedProcessing) return false;
+  return context.afterLink || context.trigger !== 'foreground';
 }
 
-function isFailedConfirm(resolution: PaymentResolution): boolean {
-  return (resolution.rail === 'booking' || resolution.rail === 'walk_in') && resolution.settlement.kind === 'failed';
-}
-
-/** Shows what `settled` says, when it should be said (see the file comment). */
-async function speak(record: InflightRecord, settled: Settled, context: SpeakContext): Promise<void> {
+/** Whether what `settled` says should be said now (see the file comment). */
+function shouldSpeak(record: InflightRecord, settled: Settled, context: SpeakContext): boolean {
   const { resolution } = settled;
-  if (!shouldPresent(resolution) || !stillSignedIn(record.memberId)) return;
-  if (isFailedConfirm(resolution) && !context.afterLink && context.trigger !== 'return') return;
-  if (isProcessing(resolution)) {
-    if (record.presentedProcessing) return;
+  if (!shouldPresent(resolution) || !stillSignedIn(record.memberId)) return false;
+  if (unanswered(resolution) && !context.afterLink && context.trigger !== 'return') return false;
+  return !(stillSettling(resolution) && record.presentedProcessing);
+}
+
+/** Says it ("still confirming" is marked as said, so later returns are quiet). */
+async function speak(record: InflightRecord, settled: Settled): Promise<void> {
+  if (stillSettling(settled.resolution)) {
     await updateInflight(record.memberId, record.attemptId, (saved) => ({ ...saved, presentedProcessing: true }));
   }
-  presentResolution(resolution, { checkAgain: () => void checkRecordAgain(record) });
+  presentResolution(settled.resolution, { checkAgain: () => void checkRecordAgain(record) });
 }
 
 /**
  * The presenter's Check again: the same key, the Done leg, and whatever it
  * says now (including "still confirming", which the member asked for).
+ *
+ * The dialog it sits in can be stale: shown, then the app went to the
+ * background, and a later return settled the attempt, cleared it and said
+ * so. Asking again then would say the outcome twice (and schedule the
+ * reminders twice), so it first checks the attempt is still saved, and does
+ * nothing when it is not (its outcome is already on its way). Queued with
+ * the recovery, so a new attempt waiting for the recovery waits for it too.
  */
-export async function checkRecordAgain(record: InflightRecord): Promise<void> {
+export function checkRecordAgain(record: InflightRecord): Promise<void> {
+  return enqueue(record.memberId, () => recheck(record));
+}
+
+async function recheck(shown: InflightRecord): Promise<void> {
+  const memberId = shown.memberId.toLowerCase();
+  if (!stillSignedIn(memberId)) return;
+  const record = (await readInflight(memberId)).find((saved) => saved.attemptId === shown.attemptId);
+  if (!record) return;
   if (!claimAttempt(record.attemptId, railFamily(record.rail), 'recovery')) return;
   try {
     const settled = await settleRecord(record, 'done');
-    if (settled.record === 'clear') await clearInflight(record.memberId, record.attemptId);
-    if (shouldPresent(settled.resolution) && stillSignedIn(record.memberId)) {
-      presentResolution(settled.resolution, { checkAgain: () => void checkRecordAgain(record) });
+    const says = shouldPresent(settled.resolution) && stillSignedIn(memberId);
+    if (settled.record === 'clear') {
+      noteResolved(record, settled.resolution, says);
+      await clearInflight(memberId, record.attemptId);
     }
+    if (says) presentResolution(settled.resolution, { checkAgain: () => void checkRecordAgain(record) });
   } finally {
     releaseAttempt(record.attemptId);
   }

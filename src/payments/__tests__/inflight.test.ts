@@ -7,15 +7,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { registeredHookIds, runSignOutCleaners } from '../../app/signOut';
 import {
+  attemptAction,
+  attemptIdentity,
+  attemptState,
   claimAttempt,
   clearInflight,
   hasLiveAttempt,
+  heldRecord,
   holdAttempt,
   INFLIGHT_MAX_AGE_MS,
   INFLIGHT_MAX_RECORDS,
   inflightStorageKey,
   isAttemptLive,
   readInflight,
+  releaseAbandonedHolds,
   releaseAttempt,
   resetInflightMemoryForTests,
   resumeAttempt,
@@ -26,6 +31,8 @@ import {
 } from '../inflight';
 
 import { MEMBER_A, MEMBER_B } from './paymentsHarness';
+// The app loads this with the session hooks (an F3 SHARED_LAYERS entry).
+import '../register';
 
 const booking = (memberId: string, key = 'booking-key-0001'): NewInflightRecord => ({
   rail: 'booking',
@@ -145,4 +152,88 @@ it('an attempt has one owner at a time', () => {
   releaseAttempt('a1');
   expect(isAttemptLive('a1')).toBe(false);
   expect(claimAttempt('a1', 'payment')).toBe(true);
+});
+
+it('one key is one attempt: a retry under the same key replaces its record', async () => {
+  const first = await saveInflight(booking(MEMBER_A, 'key-same-0001'));
+  await updateInflight(MEMBER_A, first.attemptId, (record) => ({ ...record, presentedProcessing: true }));
+  const other = await saveInflight(booking(MEMBER_A, 'key-other-001'));
+  const retry = await saveInflight(booking(MEMBER_A, 'key-same-0001'));
+  const stored = JSON.parse((await AsyncStorage.getItem(inflightStorageKey(MEMBER_A)))!) as { attemptId: string }[];
+  expect(stored.map((r) => r.attemptId)).toEqual([other.attemptId, retry.attemptId]);
+  const left = await readInflight(MEMBER_A);
+  expect(left.map((r) => r.attemptId)).toEqual([other.attemptId, retry.attemptId]);
+  // The member was on the page again: the new record waits for its own answer.
+  expect(left[1].presentedProcessing).toBeUndefined();
+});
+
+it('a Kling session is one attempt; a session-less checkout or a card setup never merges', async () => {
+  const plan = (externalSessionId: string | null): NewInflightRecord => ({
+    rail: 'plan',
+    memberId: MEMBER_A,
+    externalSessionId,
+    plan: { productSlug: 'pass-day', prePurchasePassIds: [], prePurchaseSubSlug: null },
+  });
+  await saveInflight(plan('0F1E2D3C-4B5A-4968-8776-655443322110'));
+  await saveInflight(plan('0f1e2d3c-4b5a-4968-8776-655443322110'));
+  await saveInflight(plan(null));
+  await saveInflight(plan(null));
+  await saveInflight({ rail: 'card_setup', memberId: MEMBER_A });
+  await saveInflight({ rail: 'card_setup', memberId: MEMBER_A });
+  expect((await readInflight(MEMBER_A)).map((r) => r.rail)).toEqual(['plan', 'plan', 'plan', 'card_setup', 'card_setup']);
+});
+
+it('two records of one payment left by anything older read as the newest', async () => {
+  const saved = await saveInflight(booking(MEMBER_A, 'key-dupe-0001'));
+  const raw = JSON.parse((await AsyncStorage.getItem(inflightStorageKey(MEMBER_A)))!) as object[];
+  await AsyncStorage.setItem(inflightStorageKey(MEMBER_A), JSON.stringify([{ ...raw[0], attemptId: 'older' }, ...raw]));
+  expect((await readInflight(MEMBER_A)).map((r) => r.attemptId)).toEqual([saved.attemptId]);
+});
+
+it('says which payment and which action a record is', () => {
+  const record = booking(MEMBER_A, 'key-0001');
+  expect(attemptIdentity(record)).toBe('booking:key-0001');
+  expect(attemptAction(record)).toBe('booking|7a1c2b3d-0000-4000-8000-0000000000aa|event:4242');
+  const slot = (startsAt: string): NewInflightRecord => ({
+    rail: 'booking',
+    memberId: MEMBER_A,
+    key: 'k',
+    amountIsk: 1,
+    booking: { kind: 'slot', activityId: '7A1C2B3D-0000-4000-8000-0000000000AA', startsAt },
+  });
+  // One slot, however its start is spelled.
+  expect(attemptAction(slot('2026-10-20T10:00:00Z'))).toBe(attemptAction(slot('2026-10-20T10:00:00.000Z')));
+  expect(attemptAction(slot('2026-10-20T11:00:00Z'))).not.toBe(attemptAction(slot('2026-10-20T10:00:00Z')));
+  expect(
+    attemptAction({
+      rail: 'walk_in',
+      memberId: MEMBER_A,
+      key: 'w',
+      amountIsk: 1,
+      walkIn: { venueId: '3F2B8C1E-7D4A-4B6E-9C2F-1A2B3C4D5E6F', activityId: null },
+    }),
+  ).toBe('walk_in|3f2b8c1e-7d4a-4b6e-9c2f-1a2b3c4d5e6f');
+  expect(attemptAction({ rail: 'card_setup', memberId: MEMBER_A })).toBeNull();
+});
+
+it('a screen that holds an attempt and is gone lets go of it at the next recovery', async () => {
+  const saved = await saveInflight(booking(MEMBER_A));
+  let alive = true;
+  claimAttempt(saved.attemptId, 'payment');
+  holdAttempt(saved.attemptId, { record: saved, isScreenAlive: () => alive });
+  claimAttempt('no-screen-test', 'payment');
+  holdAttempt('no-screen-test');
+  expect(heldRecord(saved.attemptId)).toEqual(saved);
+  expect(releaseAbandonedHolds()).toEqual([]);
+  alive = false;
+  expect(releaseAbandonedHolds()).toEqual([saved.attemptId]);
+  expect(isAttemptLive(saved.attemptId)).toBe(false);
+  // Without a test of its screen, a hold stays until the screen lets go.
+  expect(attemptState('no-screen-test')).toEqual({ owner: 'flow', phase: 'held' });
+});
+
+it('the session hooks are registered when the register file loads', () => {
+  const ids = registeredHookIds();
+  expect(ids.signOut).toContain('payments.inflight');
+  expect(ids.activation).toContain('payments.recovery');
 });

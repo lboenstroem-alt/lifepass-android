@@ -19,10 +19,15 @@ import { MEMBER_A, profileJSON } from '../../stores/__tests__/storeHarness';
 import { resetAttemptsForTests } from '../attempts';
 import { resetPaymentSessionsForTests } from '../bookingPaymentSession';
 import { resetRecoveryForTests } from '../coldStartRecovery';
+import { forgetRecentResolutions } from '../earlier';
 import { resetHostedPageForTests } from '../hostedPage';
 import { inflightStorageKey, resetInflightMemoryForTests, type InflightRecord } from '../inflight';
-import { resetPresentersForTests } from '../presenters';
+import { resetPresentationQueueForTests, resetPresentersForTests, setShellReadyForTests } from '../presenters';
+import { resetRecoveryProgress } from '../recoveryProgress';
 import { NO_WAITS, setPaymentTimingForTests } from '../timing';
+// The app loads this with the session hooks (src/app/registrations.ts lists
+// it under SHARED_LAYERS, an F3 contract request); loaded here the same way.
+import '../register';
 
 export { MEMBER_A };
 export const MEMBER_B = '3c4c1b36-2a7e-4b1f-9e0e-2f1c4f0a9c22';
@@ -64,6 +69,9 @@ export function killProcess(): void {
   resetRecoveryForTests();
   resetAttemptsForTests();
   resetPaymentSessionsForTests();
+  forgetRecentResolutions();
+  resetRecoveryProgress();
+  resetPresentationQueueForTests();
   resetAppStoreForTests();
 }
 
@@ -78,11 +86,15 @@ export async function storedRecords(memberId: string = MEMBER_A): Promise<Inflig
   return raw ? (JSON.parse(raw) as InflightRecord[]) : [];
 }
 
-/** A fresh phone per test: rails' memory, presenters, dialogs and the store reset; no waits. */
+/**
+ * A fresh phone per test: rails' memory, presenters, dialogs and the store
+ * reset; no waits; the app's tabs on screen (outcomes are shown at once).
+ */
 export function freshPaymentsPerTest(): void {
   beforeEach(() => {
     killProcess();
     resetPresentersForTests();
+    setShellReadyForTests(() => true);
     dismissAllDialogs();
     setPaymentTimingForTests(NO_WAITS);
     launchedWith(null);
@@ -90,6 +102,8 @@ export function freshPaymentsPerTest(): void {
   afterEach(() => {
     dismissAllDialogs();
     setPaymentTimingForTests(null);
+    setShellReadyForTests(null);
+    resetPresentersForTests();
     jest.restoreAllMocks();
     resetAppStoreForTests();
   });

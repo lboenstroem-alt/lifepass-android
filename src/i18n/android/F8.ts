@@ -9,7 +9,9 @@
 // the app can be closed behind the page, and a walk-in paid on it is then
 // confirmed after a cold start, with the door's screen gone. Until the
 // check-in flow shows its proof there, the member is told where to find it
-// (Home re-offers the proof, as on iOS).
+// (Home re-offers the proof, as on iOS) while Home still does: the server
+// stops sending it 15 minutes after the check-in, so a walk-in confirmed
+// later (`paid_*`) only says it went through.
 import { definePack } from './pack';
 
 export default definePack({
@@ -18,11 +20,15 @@ export default definePack({
       "Your payment went through and you're checked in at {venue}. Open Home and tap Show to staff to show it at reception.",
     'payments.recovered.checked_in':
       "Your payment went through and you're checked in. Open Home and tap Show to staff to show it at reception.",
+    'payments.recovered.paid_checked_in_venue': "Your payment went through and you're checked in at {venue}.",
+    'payments.recovered.paid_checked_in': "Your payment went through and you're checked in.",
   },
   is: {
     'payments.recovered.checked_in_venue':
       'Greiðslan gekk í gegn og þú ert innrituð/aður hjá {venue}. Opnaðu Heim og ýttu á Sýna starfsfólki til að sýna innritunina í móttöku.',
     'payments.recovered.checked_in':
       'Greiðslan gekk í gegn og þú ert innrituð/aður. Opnaðu Heim og ýttu á Sýna starfsfólki til að sýna innritunina í móttöku.',
+    'payments.recovered.paid_checked_in_venue': 'Greiðslan gekk í gegn og þú ert innrituð/aður hjá {venue}.',
+    'payments.recovered.paid_checked_in': 'Greiðslan gekk í gegn og þú ert innrituð/aður.',
   },
 });

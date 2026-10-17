@@ -160,6 +160,61 @@ export function payCopyContext(record: BookingInflight | WalkInInflight): PayCop
   return record.booking.kind === 'class' ? 'class' : 'slot';
 }
 
+/**
+ * The payment a record is: the action's Idempotency-Key (a booking, a
+ * walk-in) or Kling's session (a plan, a co-pay). The server resolves a
+ * payment by it, so two records with one identity are ONE attempt: a retry
+ * under the same key reopens the same session, and its record replaces the
+ * earlier one rather than standing beside it (two records for one key would
+ * each be settled, and the member told the outcome twice). Null for a card
+ * setup and a session-less checkout (the web-first fallback), which nothing
+ * can open twice.
+ */
+export function attemptIdentity(record: InflightRecord | NewInflightRecord): string | null {
+  switch (record.rail) {
+    case 'booking':
+    case 'walk_in':
+      return `${record.rail}:${record.key}`;
+    case 'plan':
+    case 'copay':
+      return record.externalSessionId ? `${record.rail}:${record.externalSessionId.toLowerCase()}` : null;
+    case 'card_setup':
+      return null;
+  }
+}
+
+/** A start instant in one spelling (`…:00Z` and `…:00.000Z` are the same class). */
+function instant(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+/**
+ * What the member was paying for, whatever the key: the same class (by its
+ * event) or slot (by its start) of one activity, a walk-in at one venue (the
+ * server holds one unresolved door payment per venue: `payment_unresolved`),
+ * or one plan or pass. A new attempt at an action whose earlier attempt is
+ * still unresolved must not start under a new key (./attempts). Null where
+ * no such rule applies (card setup, co-pay).
+ */
+export function attemptAction(record: InflightRecord | NewInflightRecord): string | null {
+  switch (record.rail) {
+    case 'booking': {
+      const { activityId, eventId, startsAt } = record.booking;
+      const at = eventId != null ? `event:${eventId}` : instant(startsAt);
+      return at ? `booking|${activityId.toLowerCase()}|${at}` : null;
+    }
+    case 'walk_in':
+      return `walk_in|${record.walkIn.venueId.toLowerCase()}`;
+    case 'plan':
+      return `plan|${record.plan.productSlug}`;
+    case 'card_setup':
+    case 'copay':
+      return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Storage
 
@@ -248,11 +303,23 @@ async function load(memberId: string, now: number): Promise<{ records: InflightR
     return { records: [], dirty: true };
   }
   const list = Array.isArray(parsed) ? parsed : [];
-  const records: InflightRecord[] = [];
+  const readable: InflightRecord[] = [];
   for (const item of list) {
     const record = readRecord(item, memberId.toLowerCase());
-    if (record && fresh(record, now)) records.push(record);
+    if (record && fresh(record, now)) readable.push(record);
   }
+  // One record per payment (see `attemptIdentity`): the newest wins.
+  const seen = new Set<string>();
+  const records = readable
+    .reverse()
+    .filter((record) => {
+      const identity = attemptIdentity(record);
+      if (identity === null) return true;
+      if (seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    })
+    .reverse();
   return { records, dirty: records.length !== list.length || !Array.isArray(parsed) };
 }
 
@@ -268,8 +335,13 @@ async function store(memberId: string, records: readonly InflightRecord[]): Prom
 }
 
 /**
- * Saves a new attempt before its page opens and returns it, stamped. The
- * oldest records go when there are more than `INFLIGHT_MAX_RECORDS`.
+ * Saves a new attempt before its page opens and returns it, stamped. A saved
+ * record of the same payment (`attemptIdentity`: a retry under the same key,
+ * the same Kling session) is REPLACED, never kept beside it: it is one
+ * payment, settled once. The new record starts afresh (`presentedProcessing`
+ * unset): the member has just been on the page again and is waiting for
+ * this answer. The oldest records go when there are more than
+ * `INFLIGHT_MAX_RECORDS`.
  */
 export function saveInflight(record: NewInflightRecord, now: number = Date.now()): Promise<InflightRecord> {
   const memberId = record.memberId.toLowerCase();
@@ -280,9 +352,11 @@ export function saveInflight(record: NewInflightRecord, now: number = Date.now()
     attemptId: newAttemptId(now),
     startedAt: new Date(now).toISOString(),
   } as InflightRecord;
+  const identity = attemptIdentity(stamped);
   return serialised(memberId, async () => {
     const { records } = await load(memberId, now);
-    const next = [...records, stamped].slice(-INFLIGHT_MAX_RECORDS);
+    const others = identity === null ? records : records.filter((saved) => attemptIdentity(saved) !== identity);
+    const next = [...others, stamped].slice(-INFLIGHT_MAX_RECORDS);
     await store(memberId, next);
     return stamped;
   });
@@ -364,6 +438,10 @@ interface LiveAttempt {
   readonly family: 'payment' | 'cardSetup';
   readonly owner: AttemptOwner;
   phase: 'active' | 'held';
+  /** While a screen holds it: the record its Check again settles. */
+  record?: InflightRecord;
+  /** While a screen holds it: whether that screen is still there (see `releaseAbandonedHolds`). */
+  isScreenAlive?: () => boolean;
 }
 
 const live = new Map<string, LiveAttempt>();
@@ -379,16 +457,35 @@ export function claimAttempt(
   return true;
 }
 
-/** The owner keeps `attemptId` with nothing running (a screen offering Check again). */
-export function holdAttempt(attemptId: string): void {
+/**
+ * The owner keeps `attemptId` with nothing running (a screen offering Check
+ * again), with the record that Check again settles and, when the screen gave
+ * one, the test of whether it is still there.
+ */
+export function holdAttempt(
+  attemptId: string,
+  hold: { readonly record?: InflightRecord; readonly isScreenAlive?: () => boolean } = {},
+): void {
   const entry = live.get(attemptId);
-  if (entry) entry.phase = 'held';
+  if (!entry) return;
+  entry.phase = 'held';
+  entry.record = hold.record;
+  entry.isScreenAlive = hold.isScreenAlive;
+}
+
+/** The record a screen holds under `attemptId` (null when no screen holds it). */
+export function heldRecord(attemptId: string): InflightRecord | null {
+  const entry = live.get(attemptId);
+  return entry && entry.phase === 'held' && entry.owner === 'flow' ? (entry.record ?? null) : null;
 }
 
 /** The owner runs `attemptId` again (Check again). */
 export function resumeAttempt(attemptId: string): void {
   const entry = live.get(attemptId);
-  if (entry) entry.phase = 'active';
+  if (!entry) return;
+  entry.phase = 'active';
+  entry.record = undefined;
+  entry.isScreenAlive = undefined;
 }
 
 /** Lets go of `attemptId` (its record, if still saved, is the recovery's again). */
@@ -399,6 +496,38 @@ export function releaseAttempt(attemptId: string): void {
 /** True while an owner in this process holds `attemptId`. */
 export function isAttemptLive(attemptId: string): boolean {
   return live.has(attemptId);
+}
+
+/** Who holds `attemptId` here, and how, or null. */
+export function attemptState(attemptId: string): { readonly owner: AttemptOwner; readonly phase: 'active' | 'held' } | null {
+  const entry = live.get(attemptId);
+  return entry ? { owner: entry.owner, phase: entry.phase } : null;
+}
+
+/**
+ * Lets go of every attempt a screen held for Check again whose screen is
+ * gone (a navigation reset, a sheet that crashed, a consumer that never
+ * called `leaveAttempt`). Without this such an attempt stayed "live" for the
+ * life of the process, and the recovery skipped it on every return to the
+ * app, so a payment that settled later was never told. Returns the
+ * attempts let go; the recovery settles them like any other record.
+ */
+export function releaseAbandonedHolds(): string[] {
+  const released: string[] = [];
+  for (const [attemptId, entry] of live) {
+    if (entry.phase !== 'held' || entry.owner !== 'flow' || !entry.isScreenAlive) continue;
+    let alive = true;
+    try {
+      alive = entry.isScreenAlive();
+    } catch {
+      alive = false;
+    }
+    if (!alive) {
+      live.delete(attemptId);
+      released.push(attemptId);
+    }
+  }
+  return released;
 }
 
 /**

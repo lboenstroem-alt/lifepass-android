@@ -8,7 +8,16 @@ import { api, Reply } from '@test/server';
 import { stubApiClientPerTest } from '../../api/testing';
 import { useAppStore } from '../../stores/appStore';
 import { PLUS_SUBSCRIPTION } from '../../stores/__tests__/storeHarness';
-import { cardSetupOnHostedPage, checkoutOnHostedPage, copayOnHostedPage, recheckPlanPurchase } from '../attempts';
+import {
+  cardSetupOnHostedPage,
+  checkCheckoutAgain,
+  checkoutOnHostedPage,
+  copayOnHostedPage,
+  recheckPlanPurchase,
+} from '../attempts';
+import { recoverPayments } from '../coldStartRecovery';
+import { isAttemptLive, saveInflight } from '../inflight';
+import { registerPaymentOutcomePresenter } from '../presenters';
 
 import { freshPaymentsPerTest, MEMBER_A, signIn, storedRecords } from './paymentsHarness';
 
@@ -56,6 +65,36 @@ describe('card setup', () => {
     await expect(cardSetupOnHostedPage({ memberId: MEMBER_A })).resolves.toMatchObject({ kind: 'notOpened' });
     expect(api.sentAll('/billing/payment-methods/confirm')).toHaveLength(0);
     expect(await storedRecords()).toEqual([]);
+  });
+
+  it('the setup page opens at once, while the recovery is still confirming an unrelated payment', async () => {
+    await saveInflight({
+      rail: 'booking',
+      memberId: MEMBER_A,
+      key: 'old-key-00001',
+      amountIsk: 1_990,
+      booking: { kind: 'class', activityId: '7a1c2b3d-0000-4000-8000-0000000000aa', eventId: 4242 },
+    });
+    // The recovery's first ask hangs until the card page is done; later ones answer at once.
+    let answer: (() => void) | null = null;
+    api.on('POST', '/bookings/payment-sessions/confirm', () =>
+      answer === null
+        ? new Promise((resolve) => {
+            answer = () => resolve(Reply.ok({ status: 'processing' }));
+          })
+        : Reply.ok({ status: 'processing' }),
+    );
+    api.on('POST', '/billing/payment-methods/setup-session', Reply.ok({ url: 'https://pay.kling.is/setup/s_1' }));
+    api.on('POST', '/billing/payment-methods/confirm', Reply.ok({ card: null }));
+    openAuthSession.mockResolvedValueOnce(DISMISSED);
+    // What the recovery says about the old booking is not this test's.
+    registerPaymentOutcomePresenter('booking', () => undefined);
+    const recovery = recoverPayments(MEMBER_A, 'foreground');
+    await expect(cardSetupOnHostedPage({ memberId: MEMBER_A })).resolves.toEqual({ kind: 'confirmed', card: null });
+    expect(openAuthSession).toHaveBeenCalledTimes(1);
+    expect(api.sentAll('/bookings/payment-sessions/confirm')).toHaveLength(1);
+    answer!();
+    await recovery;
   });
 
   it('a pull that fails still ends the page (Account re-reads billing)', async () => {
@@ -112,7 +151,7 @@ describe('plan checkout', () => {
     expect(result).toMatchObject({ kind: 'verified', verification: { kind: 'failed' } });
   });
 
-  it('a settling that throws lets the attempt go: the next page still opens, and the old record is settled first', async () => {
+  it('a settling that throws lets the attempt go: a second checkout of the plan checks it instead of opening', async () => {
     const fallback = { memberId: MEMBER_A, url: 'https://www.lifepass.is/plans?completePurchase=plan-plus', externalSessionId: null, plan };
     const realRefresh = useAppStore.getState().refreshCredits;
     openAuthSession.mockResolvedValueOnce(DISMISSED);
@@ -125,6 +164,21 @@ describe('plan checkout', () => {
     // Saved for a later return to the app, and no longer anyone's.
     expect(await storedRecords()).toHaveLength(1);
 
+    // Buy the same plan again: the earlier checkout is unknown, so no second page opens.
+    const second = await checkoutOnHostedPage({ ...fallback, externalSessionId: SESSION });
+    expect(second).toMatchObject({ kind: 'unresolved' });
+    expect(openAuthSession).toHaveBeenCalledTimes(1);
+
+    // Checked: nothing was bought on it (the quiet web-first check), so it goes.
+    const attempt = second.kind === 'unresolved' ? second.attempt : null;
+    await expect(checkCheckoutAgain(attempt!)).resolves.toEqual({
+      kind: 'verified',
+      verification: { kind: 'unverified' },
+      presented: false,
+    });
+    expect(await storedRecords()).toEqual([]);
+
+    // Now a checkout opens.
     openAuthSession.mockResolvedValueOnce({ type: 'success', url: 'lifepass://payment-canceled' });
     await expect(checkoutOnHostedPage({ ...fallback, externalSessionId: SESSION })).resolves.toEqual({
       kind: 'verified',
@@ -133,6 +187,23 @@ describe('plan checkout', () => {
     });
     expect(openAuthSession).toHaveBeenCalledTimes(2);
     expect(await storedRecords()).toEqual([]);
+  });
+
+  it('a membership whose status check did not answer is kept for a later return, not held by the screen', async () => {
+    openAuthSession.mockResolvedValueOnce(DISMISSED);
+    api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'processing' }));
+    api.on('GET', '/payments/status', Reply.raw(504, '<html>504</html>'));
+    const result = await checkoutOnHostedPage({
+      memberId: MEMBER_A,
+      url: 'https://pay.kling.is/c/1',
+      externalSessionId: SESSION,
+      plan,
+      isScreenAlive: () => true,
+    });
+    expect(result).toMatchObject({ kind: 'verified', verification: { kind: 'failed' } });
+    const [record] = await storedRecords();
+    expect(record).toMatchObject({ rail: 'plan', externalSessionId: SESSION });
+    expect(isAttemptLive(record.attemptId)).toBe(false);
   });
 
   it('the web-first fallback checks the profile quietly, and the chip checks again', async () => {

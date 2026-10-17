@@ -16,11 +16,33 @@ export interface Settled {
   readonly resolution: PaymentResolution;
   /**
    * `keep`: the money may still be moving (a booking or walk-in still
-   * `processing`, or a confirm that did not answer): the record stays, so a
-   * later return to the app can still tell the member. `clear`: the server
-   * has answered for good.
+   * `processing`), or the server did not answer (a confirm, or a plan's
+   * status check, that was refused or offline): the record stays, so a later
+   * return to the app can still ask, and tell the member. `clear`: the
+   * server has answered for good.
    */
   readonly record: 'keep' | 'clear';
+}
+
+/**
+ * True when the server said the payment is still settling (a booking or
+ * walk-in `processing`): a screen may hold it for Check again. A confirm
+ * that did not answer is kept too, but is not this: iOS offers no Check
+ * again after one, so the attempt goes back to the recovery, which asks
+ * again quietly at the next return to the app.
+ */
+export function stillSettling(resolution: PaymentResolution): boolean {
+  return (
+    (resolution.rail === 'booking' || resolution.rail === 'walk_in') &&
+    resolution.settlement.kind === 'outcome' &&
+    resolution.settlement.outcome.kind === 'processing'
+  );
+}
+
+/** True when the server did not answer (the refusal is said after the page, and asked again quietly later). */
+export function unanswered(resolution: PaymentResolution): boolean {
+  if (resolution.rail === 'booking' || resolution.rail === 'walk_in') return resolution.settlement.kind === 'failed';
+  return resolution.rail === 'plan' && resolution.verification.kind === 'failed';
 }
 
 /** The member's credits and passes after money moved (iOS `refreshCredits`). Never throws. */
@@ -47,8 +69,13 @@ export async function settleRecord(record: InflightRecord, leg: 'done' | 'cancel
       return { resolution, record: keyDisposition(settlement) === 'reuse' ? 'keep' : 'clear' };
     }
     case 'plan': {
+      // A refused status check (offline after a cold start, a gateway page)
+      // proves nothing either way: keep the record so a later return asks
+      // again, as the booking and walk-in rails do. Everything else is the
+      // last word: confirmed; a timeout, which only support can settle (iOS
+      // names the support address); the cancel link; a quiet web-first check.
       const verification = await verifyPlanCheckout(record.externalSessionId, record.plan, leg);
-      return { resolution: { rail: 'plan', record, verification }, record: 'clear' };
+      return { resolution: { rail: 'plan', record, verification }, record: verification.kind === 'failed' ? 'keep' : 'clear' };
     }
     case 'card_setup': {
       // Whatever closed the page, the verified pull decides (iOS runs it on

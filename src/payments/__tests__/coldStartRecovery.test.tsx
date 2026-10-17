@@ -10,7 +10,6 @@
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as WebBrowser from 'expo-web-browser';
-import { notificationsState } from '@test/mocks/expoNotifications';
 import { api, Reply, type StubReply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../api/testing';
@@ -18,12 +17,15 @@ import { runActivationHooks, runSignOutCleaners } from '../../app/signOut';
 import { DialogHost } from '../../components/ui/Dialog';
 import { MerchantInfo } from '../../config/merchantInfo';
 import { lookup, setCurrentLanguage, translate } from '../../i18n';
+import { scheduleBookingReminders } from '../../services/notifications';
 import { useAppStore } from '../../stores/appStore';
-import { checkPaymentAgain, leaveAttempt, payOnHostedPage } from '../attempts';
-import { handlePaymentReturnUrl } from '../coldStartRecovery';
+import { checkoutOnHostedPage, checkPaymentAgain, leaveAttempt, payOnHostedPage } from '../attempts';
+import { handlePaymentReturnUrl, recoverPayments } from '../coldStartRecovery';
 import { readInflight, saveInflight, type BookingAttemptContext, type NewInflightRecord } from '../inflight';
 import { confirmedBody } from '../payOutcomeCopy';
 import { registerPaymentOutcomePresenter, type PaymentResolution } from '../presenters';
+import { visibleRecoveryProgress } from '../recoveryProgress';
+import RecoveryProgressHost from '../RecoveryProgressHost';
 
 import {
   flush,
@@ -38,6 +40,13 @@ import {
 } from './paymentsHarness';
 
 jest.mock('expo-web-browser', () => ({ openAuthSessionAsync: jest.fn() }));
+// The notification shim as F7 leaves it (iOS's T-30 and T-10 reminders, keyed
+// by the start): the default presenter schedules through it only then.
+jest.mock('../../services/notifications', () => ({
+  classReminderIdentifiers: jest.fn(),
+  scheduleBookingReminders: jest.fn(() => Promise.resolve()),
+}));
+const scheduled = jest.mocked(scheduleBookingReminders);
 
 const openAuthSession = jest.mocked(WebBrowser.openAuthSessionAsync);
 /** The tab closed with no link (the mock module has no enum to name it with). */
@@ -91,7 +100,18 @@ function confirmReplies(...replies: StubReply[]): void {
   api.on('POST', '/bookings/payment-sessions/confirm', () => replies[Math.min(n++, replies.length - 1)]);
 }
 
+/** The app shell's hosts: the dialogs and "Confirming your payment…". */
+function Hosts() {
+  return (
+    <>
+      <DialogHost />
+      <RecoveryProgressHost />
+    </>
+  );
+}
+
 beforeEach(() => {
+  scheduled.mockClear();
   // What refreshCredits reads after money moved.
   api.on('GET', '/profile', Reply.ok({ id: MEMBER_A, email: 'member@example.com', kennitalaVerified: false, marketingConsent: false, locale: 'en' }));
   api.on('GET', '/subscriptions', Reply.ok(null));
@@ -140,7 +160,7 @@ describe('a payment the app lost behind the page', () => {
     // `lifepass://payment-success` cold-starts the app.
     launchedWith('lifepass://payment-success');
     confirmReplies(fulfilledBooking);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
 
     expect(confirms()).toHaveLength(1);
@@ -168,7 +188,7 @@ describe('a payment the app lost behind the page', () => {
     killProcess();
     launchedWith('lifepass://payment-canceled');
     confirmReplies(unpaid);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
 
     expect(confirms()).toHaveLength(1);
@@ -184,7 +204,7 @@ describe('a payment the app lost behind the page', () => {
     await saveInflight(classAttempt());
     killProcess();
     confirmReplies(unpaid);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(confirms()).toHaveLength(2);
     expect(screen.getByText(lookup('booking.pay.not_paid_title', 'en'))).toBeTruthy();
@@ -196,7 +216,7 @@ describe('a payment the app lost behind the page', () => {
     killProcess();
     launchedWith('lifepass://payment-success');
     confirmReplies(unpaid, fulfilledBooking);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(confirms()).toHaveLength(2);
     expect(screen.getByText(lookup('booking.confirmed_title', 'en'))).toBeTruthy();
@@ -207,7 +227,7 @@ describe('a payment the app lost behind the page', () => {
     await saveInflight(classAttempt());
     killProcess();
     confirmReplies(unpaid);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     // F4's router hands the launch link over before the session is restored.
     expect(handlePaymentReturnUrl('lifepass://payment-canceled')).toBe(true);
     await act(flush);
@@ -223,7 +243,7 @@ describe('a payment the app lost behind the page', () => {
     killProcess();
     launchedWith('lifepass://payment-canceled');
     confirmReplies(Reply.ok({ status: 'refunded', reason: 'slot_full' }));
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(screen.getByText(lookup('booking.pay.refunded_title', 'en'))).toBeTruthy();
     expect(screen.getByText(lookup('booking.pay.refunded_class_body', 'en'))).toBeTruthy();
@@ -239,7 +259,7 @@ describe('a payment the app lost behind the page', () => {
     await act(() => setCurrentLanguage('is'));
     launchedWith('lifepass://payment-success');
     confirmReplies(Reply.ok({ status: 'fulfilled', checkInId: '9d7c1b2a-0000-4000-8000-000000000001' }));
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(screen.getByText(lookup('checkin.proof.banner_title', 'is'))).toBeTruthy();
     expect(
@@ -247,12 +267,58 @@ describe('a payment the app lost behind the page', () => {
     ).toBeTruthy();
   });
 
+  it('a walk-in confirmed after Home stopped re-offering its proof only says it went through', async () => {
+    signIn();
+    // The door's page was opened 20 minutes ago; Home drops the proof 15 minutes after a check-in.
+    await saveInflight(walkInAttempt(), Date.now() - 20 * 60 * 1000);
+    killProcess();
+    confirmReplies(Reply.ok({ status: 'fulfilled', checkInId: '9d7c1b2a-0000-4000-8000-000000000001' }));
+    await render(<Hosts />);
+    await launch();
+    expect(screen.getByText(translate('payments.recovered.paid_checked_in_venue', 'en', { venue: 'Sky Lagoon' }))).toBeTruthy();
+    expect(screen.queryByText(/Show to staff/)).toBeNull();
+  });
+
+  it('"Confirming your payment…" shows while a cold start confirms, and goes before the outcome', async () => {
+    signIn();
+    await saveInflight(classAttempt());
+    killProcess();
+    launchedWith('lifepass://payment-success');
+    const seenWhileAsking: unknown[] = [];
+    api.on('POST', '/bookings/payment-sessions/confirm', () => {
+      seenWhileAsking.push(visibleRecoveryProgress());
+      return fulfilledBooking;
+    });
+    await render(<Hosts />);
+    await launch();
+    expect(seenWhileAsking).toEqual([expect.objectContaining({ rail: 'booking' })]);
+    expect(visibleRecoveryProgress()).toBeNull();
+    expect(screen.queryByText(lookup('plans.confirming', 'en'))).toBeNull();
+    expect(screen.getByText(lookup('booking.confirmed_title', 'en'))).toBeTruthy();
+  });
+
+  it('a quiet return to the app confirms without the overlay', async () => {
+    signIn();
+    await saveInflight(classAttempt());
+    killProcess();
+    signIn();
+    const seenWhileAsking: unknown[] = [];
+    api.on('POST', '/bookings/payment-sessions/confirm', () => {
+      seenWhileAsking.push(visibleRecoveryProgress());
+      return settling;
+    });
+    await render(<Hosts />);
+    await foreground();
+    expect(seenWhileAsking.length).toBeGreaterThan(0);
+    expect(seenWhileAsking.every((progress) => progress === null)).toBe(true);
+  });
+
   it('a record older than a day is dropped without a request', async () => {
     signIn();
     await saveInflight(classAttempt(), Date.now() - 25 * 60 * 60 * 1000);
     killProcess();
     launchedWith('lifepass://payment-success');
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(confirms()).toHaveLength(0);
     expect(await storedRecords()).toEqual([]);
@@ -279,7 +345,7 @@ describe('a payment the app lost behind the page', () => {
     await saveInflight(classAttempt());
     killProcess();
     confirmReplies(fulfilledBooking);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch(MEMBER_B);
     expect(confirms()).toHaveLength(0);
     expect(screen.queryByText(lookup('booking.confirmed_title', 'en'))).toBeNull();
@@ -292,7 +358,7 @@ describe('a payment the app lost behind the page', () => {
     killProcess();
     launchedWith('lifepass://payment-success');
     confirmReplies(settling);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(confirms()).toHaveLength(5);
     expect(screen.getByText(lookup('booking.pay.processing_title', 'en'))).toBeTruthy();
@@ -315,7 +381,7 @@ describe('a payment the app lost behind the page', () => {
     killProcess();
     launchedWith('lifepass://payment-canceled');
     confirmReplies(settling, fulfilledBooking);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(confirms()).toHaveLength(1);
     await fireEvent.press(screen.getByText(lookup('booking.pay.check_again', 'en')));
@@ -331,7 +397,7 @@ describe('a payment the app lost behind the page', () => {
     killProcess();
     launchedWith('lifepass://payment-success');
     confirmReplies(Reply.problem(503, 'internal_error'));
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(screen.getByText(lookup('error.server', 'en'))).toBeTruthy();
     await fireEvent.press(screen.getByText(lookup('common.ok', 'en')));
@@ -348,7 +414,7 @@ describe('a payment the app lost behind the page', () => {
     killProcess();
     launchedWith('lifepass://payment-success');
     confirmReplies(Reply.problem(429, 'slow_down_please'));
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(screen.getByText(lookup('common.error_title', 'en'))).toBeTruthy();
     expect(screen.getByText(lookup('checkin.err.rate_limited', 'en'))).toBeTruthy();
@@ -356,30 +422,28 @@ describe('a payment the app lost behind the page', () => {
     expect(await storedRecords()).toHaveLength(1);
   });
 
-  it('a booking confirmed after process death gets its check-in reminders, before its start', async () => {
-    notificationsState.setPermission('granted');
-    // Two days out, so every reminder rung is still ahead.
+  it('a booking confirmed after process death gets its check-in reminders, keyed by the booking', async () => {
     const startsAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
     signIn();
     await saveInflight({ ...classAttempt(), booking: { ...hotYoga, startsAt: startsAt.toISOString() } } as NewInflightRecord);
     killProcess();
     launchedWith('lifepass://payment-success');
     confirmReplies(fulfilledBooking);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
 
     expect(screen.getByText(lookup('booking.confirmed_title', 'en'))).toBeTruthy();
-    const scheduled = notificationsState.scheduled();
-    expect(scheduled.length).toBeGreaterThan(0);
-    for (const request of scheduled) {
-      const fireAt = new Date((request.trigger as { date: Date | number | string }).date).getTime();
-      expect(fireAt).toBeLessThan(startsAt.getTime());
-      expect(fireAt).toBeGreaterThan(Date.now());
-    }
+    expect(scheduled).toHaveBeenCalledTimes(1);
+    expect(scheduled).toHaveBeenCalledWith({
+      // The booking's own id (a cancel removes reminders by it), never the payment key.
+      bookingId: '7a1c2b3d-0000-4000-8000-000000000010',
+      venueName: 'Laugar Spa',
+      activityName: 'Hot yoga',
+      bookingTime: startsAt,
+    });
   });
 
   it('a booking with no start, or one not booked, schedules nothing', async () => {
-    notificationsState.setPermission('granted');
     signIn();
     await saveInflight({ ...classAttempt(), booking: { ...hotYoga, startsAt: null } } as NewInflightRecord);
     await saveInflight(classAttempt(MEMBER_A, 'booking-key-0002'));
@@ -387,10 +451,10 @@ describe('a payment the app lost behind the page', () => {
     launchedWith('lifepass://payment-canceled');
     // The first (no start) is booked; the newest (the link's) was never paid.
     confirmReplies(fulfilledBooking, unpaid);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(confirms()).toHaveLength(2);
-    expect(notificationsState.scheduled()).toEqual([]);
+    expect(scheduled).not.toHaveBeenCalled();
   });
 
   it('a rail’s own presenter replaces the default (BOOK-1 schedules the reminders there)', async () => {
@@ -403,7 +467,7 @@ describe('a payment the app lost behind the page', () => {
     killProcess();
     launchedWith('lifepass://payment-success');
     confirmReplies(fulfilledBooking);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(seen).toHaveLength(1);
     const [resolution] = seen;
@@ -442,7 +506,7 @@ describe('plans, cards and co-pay after process death', () => {
         usage: usageJSON([{ id: '11111111-1111-4111-8111-111111111111' }, { id: '22222222-2222-4222-8222-222222222222' }]),
       }),
     );
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(api.sent('/payments/checkout-sessions/confirm').body).toEqual({ externalSessionId: SESSION });
     // A pass is never confirmed by the status endpoint.
@@ -463,7 +527,7 @@ describe('plans, cards and co-pay after process death', () => {
     await saveInflight(planRecord());
     killProcess();
     launchedWith('lifepass://payment-canceled');
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(api.sentAll('/payments/checkout-sessions/confirm')).toHaveLength(0);
     expect(screen.queryByText(lookup('plans.welcome_title', 'en'))).toBeNull();
@@ -482,12 +546,94 @@ describe('plans, cards and co-pay after process death', () => {
     launchedWith('lifepass://payment-success');
     api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'processing' }));
     api.on('GET', '/payments/status', Reply.ok({ status: 'pending' }));
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await launch();
     expect(api.sentAll('/payments/checkout-sessions/confirm')).toHaveLength(3);
     expect(api.sentAll('/payments/status')).toHaveLength(12);
     expect(screen.getByText(lookup('plans.payment_issue', 'en'))).toBeTruthy();
     expect(screen.getByText(translate('plans.confirm_timeout', 'en', { email: MerchantInfo.email }))).toBeTruthy();
+  });
+
+  it('a pass bought behind the page and bought again while it is confirmed: one purchase, one welcome', async () => {
+    signIn();
+    await saveInflight(planRecord());
+    killProcess();
+    signIn();
+    api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'fulfilled' }));
+    api.on(
+      'GET',
+      '/profile',
+      Reply.ok({
+        id: MEMBER_A,
+        email: 'member@example.com',
+        kennitalaVerified: false,
+        marketingConsent: false,
+        locale: 'en',
+        usage: usageJSON([{ id: '11111111-1111-4111-8111-111111111111' }, { id: '22222222-2222-4222-8222-222222222222' }]),
+      }),
+    );
+    await render(<Hosts />);
+    let result: Awaited<ReturnType<typeof checkoutOnHostedPage>> | undefined;
+    await act(async () => {
+      // The cold start's recovery is confirming the first when the member taps Buy again.
+      const recovery = recoverPayments(MEMBER_A, 'launch');
+      result = await checkoutOnHostedPage({
+        memberId: MEMBER_A,
+        url: 'https://pay.kling.is/c/second',
+        externalSessionId: '9e8d7c6b-5a49-4382-9172-615243342516',
+        plan: { productSlug: 'pass-day', planName: 'Day Pass', prePurchasePassIds: ['11111111-1111-4111-8111-111111111111'], prePurchaseSubSlug: null },
+      });
+      await recovery;
+    });
+    await act(flush);
+    expect(result).toEqual({ kind: 'verified', verification: { kind: 'confirmed' }, presented: true });
+    expect(openAuthSession).not.toHaveBeenCalled();
+    expect(screen.getAllByText(lookup('plans.welcome_title', 'en'))).toHaveLength(1);
+    expect(await storedRecords()).toEqual([]);
+  });
+
+  it('a status check that did not answer keeps the purchase, quietly, and the next return confirms it', async () => {
+    const plus = {
+      rail: 'plan',
+      memberId: MEMBER_A,
+      externalSessionId: SESSION,
+      plan: { productSlug: 'plan-plus', planName: 'Plus', prePurchasePassIds: [], prePurchaseSubSlug: null },
+    } as const;
+    signIn();
+    await saveInflight(plus);
+    killProcess();
+    // A launch from the app icon while offline: the status check is refused.
+    api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'processing' }));
+    api.on('GET', '/payments/status', Reply.raw(504, '<html>504</html>'));
+    await render(<Hosts />);
+    await launch();
+    expect(screen.queryByText(lookup('plans.payment_issue', 'en'))).toBeNull();
+    expect(await storedRecords()).toHaveLength(1);
+
+    // Online again: the next return confirms it and welcomes the member.
+    api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'fulfilled' }));
+    await foreground();
+    expect(screen.getByText(lookup('plans.welcome_title', 'en'))).toBeTruthy();
+    expect(await storedRecords()).toEqual([]);
+  });
+
+  it('after the return link, a status check that did not answer is said, and the purchase kept', async () => {
+    signIn();
+    await saveInflight({
+      rail: 'plan',
+      memberId: MEMBER_A,
+      externalSessionId: SESSION,
+      plan: { productSlug: 'plan-plus', planName: 'Plus', prePurchasePassIds: [], prePurchaseSubSlug: null },
+    });
+    killProcess();
+    launchedWith('lifepass://payment-success');
+    api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'processing' }));
+    api.on('GET', '/payments/status', Reply.raw(504, '<html>504</html>'));
+    await render(<Hosts />);
+    await launch();
+    expect(screen.getByText(lookup('plans.payment_issue', 'en'))).toBeTruthy();
+    expect(screen.queryByText(/504/)).toBeNull();
+    expect(await storedRecords()).toHaveLength(1);
   });
 
   it('a card setup page is always confirmed, quietly', async () => {
@@ -537,7 +683,7 @@ describe('the live flow', () => {
     let close!: (value: WebBrowser.WebBrowserAuthSessionResult) => void;
     openAuthSession.mockImplementation(() => new Promise((resolve) => (close = resolve)));
     confirmReplies(fulfilledBooking);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     const result = live({ isScreenAlive: () => true });
     await act(flush);
     // The tab is up; the app comes back to the foreground for a moment.
@@ -573,7 +719,7 @@ describe('the live flow', () => {
     signIn();
     openAuthSession.mockResolvedValue({ type: 'success', url: 'lifepass://payment-canceled' });
     confirmReplies(Reply.ok({ status: 'refunded', reason: 'slot_full' }));
-    await render(<DialogHost />);
+    await render(<Hosts />);
     let result: Awaited<ReturnType<typeof live>> | undefined;
     await act(async () => {
       result = await live({ isScreenAlive: () => false });
@@ -612,7 +758,7 @@ describe('the live flow', () => {
     signIn();
     openAuthSession.mockResolvedValue({ type: 'success', url: 'lifepass://payment-success' });
     confirmReplies(settling);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     const result = await live({ isScreenAlive: () => true });
     expect(result).toMatchObject({ kind: 'settled', key: 'reuse', presented: false });
     const attempt = result.kind === 'settled' ? result.attempt : null;
@@ -637,9 +783,9 @@ describe('the live flow', () => {
     expect(screen.queryByText(lookup('booking.pay.processing_title', 'en'))).toBeNull();
   });
 
-  it('an old payment left unresolved is settled before a new one starts', async () => {
+  it('an unrelated old payment is left to the recovery: the page opens at once', async () => {
     signIn();
-    await saveInflight(classAttempt(MEMBER_A, 'old-key-00001'));
+    await saveInflight(walkInAttempt());
     killProcess();
     signIn();
     const order: string[] = [];
@@ -651,11 +797,197 @@ describe('the live flow', () => {
       order.push('page');
       return DISMISSED;
     });
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await act(async () => {
       await live();
     });
-    expect(order).toEqual(['confirm old-key-00001', 'page', `confirm ${KEY}`]);
+    // Nothing is asked before the page; the walk-in is the launch recovery's
+    // (the first profile read after the restart starts it), after.
+    expect(order.slice(0, 2)).toEqual(['page', `confirm ${KEY}`]);
+  });
+
+  it('a new key for the same class while an earlier attempt is unresolved opens nothing; Check again asks under the earlier key', async () => {
+    signIn();
+    await saveInflight(classAttempt(MEMBER_A, 'old-key-00001'));
+    killProcess();
+    signIn();
+    confirmReplies(fulfilledBooking);
+    await render(<Hosts />);
+    const result = await live({ isScreenAlive: () => true });
+    expect(result).toMatchObject({
+      kind: 'unresolved',
+      settlement: { kind: 'outcome', outcome: { kind: 'processing' } },
+    });
+    expect(openAuthSession).not.toHaveBeenCalled();
+    expect(confirms()).toHaveLength(0);
+    const attempt = result.kind === 'unresolved' ? result.attempt : null;
+
+    // The screen holds it now: a return to the app leaves it alone.
+    await foreground();
+    expect(confirms()).toHaveLength(0);
+
+    const again = await checkPaymentAgain(attempt!);
+    expect(again).toMatchObject({ kind: 'settled', settlement: { kind: 'fulfilled' }, key: 'retire' });
+    expect(confirms().map((r) => (r.body as { key: string }).key)).toEqual(['old-key-00001']);
+    expect(await storedRecords()).toEqual([]);
+  });
+
+  it('a retry under the same key after "Confirming your payment" is one attempt: one record, one outcome', async () => {
+    signIn();
+    openAuthSession.mockResolvedValue({ type: 'success', url: 'lifepass://payment-success' });
+    confirmReplies(settling);
+    await render(<Hosts />);
+    const first = await live({ isScreenAlive: () => true });
+    expect(first).toMatchObject({ kind: 'settled', key: 'reuse' });
+    await leaveAttempt((first.kind === 'settled' ? first.attempt : null)!);
+    expect(await storedRecords()).toHaveLength(1);
+
+    // Confirm again: the same key, the same session's page; the member pays.
+    confirmReplies(fulfilledBooking);
+    const again = await live({ isScreenAlive: () => true });
+    expect(again).toMatchObject({ kind: 'settled', page: 'returned', settlement: { kind: 'fulfilled' } });
+    expect(openAuthSession).toHaveBeenCalledTimes(2);
+    // Five answers for the first page, one for the second; nothing asked about the old record apart.
+    expect(confirms()).toHaveLength(6);
+    expect(await storedRecords()).toEqual([]);
+
+    // Nothing is left for a later return to say a second time.
+    await foreground();
+    await launch();
+    expect(confirms()).toHaveLength(6);
+    expect(screen.queryByText(lookup('booking.confirmed_title', 'en'))).toBeNull();
+    expect(scheduled).not.toHaveBeenCalled();
+  });
+
+  it('a retry under the same key while the screen still holds the attempt takes it over', async () => {
+    signIn();
+    openAuthSession.mockResolvedValue({ type: 'success', url: 'lifepass://payment-success' });
+    confirmReplies(settling);
+    await render(<Hosts />);
+    const first = await live({ isScreenAlive: () => true });
+    const held = first.kind === 'settled' ? first.attempt : null;
+    expect(held).not.toBeNull();
+
+    // Confirm again straight from the alert, without letting go first.
+    confirmReplies(fulfilledBooking);
+    const again = await live({ isScreenAlive: () => true });
+    expect(again).toMatchObject({ kind: 'settled', page: 'returned', settlement: { kind: 'fulfilled' } });
+    expect(await storedRecords()).toEqual([]);
+    // The old handle is spent: nothing more is asked through it.
+    await expect(checkPaymentAgain(held!)).resolves.toEqual({ kind: 'busy' });
+    expect(confirms()).toHaveLength(6);
+  });
+
+  it('a retry under the same key after a confirm that did not answer: no "not completed", one outcome', async () => {
+    signIn();
+    openAuthSession.mockResolvedValue({ type: 'success', url: 'lifepass://payment-success' });
+    confirmReplies(Reply.problem(503, 'internal_error'));
+    await render(<Hosts />);
+    const first = await live({ isScreenAlive: () => true });
+    // iOS offers no Check again after it: the attempt goes back to the recovery, the key is kept.
+    expect(first).toMatchObject({ kind: 'settled', settlement: { kind: 'failed' }, key: 'reuse', attempt: null });
+    expect(await storedRecords()).toHaveLength(1);
+
+    confirmReplies(unpaid, fulfilledBooking);
+    const again = await live({ isScreenAlive: () => true });
+    expect(again).toMatchObject({ kind: 'settled', settlement: { kind: 'fulfilled' } });
+    expect(confirms()).toHaveLength(3);
+    expect(screen.queryByText(lookup('booking.pay.not_paid_title', 'en'))).toBeNull();
+    expect(await storedRecords()).toEqual([]);
+  });
+
+  it('a payment the recovery settles while the retry waits for it is never opened again', async () => {
+    signIn();
+    await saveInflight(classAttempt());
+    killProcess();
+    signIn();
+    confirmReplies(fulfilledBooking);
+    await render(<Hosts />);
+    let result: Awaited<ReturnType<typeof live>> | undefined;
+    await act(async () => {
+      // A cold start is confirming it when the member taps Confirm again (same key).
+      const recovery = recoverPayments(MEMBER_A, 'launch');
+      result = await live({ isScreenAlive: () => true });
+      await recovery;
+    });
+    await act(flush);
+    expect(result).toMatchObject({
+      kind: 'settled',
+      page: 'earlier',
+      settlement: { kind: 'fulfilled' },
+      key: 'retire',
+      presented: true,
+      attempt: null,
+    });
+    expect(openAuthSession).not.toHaveBeenCalled();
+    expect(confirms()).toHaveLength(1);
+    expect(screen.getAllByText(lookup('booking.confirmed_title', 'en'))).toHaveLength(1);
+    expect(scheduled).toHaveBeenCalledTimes(1);
+  });
+
+  it('a held attempt whose screen is gone goes back to the recovery', async () => {
+    signIn();
+    let alive = true;
+    openAuthSession.mockResolvedValue({ type: 'success', url: 'lifepass://payment-success' });
+    confirmReplies(settling);
+    await render(<Hosts />);
+    const result = await live({ isScreenAlive: () => alive });
+    expect(result).toMatchObject({ kind: 'settled', key: 'reuse' });
+    // The sheet went away without letting go (a navigation reset).
+    alive = false;
+    confirmReplies(fulfilledBooking);
+    await foreground();
+    expect(screen.getByText(lookup('booking.confirmed_title', 'en'))).toBeTruthy();
+    expect(await storedRecords()).toEqual([]);
+  });
+
+  it('a stale "Confirming your payment" dialog’s Check again never says the outcome twice', async () => {
+    signIn();
+    await saveInflight(classAttempt());
+    killProcess();
+    launchedWith('lifepass://payment-success');
+    confirmReplies(settling);
+    await render(<Hosts />);
+    await launch();
+    expect(screen.getByText(lookup('booking.pay.processing_title', 'en'))).toBeTruthy();
+
+    // The member leaves the app with the dialog up; the next return settles it.
+    confirmReplies(fulfilledBooking);
+    await foreground();
+    expect(await storedRecords()).toEqual([]);
+    const asked = confirms().length;
+
+    // Check again on the old dialog: nothing is asked, and "Booking confirmed" is said once.
+    await fireEvent.press(screen.getByText(lookup('booking.pay.check_again', 'en')));
+    await act(flush);
+    expect(confirms()).toHaveLength(asked);
+    expect(screen.getAllByText(lookup('booking.confirmed_title', 'en'))).toHaveLength(1);
+    expect(scheduled).toHaveBeenCalledTimes(1);
+  });
+
+  it('a return link that lands while the recovery settles an older attempt waits for its own', async () => {
+    signIn();
+    await saveInflight(walkInAttempt());
+    // The newest page, the one the link closed.
+    await saveInflight(classAttempt());
+    killProcess();
+    signIn();
+    api.on('POST', '/bookings/payment-sessions/confirm', (request) => {
+      if ((request.body as { key: string }).key === 'walkin-key-1') {
+        // The cancel link reaches the app while the walk-in is being confirmed.
+        handlePaymentReturnUrl('lifepass://payment-canceled');
+        return Reply.ok({ status: 'fulfilled', checkInId: '9d7c1b2a-0000-4000-8000-000000000001' });
+      }
+      return unpaid;
+    });
+    await render(<Hosts />);
+    await foreground();
+    // The class was asked once, as the cancel leg does, and its "not taken" said.
+    expect(confirms().filter((r) => (r.body as { key: string }).key === KEY)).toHaveLength(1);
+    expect(screen.getByText(lookup('checkin.proof.banner_title', 'en'))).toBeTruthy();
+    await fireEvent.press(screen.getByText(lookup('common.ok', 'en')));
+    expect(screen.getByText(lookup('booking.pay.not_paid_title', 'en'))).toBeTruthy();
+    expect(await storedRecords()).toEqual([]);
   });
 
   it('never shows one member’s outcome to the next', async () => {
@@ -666,7 +998,7 @@ describe('the live flow', () => {
       return DISMISSED;
     });
     confirmReplies(fulfilledBooking);
-    await render(<DialogHost />);
+    await render(<Hosts />);
     await act(async () => {
       await live({ isScreenAlive: () => false });
     });

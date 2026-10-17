@@ -39,10 +39,6 @@ import '../features/plans/register';
 import '../features/runner/register';
 import '../features/venue/register';
 
-// The payment rails (F8, src/payments): in-flight hosted payments are the
-// member's, wiped on sign-out, and resolved after a launch or a return.
-import '../payments/register';
-
 import { resetUiKit } from '../components/ui/reset';
 
 import { registerSignOutCleaner } from './signOut';
