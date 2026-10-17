@@ -22,7 +22,7 @@ import {
   type ProblemDetails,
 } from '../errors';
 import { errorMessage, ErrorFormatter, refusalFor, refusalMessage, setRefusalLogger } from '../errorFormatter';
-import { gateRefusalFor } from '../gateRefusal';
+import { gateRefusalFor, gateRefusalForError } from '../gateRefusal';
 
 function fixture(status: number, slug: string, detail = 'Server detail.'): ProblemDetails {
   return { type: `https://lifepass.is/problems/${slug}`, title: slug, status, detail };
@@ -228,6 +228,43 @@ describe('the legacy gate-refusal shim', () => {
   it('is null for anything that does not block at the preview', () => {
     for (const code of [undefined, '', 'rate_limited', 'card_declined', 'brand_new_refusal', 'invalid_booking_create']) {
       expect(gateRefusalFor(code)).toBeNull();
+    }
+  });
+
+  it("from a thrown error, reads the problem's reason and status, as iOS gateRefusal(forCode: p.slug, reason: p.reason, status: p.status ?? 0)", () => {
+    setCurrentLanguage('en');
+    const classFull = new ProblemError(
+      { type: 'https://lifepass.is/problems/slot_unavailable', status: 409, reason: 'class_full' },
+      409,
+    );
+    // The bare code would read "no longer available" (refusal.slot_gone).
+    expect(gateRefusalFor(classFull.code)?.message).toBe(translate('refusal.slot_gone', 'en'));
+    expect(gateRefusalForError(classFull)).toMatchObject({
+      message: translate('booking.class.err_full', 'en'),
+      cta: 'chooseAnotherTime',
+    });
+
+    // At the scanner: the check-in words under the scanner's title.
+    const dailyCap = new ProblemError(fixture(403, 'daily_use_cap_reached'), 403);
+    expect(gateRefusalForError(dailyCap, 'checkIn')).toEqual({
+      title: translate('common.error_title', 'en'),
+      message: translate('checkin.err.daily_cap', 'en'),
+      needsMembership: false,
+      cta: null,
+    });
+  });
+
+  it('from a thrown error that is not a problem, is null', () => {
+    for (const error of [
+      new TransportError('offline'),
+      new HttpStatusError(502, '<html>'),
+      new DecodingError('{}'),
+      new NotAuthenticatedError(),
+      new Error('no_active_plan_or_pass'),
+      undefined,
+    ]) {
+      expect(gateRefusalForError(error)).toBeNull();
+      expect(gateRefusalForError(error, 'checkIn')).toBeNull();
     }
   });
 });
