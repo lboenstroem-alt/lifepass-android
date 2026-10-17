@@ -218,8 +218,13 @@ function Splash({
         showsVerticalScrollIndicator={false}
         bounces={false}
         overScrollMode="never"
+        testID="onboarding.splash.scroll"
       >
-        <View style={styles.splashColumn} onLayout={(event) => fit.onContent(event, paddingTop + paddingBottom)}>
+        <View
+          style={styles.splashColumn}
+          onLayout={(event) => fit.onContent(event, paddingTop + paddingBottom)}
+          testID="onboarding.splash.column"
+        >
           <Kicker text={tOnboarding('onboard.iceland_pass', lang)} color={colors.paper2} />
           <MarkupText
             style={[
@@ -332,8 +337,13 @@ function Slide({
         showsVerticalScrollIndicator={false}
         bounces={false}
         overScrollMode="never"
+        testID="onboarding.slide.scroll"
       >
-        <View style={styles.slideColumn} onLayout={(event) => fit.onContent(event, paddingBottom)}>
+        <View
+          style={styles.slideColumn}
+          onLayout={(event) => fit.onContent(event, paddingBottom)}
+          testID="onboarding.slide.column"
+        >
           <Kicker text={copy.kicker} color={colors.paper2} testID="onboarding.kicker" />
           <MarkupText
             style={[

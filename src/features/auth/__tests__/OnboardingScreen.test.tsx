@@ -186,6 +186,46 @@ describe('where the buttons go', () => {
   });
 });
 
+describe('large text (iOS ViewThatFits)', () => {
+  const layout = (height: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width: 360, height } } });
+
+  /** The screen's viewport, then its copy at `heights` in turn (each re-measured after a step). */
+  async function measure(prefix: string, viewport: number, ...heights: number[]) {
+    await fireEvent(screen.getByTestId(`${prefix}.scroll`), 'layout', layout(viewport));
+    for (const height of heights) await fireEvent(screen.getByTestId(`${prefix}.column`), 'layout', layout(height));
+  }
+
+  it('keeps the 48 pt headline when the splash copy fits', async () => {
+    await launch('is');
+    // Padded 100 above and 32 below on a phone without insets: 600 + 132 fits 760.
+    await measure('onboarding.splash', 760, 600);
+    expect(screen.getByTestId('onboarding.headline')).toHaveStyle({ fontSize: 48 });
+  });
+
+  it('steps the headline down 48, 40, 34 while the copy is too tall, then lets it scroll', async () => {
+    await launch('is');
+    const headline = () => screen.getByTestId('onboarding.headline');
+    await measure('onboarding.splash', 640, 700);
+    expect(headline()).toHaveStyle({ fontSize: 40 });
+    await measure('onboarding.splash', 640, 650);
+    expect(headline()).toHaveStyle({ fontSize: 34 });
+    await measure('onboarding.splash', 640, 600);
+    expect(headline()).toHaveStyle({ fontSize: 34 });
+  });
+
+  it('steps a slide title down 40, 32, 26, and starts again from 40 on the next slide', async () => {
+    await launch('en');
+    await press(words('en').getStarted);
+    const title = () => screen.getByTestId('onboarding.title');
+    expect(title()).toHaveStyle({ fontSize: 40 });
+    await measure('onboarding.slide', 500, 600, 600);
+    expect(title()).toHaveStyle({ fontSize: 26 });
+    await press(words('en').next);
+    expect(screen.getByTestId('onboarding.slide2')).toBeOnTheScreen();
+    expect(title()).toHaveStyle({ fontSize: 40 });
+  });
+});
+
 describe('a failed auth link', () => {
   it('jumps from the splash to Log in, where its banner is', async () => {
     await launch('en');
