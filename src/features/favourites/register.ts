@@ -1,16 +1,18 @@
-// Session hooks for saved venues and reviews: what this phone must forget when the member
-// signs out, claim when they sign in, or flush when the app comes back.
+// Session hooks for saved venues and reviews: what this phone must forget when
+// the member signs out.
 //
-// Pre-created by F3 (plan 3.0, rule 7); VENUE-2 fills it in. Imported once at
-// startup by src/app/registrations.ts, so a hook registered here is in place
-// before any sign-in or sign-out can happen. The helpers and their rules are
-// in src/app/signOut.ts, for example:
+// Pre-created by F3 (plan 3.0, rule 7); filled by VENUE-2. Imported once at
+// startup by src/app/registrations.ts, so the cleaners are in place before
+// any sign-out can happen. Every sign-out, forced ones after a 401 included,
+// runs them.
 //
-//   import { registerSignOutCleaner } from '../../app/signOut';
+// - The favourites store holds the member's saved venues and classes, and
+//   writes still on their way: the next member on the phone must never see
+//   the hearts of the one who left (iOS drops them with the view models it
+//   tears down).
 //
-//   registerSignOutCleaner('favourites.cache', async ({ memberId }) => {
-//     await AsyncStorage.removeItem(`favourites.cache.${memberId}`);
-//   });
-//
-// Nothing is registered yet.
-export {};
+// Nothing is kept on disk, so there is nothing to claim at sign-in.
+import { registerSignOutCleaner } from '../../app/signOut';
+import { favouritesStore } from './store';
+
+registerSignOutCleaner('favourites.store', () => favouritesStore.getState().reset());

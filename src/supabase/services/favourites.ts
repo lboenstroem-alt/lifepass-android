@@ -1,58 +1,40 @@
-// Favourites, backed by the LifePass API — mirrors lifepass-ios
-// Services/FavouritesService.swift. The old direct Supabase table access
-// fails against the v1 backend (likes silently did nothing).
-//
-// `GET /favourites` returns both kinds in one call
-// (`{ venues: [...], activities: [...] }`), so we fetch once and split.
-// Add/remove are low-risk preference writes:
-//   POST   /favourites  { venueId | activityId }
-//   DELETE /favourites?venueId=…  (or ?activityId=…)
-import { apiGet, apiPost, apiDelete } from '../../api/client';
+/* eslint lifepass/no-literal-copy: "error" */
+/**
+ * @deprecated The first build's favourites service, kept as a thin shim for
+ * the legacy screens until their owners move to `src/features/favourites`.
+ * The calls themselves live in src/features/favourites/api.ts (the port of
+ * iOS FavouritesService); new code reads the shared store through
+ * `useFavourites()` / `useFavourite(venueId)` and never calls these.
+ */
 import type { LegacyVenue as AppVenue } from '../../types/venue';
+import {
+  addFavouriteActivity,
+  addFavouriteVenue,
+  fetchFavourites,
+  removeFavouriteActivity,
+  removeFavouriteVenue,
+  type FavouriteActivity,
+  type FavouriteVenue,
+  type FavouritesPayload,
+} from '../../features/favourites/api';
 
-// A favourited venue as the API returns it — leaner than a full Venue
-// (no coordinates or walk-in flags): name/city/image + the in-bundle/
-// premium marker, plus the ids needed to open venue detail.
-export type FavouriteVenue = {
-  id: string; // favourite row id
-  venueId: string;
-  slug: string;
-  name: string;
-  description?: string | null;
-  city?: string | null;
-  address?: string | null;
-  /** v1: free within the plan vs premium (à-la-carte). */
-  inBundle?: boolean | null;
-  imageUrl?: string | null;
-  categories?: string[] | null;
-  createdAt?: string | null;
+export type { FavouriteActivity, FavouriteVenue, FavouritesPayload };
+export {
+  addFavouriteActivity,
+  addFavouriteVenue,
+  fetchFavourites,
+  removeFavouriteActivity,
+  removeFavouriteVenue as removeFavouriteByVenue,
+  removeFavouriteActivity as removeFavouriteByActivity,
 };
 
-// A favourited activity — carries venue ids so a row can open that
-// venue's detail.
-export type FavouriteActivity = {
-  id: string; // favourite row id
-  activityId: string;
-  name: string;
-  description?: string | null;
-  durationMinutes?: number | null;
-  imageUrl?: string | null;
-  venueId: string;
-  venueSlug: string;
-  venueName: string;
-  createdAt?: string | null;
-};
-
-type FavouritesResponse = {
-  venues: FavouriteVenue[];
-  activities: FavouriteActivity[];
-};
-
-// Adapt the lean API favourite into the app Venue shape the screens
-// consume (saved rows read id/name/city/imageUrl; Coach tag derivation
-// reads name/category). `id` must be the VENUE id — savedVenueIds and
-// openVenue(v.id) both key on it.
-function adaptFavouriteVenue(f: FavouriteVenue): AppVenue {
+/**
+ * The lean API favourite in the first build's venue shape, for the legacy
+ * screens (saved rows read id/name/city/imageUrl; the Coach's tags read
+ * name/category). `id` is the VENUE id: saved ids and `openVenue(v.id)` both
+ * key on it.
+ */
+export function adaptFavouriteVenue(f: FavouriteVenue): AppVenue {
   return {
     id: f.venueId,
     slug: f.slug,
@@ -65,7 +47,7 @@ function adaptFavouriteVenue(f: FavouriteVenue): AppVenue {
     longitude: null,
     imageUrl: f.imageUrl ?? '',
     classification: 'basic',
-    category: f.categories ?? [],
+    category: [...(f.categories ?? [])],
     creditCost: 0,
     walkInsAllowed: false,
     walkInCreditCost: 0,
@@ -76,14 +58,10 @@ function adaptFavouriteVenue(f: FavouriteVenue): AppVenue {
     totalReviews: 0,
     activities: [],
     reviews: [],
-    // A missing marker is premium, never "Included" (iOS Venue.inBundle defaults to false).
+    // The legacy rows draw a price pill from this: a missing marker is premium,
+    // never "Included" (iOS Venue.inBundle defaults to false).
     inBundle: f.inBundle ?? false,
   };
-}
-
-/** One round-trip for the whole favourites payload. */
-export async function fetchFavourites(): Promise<FavouritesResponse> {
-  return apiGet<FavouritesResponse>('/favourites');
 }
 
 export async function fetchFavouriteVenues(): Promise<AppVenue[]> {
@@ -93,27 +71,12 @@ export async function fetchFavouriteVenues(): Promise<AppVenue[]> {
 
 export async function fetchFavouriteActivities(): Promise<FavouriteActivity[]> {
   const { activities } = await fetchFavourites();
-  return activities;
+  return [...activities];
 }
 
-/** The API has no per-venue probe — read the list and check (same as iOS). */
+/** The API has no per-venue probe: read the list and check (same as iOS). */
 export async function isFavourited(venueId: string): Promise<boolean> {
   const { venues } = await fetchFavourites();
-  return venues.some((f) => f.venueId === venueId);
-}
-
-export async function addFavouriteVenue(venueId: string): Promise<void> {
-  await apiPost('/favourites', { venueId });
-}
-
-export async function addFavouriteActivity(activityId: string): Promise<void> {
-  await apiPost('/favourites', { activityId });
-}
-
-export async function removeFavouriteByVenue(venueId: string): Promise<void> {
-  await apiDelete('/favourites', { venueId });
-}
-
-export async function removeFavouriteByActivity(activityId: string): Promise<void> {
-  await apiDelete('/favourites', { activityId });
+  const id = venueId.toLowerCase();
+  return venues.some((f) => f.venueId === id);
 }
