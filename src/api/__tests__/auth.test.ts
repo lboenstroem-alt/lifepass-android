@@ -382,6 +382,31 @@ describe('the wait on the session', () => {
     expect(session.revoked).toBe(0);
   });
 
+  it('calls that find the session revoked together end it once', async () => {
+    api.on('GET', '/:what', Reply.problem(401, 'authentication_required'));
+    let finish: () => void = () => undefined;
+    let ended = 0;
+    const app = createApiClient({
+      accessToken: async () => 'test-token',
+      refreshAccessToken: async () => 'refreshed-token',
+      endRevokedSession: () => {
+        ended += 1;
+        return new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      },
+      isDeviceDisconnected: async () => false,
+      isDeviceOffline: async () => false,
+      onRefreshTrouble: () => () => undefined,
+    });
+    const all = Promise.all(['/a', '/b', '/c'].map((path) => failure(app.get(path))));
+    await sleep(50);
+    finish();
+    const errors = await all;
+    expect(errors.every((error) => error instanceof NotAuthenticatedError)).toBe(true);
+    expect(ended).toBe(1);
+  });
+
   it('after a 401, a refresh that outlives the ceiling is a timeout, the session kept', async () => {
     api.on('GET', '/profile', Reply.problem(401, 'authentication_required'));
     const session = createStubApiClient({ refreshedToken: never });
@@ -496,7 +521,10 @@ describe('through Supabase', () => {
     const error = await failure(createApiClient().get('/profile'));
     expect(error).toBeInstanceOf(NotAuthenticatedError);
     expect((await supabase.auth.getSession()).data.session).toBeNull();
-    expect(events).toContain('SIGNED_OUT');
+    // supabase-js removed the refused session itself: one SIGNED_OUT, and
+    // nothing left to tell the server (as supabase-swift returns early).
+    expect(events.filter((event) => event === 'SIGNED_OUT')).toHaveLength(1);
+    expect(authHost.sentAll('/auth/v1/logout')).toHaveLength(0);
     expect(api.requests).toHaveLength(1);
   });
 
@@ -571,19 +599,68 @@ describe('through Supabase', () => {
   it.each([
     ['fails on the way', () => Reply.fail()],
     ['answers 500', () => Reply.json(500, { code: 500, error_code: 'unexpected_failure', msg: 'boom' })],
-  ])('a second 401 ends the session even when the logout %s', async (_name, logout) => {
+    ['answers 204', () => Reply.empty(204)],
+  ])('a second 401 ends the session when the logout %s', async (_name, logout) => {
     const events = await signIn(supabase, firstToken);
     api.on('GET', '/profile', Reply.problem(401, 'authentication_required'));
     authHost.on('POST', '/auth/v1/token', sessionReply(freshToken));
     authHost.on('POST', '/auth/v1/logout', logout());
     const error = await failure(createApiClient().get('/profile'));
     expect(error).toBeInstanceOf(NotAuthenticatedError);
+    // The server is told, with the token it refused.
     expect(authHost.sentAll('/auth/v1/logout')).toHaveLength(1);
+    expect(authHost.sent('/auth/v1/logout').query.scope).toBe('local');
+    expect(authHost.sent('/auth/v1/logout').headers.authorization).toBe(`Bearer ${freshToken}`);
     expect((await supabase.auth.getSession()).data.session).toBeNull();
-    expect(events).toContain('SIGNED_OUT');
+    expect(events.filter((event) => event === 'SIGNED_OUT')).toHaveLength(1);
   });
 
-  it('the SDK still has the local removal a failed logout falls back to', () => {
+  it('a slow logout never ends a session signed in after it', async () => {
+    const events = await signIn(supabase, firstToken);
+    api.on('GET', '/profile', Reply.problem(401, 'authentication_required'));
+    authHost.on('POST', '/auth/v1/token', sessionReply(freshToken));
+    let answerLogout: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      answerLogout = resolve;
+    });
+    authHost.on('POST', '/auth/v1/logout', async () => {
+      await released;
+      return Reply.empty(204);
+    });
+    const call = failure(createApiClient().get('/profile'));
+    while (authHost.sentAll('/auth/v1/logout').length === 0) await sleep(5);
+
+    // The session is gone from the phone before the server has answered, as
+    // supabase-swift removes it before it asks...
+    expect(events).toContain('SIGNED_OUT');
+    expect((await supabase.auth.getSession()).data.session).toBeNull();
+    // ...the member signs straight back in, and only then does the server answer.
+    const again = jwt(5400);
+    const { error: signInError } = await supabase.auth.setSession({ access_token: again, refresh_token: 'refresh-3' });
+    expect(signInError).toBeNull();
+    answerLogout();
+    expect(await call).toBeInstanceOf(NotAuthenticatedError);
+
+    // The late 204 removed nothing.
+    await sleep(20);
+    expect((await supabase.auth.getSession()).data.session?.access_token).toBe(again);
+    expect(events.filter((event) => event === 'SIGNED_OUT')).toHaveLength(1);
+  });
+
+  it('calls that find the session revoked together end it once', async () => {
+    const events = await signIn(supabase, firstToken);
+    api.on('GET', '/:what', Reply.problem(401, 'authentication_required'));
+    authHost.on('POST', '/auth/v1/token', sessionReply(freshToken));
+    authHost.on('POST', '/auth/v1/logout', Reply.delayed(50, Reply.empty(204)));
+    const app = createApiClient();
+    const errors = await Promise.all(['/a', '/b', '/c'].map((path) => failure(app.get(path))));
+    expect(errors.every((error) => error instanceof NotAuthenticatedError)).toBe(true);
+    expect(authHost.sentAll('/auth/v1/token')).toHaveLength(1);
+    expect(authHost.sentAll('/auth/v1/logout')).toHaveLength(1);
+    expect(events.filter((event) => event === 'SIGNED_OUT')).toHaveLength(1);
+  });
+
+  it('the SDK still has the local removal a revoked session is ended with', () => {
     expect(typeof (supabase.auth as unknown as { _removeSession?: unknown })._removeSession).toBe('function');
   });
 });

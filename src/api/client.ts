@@ -47,6 +47,7 @@ import {
   isAuthApiError,
   isAuthRetryableFetchError,
   isAuthSessionMissingError,
+  type Session,
   type SupabaseClient,
 } from '@supabase/supabase-js';
 
@@ -273,8 +274,9 @@ export function refreshRefused(error: unknown): boolean {
 // The Supabase side
 
 /**
- * How long ending a revoked session waits for the auth server to hear about
- * it before ending it on the phone anyway.
+ * How long ending a revoked session waits on the auth SDK (the stored
+ * session) and then on the auth server hearing about it. The session is gone
+ * from the phone before the server is asked, so giving up changes nothing.
  */
 export const LOGOUT_WAIT_MS = 10_000;
 
@@ -313,34 +315,67 @@ export function supabaseSessionDeps(client: SupabaseClient = supabase): SessionD
     },
 
     /**
-     * Ends the session on this phone, whatever the auth server says. The
-     * SIGNED_OUT event takes the app to sign-in.
+     * Ends the session on this phone, whatever the auth server says, the way
+     * supabase-swift's `signOut(scope: .local)` does: nothing to do without
+     * a session; otherwise remove it (SIGNED_OUT takes the app to sign-in),
+     * THEN tell the auth server.
      *
-     * supabase-js's `signOut({ scope: 'local' })` asks the auth server first
-     * and KEEPS the session when that request fails on the way or with a
-     * 5xx (it returns `{ error }`, it does not throw). supabase-swift removes
-     * the session before it asks, so on iOS a failed logout still ends it.
-     * Here a logout that failed, threw, or did not answer within
-     * `LOGOUT_WAIT_MS` is followed by the SDK's own local removal, which
-     * clears the stored session and emits SIGNED_OUT.
+     * Not supabase-js's `signOut({ scope: 'local' })`, which asks the server
+     * first: it keeps the session when the logout fails on the way or with
+     * a 5xx, and a logout that answers late removes whatever session is
+     * stored by then, so a member who signed back in meanwhile would be
+     * signed out again. With no session it still emits SIGNED_OUT, a second
+     * one after a refused refresh (supabase-js has removed that session
+     * itself).
      */
     async endRevokedSession() {
-      let ended = false;
-      try {
-        const result = await settleWithin(client.auth.signOut({ scope: 'local' }), LOGOUT_WAIT_MS);
-        ended = result !== undefined && !result.error;
-      } catch {
-        ended = false;
-      }
-      if (!ended) await removeSessionLocally(client);
+      const session = await storedSession(client);
+      if (session === null) return;
+      await removeSessionLocally(client);
+      // The server's copy of a session already gone from the phone: a plain
+      // POST /logout with the old token, which touches no stored session.
+      const token = session?.access_token;
+      if (token) await settleWithin(logoutOnServer(client, token), LOGOUT_WAIT_MS).catch(() => undefined);
     },
   };
 }
 
 /**
+ * The session the SDK holds now: null when there is none (or its refresh was
+ * just refused, so the SDK removed it), undefined when that cannot be known
+ * (the SDK busy past `LOGOUT_WAIT_MS`, or failing to refresh it).
+ */
+async function storedSession(client: SupabaseClient): Promise<Session | null | undefined> {
+  try {
+    const read = await settleWithin(client.auth.getSession(), LOGOUT_WAIT_MS);
+    if (read === undefined) return undefined;
+    if (read.data.session) return read.data.session;
+    return !read.error || refreshRefused(read.error) ? null : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `POST /auth/v1/logout?scope=local` with the member's own token, through the
+ * Supabase client's own URL, key and fetch. The admin API's `signOut(jwt)` is
+ * exactly that request and nothing more (it needs no service key and keeps
+ * no state), unlike `auth.signOut`.
+ */
+async function logoutOnServer(client: SupabaseClient, accessToken: string): Promise<void> {
+  try {
+    await client.auth.admin.signOut(accessToken, 'local');
+  } catch {
+    // The session is gone from the phone; the server's copy expires on its own.
+  }
+}
+
+/**
  * supabase-js's own local removal (`_removeSession`: clears the stored
- * session and notifies SIGNED_OUT). Not public API, so it is feature-checked,
- * and src/api/__tests__/auth.test.ts fails on an SDK upgrade that drops it.
+ * session and its code verifier, and notifies SIGNED_OUT), the step
+ * supabase-swift takes before it asks the server. Not public API, so it is
+ * feature-checked, and src/api/__tests__/auth.test.ts fails on an SDK upgrade
+ * that drops it.
  */
 async function removeSessionLocally(client: SupabaseClient): Promise<void> {
   const auth = client.auth as unknown as { _removeSession?: () => Promise<void> };
@@ -458,12 +493,20 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
     return entry;
   }
 
-  async function endSession(): Promise<void> {
-    try {
-      await endRevokedSession();
-    } catch {
-      // The session is unusable either way; the caller is told to sign in.
-    }
+  // Several calls can find the session revoked at once: they end it once.
+  let ending: Promise<void> | null = null;
+  function endSession(): Promise<void> {
+    if (ending) return ending;
+    const entry: Promise<void> = Promise.resolve()
+      .then(() => endRevokedSession())
+      .catch(() => {
+        // The session is unusable either way; the caller is told to sign in.
+      })
+      .finally(() => {
+        if (ending === entry) ending = null;
+      });
+    ending = entry;
+    return entry;
   }
 
   /**
