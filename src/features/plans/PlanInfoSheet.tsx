@@ -13,7 +13,7 @@
  * absent, so the sheet never waits on a read.
  */
 import { Ionicons } from '@expo/vector-icons';
-import { useRef, type ReactNode } from 'react';
+import { useRef, type ReactNode, type RefObject } from 'react';
 import { Pressable, StyleSheet, View, type Text } from 'react-native';
 
 import type { Usage } from '../../api/profile';
@@ -46,9 +46,11 @@ export interface PlanInfoSheetProps {
   readonly onClose: () => void;
   /** The catalogue on screen; the tier rows are left out without one. */
   readonly catalog: PlanCatalog | null;
+  /** Where TalkBack focus goes back to once the sheet has gone (the link that opened it). */
+  readonly returnFocusRef?: RefObject<unknown>;
 }
 
-export default function PlanInfoSheet({ visible, onClose, catalog }: PlanInfoSheetProps) {
+export default function PlanInfoSheet({ visible, onClose, catalog, returnFocusRef }: PlanInfoSheetProps) {
   const { t, language } = useT();
   const usage = useAppStore(selectUsage);
   const titleRef = useRef<Text>(null);
@@ -56,7 +58,14 @@ export default function PlanInfoSheet({ visible, onClose, catalog }: PlanInfoShe
   const yourPrices = memberTopupLine(usage?.topup.prices, language);
 
   return (
-    <Sheet visible={visible} onClose={onClose} initialFocusRef={titleRef} contentStyle={styles.content} testID="plans.info">
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      initialFocusRef={titleRef}
+      returnFocusRef={returnFocusRef}
+      contentStyle={styles.content}
+      testID="plans.info"
+    >
       <View style={styles.header}>
         <LPText ref={titleRef} serif size={28} accessibilityRole="header" style={styles.title}>
           {t('plans.info.title')}

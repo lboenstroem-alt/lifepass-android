@@ -119,6 +119,11 @@ describe('the screen', () => {
     expect(within(card('plan-plus')).getByText(en('plans.eid.required'))).toBeOnTheScreen();
     expect(screen.getByTestId('plans.terms')).toHaveTextContent(en('plans.fine.sub_terms'));
     expect(continueText()).toBe('Continue with Plus');
+
+    // Leaving Plans abandons the read still out (iOS's `.task` is cancelled).
+    await waitFor(() => expect(api.sentAll('/catalog/plans', 'GET')).toHaveLength(1));
+    await act(async () => screen.unmount());
+    expect(api.sent('/catalog/plans', 'GET').signal.aborted).toBe(true);
   });
 
   it('shows the catalogue’s prices and the tier’s real visit numbers, and drops "Price shown at checkout"', async () => {

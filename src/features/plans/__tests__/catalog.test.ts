@@ -30,6 +30,14 @@ const serveCatalogue = (json: object | null) =>
 
 const shown = () => visitorPasses(currentPlanCatalog()).map((p) => p.id);
 
+/** Resolves once `path` has reached the stub server (the client may first wait on its session). */
+async function waitForRequest(path: string): Promise<void> {
+  for (let turn = 0; turn < 100 && api.sentAll(path, 'GET').length === 0; turn += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  expect(api.sentAll(path, 'GET')).toHaveLength(1);
+}
+
 /** The passes without a catalogue: the built-in list, in its order, without the pool pass. */
 const FALLBACK_IDS = ['pass-explorer', 'pass-adventurer', 'pass-local', 'pass-day-gym', 'pass-day-studio'];
 
@@ -119,6 +127,22 @@ describe('one catalogue per visit', () => {
     resetPlanCatalog();
     await late;
     expect(currentPlanCatalog()).toBeNull();
+  });
+
+  it('a read still out when the visit ends is abandoned, and the next visit reads afresh', async () => {
+    api.on('GET', '/catalog/plans', Reply.hang());
+    const abandoned = loadPlanCatalog();
+    await waitForRequest('/catalog/plans');
+    resetPlanCatalog();
+    // Settles at once (cancelled), never waiting out the client's timeout.
+    await abandoned;
+    expect(api.sent('/catalog/plans', 'GET').signal.aborted).toBe(true);
+    expect(currentPlanCatalog()).toBeNull();
+
+    serveCatalogue(CATALOGUE_WITHOUT_POOL);
+    await loadPlanCatalog();
+    expect(currentPlanCatalog()).not.toBeNull();
+    expect(api.sentAll('/catalog/plans', 'GET').at(-1)?.signal.aborted).toBe(false);
   });
 
   it('an older, slower answer never replaces a newer one', async () => {

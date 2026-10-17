@@ -17,6 +17,9 @@
  * keeps the catalogue already on screen: the cards must not fall back to the
  * built-in pass list (which still has passes taken off sale) because one
  * refresh did not answer.
+ *
+ * A read still out when the visit ends is abandoned (iOS's `.task` is
+ * cancelled when the sheet goes): nobody is left to show its answer.
  */
 import { create } from 'zustand';
 
@@ -31,6 +34,8 @@ const useCatalogStore = create<CatalogState>()(() => ({ catalog: null }));
 
 /** Bumped by every reset: an answer for an earlier visit is dropped. */
 let visit = 0;
+/** Cancels the reads of the visit on screen; aborted (and replaced) by every reset. */
+let visitReads: AbortController | null = null;
 /** The newest read whose answer has been applied this visit (a slower, older answer never replaces it). */
 let appliedRead = 0;
 let reads = 0;
@@ -53,8 +58,9 @@ export async function loadPlanCatalog(): Promise<void> {
   const myVisit = visit;
   reads += 1;
   const myRead = reads;
+  visitReads ??= new AbortController();
   try {
-    const fresh = await fetchPlanCatalog();
+    const fresh = await fetchPlanCatalog({ signal: visitReads.signal });
     if (myVisit !== visit || myRead < appliedRead) return;
     appliedRead = myRead;
     useCatalogStore.setState({ catalog: fresh });
@@ -65,6 +71,8 @@ export async function loadPlanCatalog(): Promise<void> {
 
 /** A new visit (or the end of one): no catalogue, and any read still out is dropped. */
 export function resetPlanCatalog(): void {
+  visitReads?.abort();
+  visitReads = null;
   visit += 1;
   appliedRead = reads;
   useCatalogStore.setState({ catalog: null });

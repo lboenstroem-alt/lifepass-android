@@ -100,6 +100,8 @@ export default function PlansView({ navigation, route }: RootModalProps<'Plans'>
     initialSelection(route.params?.segment, route.params?.slug),
   );
   const [infoOpen, setInfoOpen] = useState(false);
+  /** The info link: TalkBack lands back on it when How LifePass works closes. */
+  const infoLinkRef = useRef<View>(null);
   const [ctaHeight, setCtaHeight] = useState(0);
 
   const plans = useMemo(() => displayedPlans(selection.segment, catalog), [selection.segment, catalog]);
@@ -243,6 +245,7 @@ export default function PlansView({ navigation, route }: RootModalProps<'Plans'>
           </LPText>
           {/* Text, not a bare info glyph: the affordance says what it opens. */}
           <Pressable
+            ref={infoLinkRef}
             onPress={() => setInfoOpen(true)}
             accessibilityRole="button"
             hitSlop={{ top: 12, bottom: 12 }}
@@ -345,7 +348,12 @@ export default function PlansView({ navigation, route }: RootModalProps<'Plans'>
 
       {checkout.element}
 
-      <PlanInfoSheet visible={infoOpen} onClose={() => setInfoOpen(false)} catalog={catalog} />
+      <PlanInfoSheet
+        visible={infoOpen}
+        onClose={() => setInfoOpen(false)}
+        catalog={catalog}
+        returnFocusRef={infoLinkRef}
+      />
     </View>
   );
 }
