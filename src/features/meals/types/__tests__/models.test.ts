@@ -2,10 +2,12 @@
  * The meal wire models: the decode and encode cases of iOS
  * MealItemMathTests (`testUpdatedAtIsKeptExactlyAsTheServerSentIt`,
  * `testOneBadItemDoesNotEmptyTheMeal`) and MealDescribeTests (the answer,
- * the diary day's drafts, the closest flag, the text meal), plus the
- * fail-soft defaults of each `init(from:)` and what each kind of item sends.
+ * the diary day's drafts, the draft brief, the closest flag, the text
+ * meal), plus the fail-soft defaults of each `init(from:)` and what each
+ * kind of item sends.
  */
 import { encodeBody } from '../../../../api/wire';
+import { decodeMealDraftBrief, isDraftFromDescription } from '../../../../health/models';
 import {
   allDraftsOf,
   decodeFoodChoice,
@@ -214,6 +216,18 @@ describe('the diary day', () => {
     expect(day.totals).toBeNull();
     expect(day.target?.kcalHigh).toBe(2000);
     expect(day.targetWithheld).toBe('unknown');
+  });
+});
+
+describe('a draft brief on the Today read', () => {
+  it('reads with and without its source (testADraftBriefReadsWithAndWithoutItsSource)', () => {
+    const old = decodeMealDraftBrief({ id: 'd1', logDate: '2026-10-16', loggedAt: '2026-10-16T08:00:00Z', slot: 'breakfast', itemCount: 2 }, 'brief');
+    expect(old.source).toBeNull();
+    expect(isDraftFromDescription(old)).toBe(false);
+    const text = decodeMealDraftBrief({ id: 'd2', logDate: '2026-10-16', loggedAt: '2026-10-16T12:00:00Z', slot: 'lunch', itemCount: 1, source: 'text' }, 'brief');
+    expect(isDraftFromDescription(text)).toBe(true);
+    const photo = decodeMealDraftBrief({ id: 'd3', source: 'photo' }, 'brief');
+    expect(isDraftFromDescription(photo)).toBe(false);
   });
 });
 
