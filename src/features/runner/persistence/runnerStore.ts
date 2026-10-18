@@ -45,7 +45,7 @@ export async function loadRunner(profileId: string): Promise<RunnerState | null>
  */
 export function saveRunner(state: RunnerState, profileId: string): Promise<boolean> {
   const written = localStore.write(encodeRunnerState(state), 'runner', profileId);
-  RunnerProgressIndex.note(state, profileId);
+  RunnerProgressIndex.note(state, profileId.toLowerCase());
   return written;
 }
 
@@ -76,7 +76,8 @@ export function deleteRunner(profileId: string): Promise<void> {
  * Read the file into Plan's Resume row; delete it when it outlived its day
  * (the day after its session). Run on a profile load and on Plan's load.
  */
-export async function refreshRunnerProgress(profileId: string, today: string = todayServerDay()): Promise<void> {
+export async function refreshRunnerProgress(memberId: string, today: string = todayServerDay()): Promise<void> {
+  const profileId = memberId.toLowerCase();
   useRunnerProgress.setState({ profileId });
   const state = await loadRunner(profileId);
   if (!state) {

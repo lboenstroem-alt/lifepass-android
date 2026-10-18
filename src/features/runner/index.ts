@@ -14,6 +14,7 @@ import { openRootModal } from '../../navigation/navigationRef';
 import type { RunnerEntry } from '../../navigation/types';
 import { useAppStore } from '../../stores/appStore';
 
+import { activateWorkoutOutbox, hasPendingWorkoutNow, useWorkoutOutbox } from './outbox/workoutOutbox';
 import { resumableWorkoutFor } from './persistence/runnerStore';
 
 // `RunnerEntry` (navigation's route param) comes through ./model.
@@ -38,6 +39,52 @@ export {
   type RunnerProgressSummary,
 } from './persistence/progressIndex';
 export { onRunnerWiped } from './persistence/wiped';
+export {
+  MOVED_REASONS,
+  readRunnerFailure,
+  runnerSaveOutcome,
+  RunnerSaveRules,
+  type RunnerCallFailure,
+  type RunnerFailureKind,
+  type RunnerSaveOutcome,
+} from './saveRules';
+export {
+  convertedItem,
+  isTooOld,
+  outboxStep,
+  WORKOUT_OUTBOX_CAPACITY,
+  WORKOUT_OUTBOX_MAX_AGE_MS,
+  WorkoutOutboxRules,
+  type WorkoutOutboxItem,
+  type WorkoutOutboxItemState,
+  type WorkoutOutboxStep,
+} from './outbox/rules';
+export {
+  liveWorkoutSessionPosting,
+  setWorkoutSessionPosting,
+  workoutSessionPosting,
+  type WorkoutSessionPosting,
+} from './outbox/posting';
+export {
+  activateWorkoutOutbox,
+  discardWorkoutItem,
+  enqueueWorkout,
+  failedWorkoutItems,
+  flushWorkoutOutbox,
+  hasPendingWorkoutNow,
+  saveFailedWorkoutAsExtra,
+  selectHasPendingWorkout,
+  useWorkoutOutbox,
+  WorkoutOutbox,
+  type FailedOutboxItem,
+  type WorkoutOutboxState,
+} from './outbox/workoutOutbox';
+export { activateWorkoutRunnerSupport } from './outbox/support';
+export {
+  workoutPlanOutboxSource,
+  type WorkoutPlanOutboxItem,
+  type WorkoutPlanOutboxSource,
+} from './outbox/planSource';
 
 /** A workout saved on this phone that can be picked up again (iOS `runner.json`). */
 export interface ResumableWorkout {
@@ -73,10 +120,17 @@ export async function resumableWorkout(profileId?: string, today?: string): Prom
   return resumableWorkoutFor(id, today);
 }
 
-/** True when a finished workout for `sessionId` is still queued to be sent (the outbox). */
+/**
+ * True when a finished workout for `sessionId` is still queued to be sent
+ * (the outbox): the session is done as far as the member is concerned, and
+ * no door may start it again. Loads the signed-in member's queue first when
+ * it is not loaded yet. A screen re-renders on it through
+ * `useWorkoutOutbox(selectHasPendingWorkout(sessionId))`.
+ */
 export async function hasPendingWorkout(sessionId: string): Promise<boolean> {
-  void sessionId;
-  return false;
+  const id = signedInMemberId()?.toLowerCase();
+  if (id && useWorkoutOutbox.getState().loadedProfileId !== id) await activateWorkoutOutbox(id);
+  return hasPendingWorkoutNow(sessionId);
 }
 
 /** Opens the full-screen runner on `session` (RUN-3 owns the body; this one only routes). */
