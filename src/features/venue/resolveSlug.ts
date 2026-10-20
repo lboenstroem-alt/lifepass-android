@@ -9,6 +9,7 @@
  * not there in a fresh copy of the catalogue (one page holds every venue).
  * QA-1 removes this with the last legacy caller.
  */
+import type { RequestOptions } from '../../api/client';
 import { fetchVenues } from '../../api/venues';
 import { venuesStore } from '../../stores/venuesStore';
 import type { Venue } from '../../types/venue';
@@ -18,10 +19,13 @@ function slugIn(venues: readonly Venue[], id: string): string | null {
 }
 
 /** The venue's slug, or null when no listed venue has that id. A failed read rejects. */
-export async function resolveVenueSlug(venueId: string): Promise<string | null> {
+export async function resolveVenueSlug(
+  venueId: string,
+  options: Pick<RequestOptions, 'signal'> = {},
+): Promise<string | null> {
   const id = venueId.toLowerCase();
   const held = venuesStore.getState();
   const cached = slugIn(held.fetched, id) ?? slugIn(held.catalog, id);
   if (cached) return cached;
-  return slugIn(await fetchVenues(), id);
+  return slugIn(await fetchVenues({}, options), id);
 }

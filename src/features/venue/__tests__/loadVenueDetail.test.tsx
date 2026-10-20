@@ -2,7 +2,8 @@
  * Loading the venue page (iOS VenueDetailViewModel.load): the venue by slug,
  * then the walk-in preview (best effort) and the reviews side by side, the
  * analytics event, a first-build caller's id, and the hook that only lets the
- * latest load land.
+ * latest load land, never shows one venue's data under another, and reads the
+ * page again quietly when the member comes back.
  */
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
@@ -12,7 +13,7 @@ import { setCurrentLanguage, translate } from '../../../i18n';
 import { setAnalyticsObserver, type AnalyticsParams } from '../../../lib/analytics';
 import { resetVenuesStore } from '../../../stores/venuesStore';
 import { decodeVenueReviews, loadVenueReviews } from '../reviewsSource';
-import { loadVenueDetail, useVenueDetail } from '../useVenueDetail';
+import { isCountedView, loadVenueDetail, useVenueDetail, type VenueTarget } from '../useVenueDetail';
 import { previewJson, REVIEW_A, REVIEW_B, reviewsJson, VENUE_ID, VENUE_SLUG, venueJson } from './fixtures';
 
 stubApiClientPerTest();
@@ -54,12 +55,13 @@ describe('loadVenueDetail', () => {
     expect(api.sent(`/venues/${VENUE_ID}/reviews`).method).toBe('GET');
   });
 
-  it('tracks venue_detail_viewed with the id and name, once', async () => {
+  it('a whole load counts as a view, and records nothing by itself (the hook tracks a load that lands)', async () => {
     serveVenue();
     servePreview();
     serveReviews();
-    await loadVenueDetail({ slug: VENUE_SLUG });
-    expect(events).toEqual([['venue_detail_viewed', { venue_id: VENUE_ID, venue_name: 'Hress Reykjavík' }]]);
+    const result = await loadVenueDetail({ slug: VENUE_SLUG });
+    expect(isCountedView(result)).toBe(true);
+    expect(events).toEqual([]);
   });
 
   it('lists only slot-bookable classes (Kling and an unknown provider are dropped)', async () => {
@@ -83,7 +85,7 @@ describe('loadVenueDetail', () => {
     expect(result.walkInPreview).toBeNull();
     expect(result.slotActivities).toEqual([]);
     expect(result.error).toBeNull();
-    expect(events).toHaveLength(1);
+    expect(isCountedView(result)).toBe(true);
   });
 
   it('failed reviews keep the page and say why in the account language; no analytics, as on iOS', async () => {
@@ -96,7 +98,7 @@ describe('loadVenueDetail', () => {
     expect(result.venue.slug).toBe(VENUE_SLUG);
     expect(result.reviews).toBeNull();
     expect(result.error).toBe('Þjónninn svaraði á óvæntan hátt (HTTP 502).');
-    expect(events).toEqual([]);
+    expect(isCountedView(result)).toBe(false);
   });
 
   it('a venue that does not load is the failed state, with the reason in the account language', async () => {
@@ -223,5 +225,124 @@ describe('useVenueDetail', () => {
     expect(result.current.error).not.toBeNull();
     await act(async () => result.current.clearError());
     expect(result.current.error).toBeNull();
+  });
+
+  it('tracks venue_detail_viewed with the id and name once the load lands', async () => {
+    serveVenue();
+    servePreview();
+    serveReviews();
+    const { result } = await renderHook(() => useVenueDetail({ slug: VENUE_SLUG }));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(events).toEqual([['venue_detail_viewed', { venue_id: VENUE_ID, venue_name: 'Hress Reykjavík' }]]);
+  });
+
+  it('a page closed before its answer records no view and stops its reads', async () => {
+    api.on('GET', '/venues/by-slug/:slug', Reply.delayed(100, Reply.ok(venueJson())));
+    servePreview();
+    serveReviews();
+    const { unmount } = await renderHook(() => useVenueDetail({ slug: VENUE_SLUG }));
+    await waitFor(() => expect(api.sentAll(`/venues/by-slug/${VENUE_SLUG}`)).toHaveLength(1));
+    await act(async () => unmount());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 200)));
+    expect(events).toEqual([]);
+    expect(api.requests.filter((r) => r.path.startsWith('/check-ins'))).toEqual([]);
+  });
+});
+
+describe('useVenueDetail with another venue in the same screen', () => {
+  const OTHER_ID = '7b2e1d5f-3c8a-4a2f-8d4b-8e6f9a0b1c2d';
+  const OTHER_SLUG = 'sundholl';
+
+  async function renderOnFirstVenue() {
+    serveVenue();
+    servePreview();
+    serveReviews();
+    const hook = await renderHook(({ target }: { target: VenueTarget }) => useVenueDetail(target), {
+      initialProps: { target: { slug: VENUE_SLUG } },
+    });
+    await waitFor(() => expect(hook.result.current.reviews).toHaveLength(2));
+    return hook;
+  }
+
+  it('a venue that does not load is the failed state, never the previous venue', async () => {
+    const { result, rerender } = await renderOnFirstVenue();
+    api.on('GET', '/venues/by-slug/:slug', Reply.delayed(50, Reply.problem(404, 'not-found')));
+    await rerender({ target: { slug: OTHER_SLUG } });
+    // At once: nothing of the first venue, only the spinner.
+    expect(result.current.venue).toBeNull();
+    expect(result.current.reviews).toEqual([]);
+    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.venue).toBeNull();
+    expect(result.current.reviews).toEqual([]);
+    expect(result.current.error).not.toBeNull();
+  });
+
+  it("a venue whose reviews fail shows none of the previous venue's reviews", async () => {
+    const { result, rerender } = await renderOnFirstVenue();
+    api.on('GET', '/venues/by-slug/:slug', Reply.ok(venueJson({ id: OTHER_ID, slug: OTHER_SLUG, name: 'Sundhöll' })));
+    api.on('GET', `/venues/${OTHER_ID}/reviews`, Reply.problem(500, 'internal_error'));
+    await rerender({ target: { slug: OTHER_SLUG } });
+    await waitFor(() => expect(result.current.venue?.name).toBe('Sundhöll'));
+    expect(result.current.reviews).toEqual([]);
+    expect(result.current.error).not.toBeNull();
+  });
+});
+
+describe('useVenueDetail coming back to the page', () => {
+  it('refresh reads the page again without the spinner and takes the new prices', async () => {
+    serveVenue({ inBundle: false, surchargePrice: 1990 });
+    servePreview();
+    serveReviews();
+    const { result } = await renderHook(() => useVenueDetail({ slug: VENUE_SLUG }));
+    await waitFor(() => expect(result.current.venue?.surchargePrice).toBe(1990));
+    events.length = 0;
+
+    api.on('GET', '/venues/by-slug/:slug', Reply.delayed(50, Reply.ok(venueJson({ inBundle: true }))));
+    await act(async () => result.current.refresh());
+    // The page stays on screen while it reads.
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.venue?.surchargePrice).toBe(1990);
+    await waitFor(() => expect(result.current.venue?.inBundle).toBe(true));
+    expect(api.sentAll(`/venues/by-slug/${VENUE_SLUG}`)).toHaveLength(2);
+    // iOS's `.task` tracks each visit.
+    expect(events).toHaveLength(1);
+  });
+
+  it('a failed re-read keeps the page and says why ("Heads up")', async () => {
+    serveVenue();
+    servePreview();
+    serveReviews();
+    const { result } = await renderHook(() => useVenueDetail({ slug: VENUE_SLUG }));
+    await waitFor(() => expect(result.current.venue).not.toBeNull());
+
+    api.on('GET', '/venues/by-slug/:slug', Reply.problem(500, 'internal_error'));
+    await act(async () => result.current.refresh());
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.venue?.slug).toBe(VENUE_SLUG);
+    expect(result.current.reviews).toHaveLength(2);
+  });
+
+  it('does nothing while a load is still on its way', async () => {
+    api.on('GET', '/venues/by-slug/:slug', Reply.delayed(100, Reply.ok(venueJson())));
+    servePreview();
+    serveReviews();
+    const { result } = await renderHook(() => useVenueDetail({ slug: VENUE_SLUG }));
+    await act(async () => result.current.refresh());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(api.sentAll(`/venues/by-slug/${VENUE_SLUG}`)).toHaveLength(1);
+  });
+
+  it('with no page yet (a failed first read), it loads with the spinner', async () => {
+    api.on('GET', '/venues/by-slug/:slug', Reply.fail());
+    const { result } = await renderHook(() => useVenueDetail({ slug: VENUE_SLUG }));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    api.on('GET', '/venues/by-slug/:slug', Reply.delayed(50, Reply.ok(venueJson())));
+    servePreview();
+    serveReviews();
+    await act(async () => result.current.refresh());
+    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => expect(result.current.venue).not.toBeNull());
   });
 });
