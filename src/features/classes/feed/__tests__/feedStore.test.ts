@@ -133,6 +133,21 @@ describe('the search', () => {
     expect(trimmedQuery('x'.repeat(100))).toHaveLength(MAX_QUERY_LENGTH);
   });
 
+  it('is never cut inside an emoji: the search is still sent', async () => {
+    // 79 letters and an emoji straddle the cap: the emoji's high half would
+    // be unit 80, and a lone half makes encodeURIComponent throw.
+    const text = `${'a'.repeat(79)}\u{1F600} yoga`;
+    expect(trimmedQuery(text)).toBe('a'.repeat(79));
+    expect(trimmedQuery(`${'a'.repeat(78)}\u{1F600} yoga`)).toBe(`${'a'.repeat(78)}\u{1F600}`);
+
+    api.on('GET', '/classes', page([]));
+    const feed = createClassesFeed({ searchDebounceMs: 0 });
+    feed.getState().setSearchText(text);
+    await until(() => api.requests.length > 0 && !feed.getState().isLoading);
+    expect(feed.getState().loadFailed).toBe(false);
+    expect(api.requests[0]!.query.q).toBe('a'.repeat(79));
+  });
+
   it('typing is debounced into one reload with the last text', async () => {
     api.on('GET', '/classes', page([]));
     const feed = createClassesFeed({ searchDebounceMs: 30 });
@@ -300,6 +315,24 @@ describe('the day groups', () => {
     expect(groups.map((group) => group.dayIso)).toEqual(['2026-10-02', '2026-10-03']);
     expect(groups[0]!.entries.map((entry) => entry.item.name)).toEqual(['Late Friday', 'Friday evening']);
     expect(groups[1]!.entries.map((entry) => entry.item.name)).toEqual(['Early Saturday']);
+  });
+
+  it('two feeds on screen at once keep their own remembered answer', async () => {
+    api.on('GET', '/classes', page([classJSON({ startsAt: day(1, 9) })]));
+    const explore = createClassesFeed();
+    const plan = createClassesFeed();
+    await explore.getState().loadInitial();
+    await plan.getState().loadInitial();
+    const exploreGroups = selectDayGroups(explore.getState());
+    const planGroups = selectDayGroups(plan.getState());
+    expect(planGroups).not.toBe(exploreGroups);
+    // A render of one never makes the other's list look new.
+    expect(selectDayGroups(explore.getState())).toBe(exploreGroups);
+    expect(selectDayGroups(plan.getState())).toBe(planGroups);
+    // And an input that changes still recomputes.
+    explore.getState().setRadius(5);
+    explore.getState().toggleNearMe();
+    expect(selectDayGroups(explore.getState())).not.toBe(exploreGroups);
   });
 
   it('the hint applies only to a selected day, after it has loaded', async () => {

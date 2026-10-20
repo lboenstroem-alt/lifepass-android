@@ -42,7 +42,7 @@ import { feedEntries, passesClientFilters, type FeedEntry } from './clientFilter
 import { DEFAULT_RADIUS_KM, isoDay, lookAheadWindow } from './days';
 import { nextMatchKey, requestOrigin, sameRequest, type NextMatchRequest, type NextMatchState } from './nextMatch';
 
-/** The server caps `q` at 80 characters: send a valid prefix rather than a 400. */
+/** The server caps `q` at 80 characters: send a valid prefix rather than a 400 (`trimmedQuery`). */
 export const MAX_QUERY_LENGTH = 80;
 /** The search field's debounce (iOS 300 ms). */
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -175,8 +175,16 @@ export function selectActiveFilterCount(
 
 type GroupInputs = Pick<ClassesFeedState, 'items' | 'now' | 'fix' | 'nearMeEnabled' | 'radiusKm'>;
 
-let lastGroupInputs: GroupInputs | null = null;
-let lastGroups: readonly DayGroup[] = [];
+/**
+ * The last answer per feed, keyed on the feed's `items` array (each store
+ * owns its own), so two feeds on screen at once (Explore's Classes mode under
+ * Plan's sheet) never evict each other's answer. A store that goes away
+ * takes its entry with it.
+ */
+const lastGroupsByItems = new WeakMap<
+  readonly ClassFeedItem[],
+  { readonly inputs: GroupInputs; readonly groups: readonly DayGroup[] }
+>();
 
 /**
  * Upcoming classes, distance-annotated and -filtered, grouped by venue-local
@@ -184,16 +192,15 @@ let lastGroups: readonly DayGroup[] = [];
  * answer: the list, the hint and the look-ahead ask for it on every render.
  */
 export function selectDayGroups(state: GroupInputs): readonly DayGroup[] {
-  const last = lastGroupInputs;
+  const last = lastGroupsByItems.get(state.items);
   if (
     last &&
-    last.items === state.items &&
-    last.now === state.now &&
-    last.fix === state.fix &&
-    last.nearMeEnabled === state.nearMeEnabled &&
-    last.radiusKm === state.radiusKm
+    last.inputs.now === state.now &&
+    last.inputs.fix === state.fix &&
+    last.inputs.nearMeEnabled === state.nearMeEnabled &&
+    last.inputs.radiusKm === state.radiusKm
   ) {
-    return lastGroups;
+    return last.groups;
   }
   const entries = feedEntries(state.items, state.now, state.fix, selectNearMeOrigin(state), state.radiusKm);
   const byDay = new Map<string, FeedEntry[]>();
@@ -204,14 +211,16 @@ export function selectDayGroups(state: GroupInputs): readonly DayGroup[] {
     else byDay.set(day, [entry]);
   }
   const groups = [...byDay.keys()].sort().map((dayIso) => ({ dayIso, entries: byDay.get(dayIso)! }));
-  lastGroupInputs = {
-    items: state.items,
-    now: state.now,
-    fix: state.fix,
-    nearMeEnabled: state.nearMeEnabled,
-    radiusKm: state.radiusKm,
-  };
-  lastGroups = groups;
+  lastGroupsByItems.set(state.items, {
+    inputs: {
+      items: state.items,
+      now: state.now,
+      fix: state.fix,
+      nearMeEnabled: state.nearMeEnabled,
+      radiusKm: state.radiusKm,
+    },
+    groups,
+  });
   return groups;
 }
 
@@ -249,10 +258,19 @@ export function selectNextMatchState(state: ClassesFeedState): NextMatchState | 
   return state.nextCursor === null ? { kind: 'searching' } : { kind: 'checkingDay' };
 }
 
-/** The search as sent: trimmed, empty is none, at most 80 characters. */
+/**
+ * The search as sent: trimmed, empty is none, at most 80 characters.
+ *
+ * Counted in UTF-16 units, the strictest reading of the server's cap, but
+ * never cut inside a surrogate pair: half an emoji is not valid text, and
+ * `encodeURIComponent` throws on it, so the feed would fail before asking
+ * (iOS `prefix(80)` cuts whole characters and cannot do this).
+ */
 export function trimmedQuery(searchText: string): string | null {
   const trimmed = searchText.trim();
-  return trimmed ? trimmed.slice(0, MAX_QUERY_LENGTH) : null;
+  if (!trimmed) return null;
+  const cut = trimmed.slice(0, MAX_QUERY_LENGTH);
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
 }
 
 // MARK: - The store
