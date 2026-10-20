@@ -2,7 +2,9 @@
  * The auth link (iOS `LifePassApp.handleIncomingURL`, auth branch): a
  * confirmation signs the member in; a reset ALWAYS shows set-new-password and
  * never just signs in, with the Kenni nudge kept off it; a failure leaves the
- * right banner for Log in. Both link forms (D23), fragment and PKCE.
+ * right banner for Log in, every time. Both link forms (D23), fragment and
+ * PKCE. The social sign-in page's own return is not an email link and is
+ * left alone.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -21,7 +23,8 @@ import {
 import { useAppStore } from '../../../stores/appStore';
 import { supabase } from '../../../supabase/lib/client';
 import { RECOVERY_REQUESTED_AT_KEY } from '../../../supabase/services/auth';
-import { handleAuthCallback, resetAuthCallbackForTests } from '../authCallback';
+import { handleAuthCallback, isSocialReturnLink, resetAuthCallbackForTests } from '../authCallback';
+import { SPENT_AUTH_LINKS_KEY } from '../spentLinks';
 
 stubApiClientPerTest();
 freshStorePerTest();
@@ -74,6 +77,7 @@ describe('with the sign-in stubbed', () => {
     });
 
     it('as a PKCE code', async () => {
+      // The server's yes is stubbed: for real it also needs the verifier of whoever asked for the email.
       authHost.on('POST', '/auth/v1/token', Reply.json(200, sessionJSON(MEMBER_A, 3600)));
       await handleAuthCallback('lifepass://auth/callback?code=abc');
       expect(handleSignIn).toHaveBeenCalledWith(MEMBER_A, expect.anything());
@@ -121,12 +125,26 @@ describe('with the sign-in stubbed', () => {
       expect(store().deepLinkError).toBeNull();
     });
 
-    it('that failed, handed back again, does not raise its banner again', async () => {
-      const link = 'lifepass://auth/callback#error=access_denied&error_code=otp_expired';
+    it('that failed raises its banner every time it comes, as on iOS', async () => {
+      // Supabase's failure redirect is the same text for every expired link of a kind.
+      const link =
+        'lifepass://auth/callback#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired';
       await handleAuthCallback(link);
+      expect(store().deepLinkError).toBe(t('auth.deeplink_err_confirm'));
+
+      // The member closed the banner; the same link (or another expired one) comes again, in a new process.
       store().setDeepLinkError(null);
       resetAuthCallbackForTests();
       await handleAuthCallback(link);
+      expect(store().deepLinkError).toBe(t('auth.deeplink_err_confirm'));
+      expect(handleSignIn).not.toHaveBeenCalled();
+    });
+
+    it('that worked retires the banner an earlier failed one left', async () => {
+      await handleAuthCallback('lifepass://auth/callback#error=access_denied&error_code=otp_expired');
+      expect(store().deepLinkError).toBe(t('auth.deeplink_err_confirm'));
+      await handleAuthCallback(tokenLink('lifepass://auth/callback', '&type=signup'));
+      expect(handleSignIn).toHaveBeenCalledTimes(1);
       expect(store().deepLinkError).toBeNull();
     });
   });
@@ -193,11 +211,67 @@ describe('with the sign-in stubbed', () => {
       expect(handleSignIn).toHaveBeenCalledTimes(1);
     });
 
+    it('that failed says so every time it comes', async () => {
+      const link = 'lifepass://auth/callback?type=recovery#error=access_denied&error_code=otp_expired';
+      await handleAuthCallback(link);
+      store().setDeepLinkError(null);
+      resetAuthCallbackForTests();
+      await handleAuthCallback(link);
+      expect(store().deepLinkError).toBe(t('auth.deeplink_err_recovery'));
+    });
+
     it('that failed after a marker says so too', async () => {
       await AsyncStorage.setItem(RECOVERY_REQUESTED_AT_KEY, String(Date.now() / 1000 - 60));
       await handleAuthCallback('lifepass://auth/callback?error=server_error');
       expect(store().deepLinkError).toBe(t('auth.deeplink_err_recovery'));
     });
+  });
+});
+
+describe("the Google and Apple sign-in page's return", () => {
+  const SOCIAL_RETURNS = [
+    'lifepass://auth/callback/social?attempt=a1&code=one-time-code',
+    'lifepass://auth/callback/social?attempt=a1#error=access_denied&error_description=Cancelled',
+    'lifepass://auth/callback/social',
+    'lifepass://auth/callback/social/',
+    'LIFEPASS://auth/callback/social?attempt=a1&code=c',
+    ' lifepass://auth/callback/social#access_token=a&refresh_token=r ',
+  ];
+
+  it.each(SOCIAL_RETURNS)('is recognised: %s', (url) => {
+    expect(isSocialReturnLink(url)).toBe(true);
+  });
+
+  it.each([
+    'lifepass://auth/callback',
+    'lifepass://auth/callback?type=recovery#access_token=a&refresh_token=r',
+    'lifepass://auth/callback/socialx?code=c',
+    'https://www.lifepass.is/app/auth-callback/social?code=c',
+  ])('is not mistaken for an email link: %s', (url) => {
+    expect(isSocialReturnLink(url)).toBe(false);
+  });
+
+  it.each(SOCIAL_RETURNS)('is left alone: no marker read, no claim, no request, no banner (%s)', async (url) => {
+    const markerAt = String(Date.now() / 1000 - 60);
+    await AsyncStorage.setItem(RECOVERY_REQUESTED_AT_KEY, markerAt);
+    const handleSignIn = jest.spyOn(store(), 'handleSignIn');
+
+    await handleAuthCallback(url);
+    await settle();
+
+    expect(await AsyncStorage.getItem(RECOVERY_REQUESTED_AT_KEY)).toBe(markerAt);
+    expect(await AsyncStorage.getItem(SPENT_AUTH_LINKS_KEY)).toBeNull();
+    expect(authHost.requests).toHaveLength(0);
+    expect(store().deepLinkError).toBeNull();
+    expect(store().pendingPasswordRecovery).toBe(false);
+    expect(handleSignIn).not.toHaveBeenCalled();
+    handleSignIn.mockRestore();
+  });
+
+  it('does not clear a banner an email link left', async () => {
+    await handleAuthCallback('lifepass://auth/callback#error=access_denied&error_code=otp_expired');
+    await handleAuthCallback('lifepass://auth/callback/social?attempt=a1&code=c');
+    expect(store().deepLinkError).toBe(t('auth.deeplink_err_confirm'));
   });
 });
 

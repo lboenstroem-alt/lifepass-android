@@ -236,6 +236,11 @@ export async function exchangeAuthLink(url: string): Promise<AuthLinkSession> {
   if (failure) throw new AuthLinkError(failure);
 
   if (params.code) {
+    // This app's client runs supabase-js's default implicit flow, so the
+    // emails it asks for come back with tokens in the fragment. A `code`
+    // comes from a PKCE request (iOS's own, a future switch of this client),
+    // and its exchange needs the verifier saved by whoever asked: without it
+    // the server refuses and the member gets the banner, as iOS does.
     const { data, error } = await supabase.auth.exchangeCodeForSession(params.code);
     if (error) throw error;
     if (!data.session) throw new AuthLinkError('no_session');
