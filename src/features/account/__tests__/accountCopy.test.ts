@@ -251,4 +251,11 @@ describe('the avatar letter', () => {
     expect(avatarInitial(undefined)).toBe('L');
     expect(avatarInitial('')).toBe('');
   });
+
+  it('is the first grapheme, as Swift’s prefix(1): a decomposed name still draws its accent', () => {
+    expect(avatarInitial('A\u0301sta')).toBe('Á');
+    expect(avatarInitial('O\u0308rn')).toBe('Ö');
+    // A mark with no composed form stays with its letter.
+    expect(avatarInitial('Q\u0301uinn')).toBe('Q\u0301');
+  });
 });

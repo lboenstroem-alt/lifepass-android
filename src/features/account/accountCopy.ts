@@ -176,11 +176,22 @@ export function languageRowSubtitle(language: Lang, saving: boolean, lang: Lang)
   return translate(language === 'is' ? 'account.lang_is' : 'account.lang_en', lang);
 }
 
+/** Marks that belong to the character before them (combining diacritics, variation selectors). */
+const COMBINING = /^[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe00-\ufe0f\ufe20-\ufe2f]$/;
+
 /**
  * The avatar's letter (iOS `profile?.fullName?.prefix(1) ?? "L"`): the first
  * character of the name, "L" with no name at all.
+ *
+ * Swift's `prefix(1)` is the first grapheme, not the first code point. A name
+ * stored decomposed ("A" then a combining acute) is composed first, and a
+ * mark that has no composed form stays with its letter, so Android draws "Á"
+ * where iOS does, never a bare "A".
  */
 export function avatarInitial(fullName: string | null | undefined): string {
   if (fullName === null || fullName === undefined) return 'L';
-  return Array.from(fullName)[0] ?? '';
+  const characters = Array.from(fullName.normalize('NFC'));
+  let initial = characters[0] ?? '';
+  for (let i = 1; i < characters.length && COMBINING.test(characters[i]); i += 1) initial += characters[i];
+  return initial;
 }
