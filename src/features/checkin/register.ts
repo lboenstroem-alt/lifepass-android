@@ -11,7 +11,17 @@
 //   not the member's: a foreign menu code is foreign whoever is signed in;
 // - Home's re-offered proof is a snapshot in the banner's own state, which goes with the signed-in screens.
 //
-// The walk-in flow (CHECKIN-2) registers its hooks from ./walkin/register.ts (`registerWalkInHooks()`), which its
-// host also calls when it mounts; once that file is on the branch, call it here as well so the hooks are in place
-// before the Scan tab is ever opened.
-export {};
+// THE WALK-IN FLOW (CHECKIN-2) registers its hooks with `registerWalkInHooks()` (idempotent): the sign-out cleaner
+// that drops a consent or a proof left up for the member who left, and the walk_in payment presenter F8 needs when it
+// recovers a walk-in paid on the hosted page after a cold start. Its host also calls it when it mounts, but a member
+// who never opens the Scan tab must still be covered, as iOS's sign-out calls every wipe by name, so it is called
+// here at startup.
+//
+// The slot's F4 stub (./walkin/index.ts) does not export it yet; it arrives with CHECKIN-2. It is read as optional so
+// this file is right on either side of that merge. Once both packages are in, this can be a plain named import.
+import * as walkIn from './walkin';
+
+/** CHECKIN-2's hook registration, where the walk-in package has landed. */
+type WalkInHooks = { readonly registerWalkInHooks?: () => void };
+
+(walkIn as WalkInHooks).registerWalkInHooks?.();
