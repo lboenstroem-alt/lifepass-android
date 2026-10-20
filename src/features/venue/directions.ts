@@ -36,6 +36,15 @@ export function googleMapsDirectionsUrl(venue: Place): string | null {
 }
 
 /**
+ * The pin's label inside `(...)`. `encodeURIComponent` leaves parentheses as
+ * they are, and maps apps end the label at the first `)`, so a name like
+ * "Laugar (Spa)" would lose its end; they are escaped too.
+ */
+function geoLabel(name: string): string {
+  return encodeURIComponent(name).replace(/\(/g, '%28').replace(/\)/g, '%29');
+}
+
+/**
  * A `geo:` link for any maps app: a labelled pin at the coordinates
  * (`geo:lat,lng?q=lat,lng(Name)`), or a search for the address
  * (`geo:0,0?q=Address`).
@@ -43,7 +52,7 @@ export function googleMapsDirectionsUrl(venue: Place): string | null {
 export function geoUrl(venue: Place): string | null {
   if (venue.latitude !== null && venue.longitude !== null) {
     const at = `${venue.latitude},${venue.longitude}`;
-    return `geo:${at}?q=${at}(${encodeURIComponent(venue.name)})`;
+    return `geo:${at}?q=${at}(${geoLabel(venue.name)})`;
   }
   if (venue.address) return `geo:0,0?q=${encodeURIComponent(venue.address)}`;
   return null;

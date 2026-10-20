@@ -42,6 +42,12 @@ describe('the destination', () => {
     expect(geoUrl(place)).toBe('geo:64.1427,-21.9186?q=64.1427,-21.9186(Sundh%C3%B6ll%20Reykjav%C3%ADkur)');
   });
 
+  it("parentheses in the name stay inside the pin's label", () => {
+    expect(geoUrl({ ...place, name: 'Sundhöllin (innilaug)' })).toBe(
+      'geo:64.1427,-21.9186?q=64.1427,-21.9186(Sundh%C3%B6llin%20%28innilaug%29)',
+    );
+  });
+
   it('nowhere to go is no link at all', () => {
     expect(directionsDestination(nowhere)).toBeNull();
     expect(googleMapsDirectionsUrl(nowhere)).toBeNull();
