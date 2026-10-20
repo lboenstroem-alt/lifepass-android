@@ -26,13 +26,21 @@
  * `{ venueId, activityId }`; the activity (with its provider) is then read
  * from the walk-in preview's `slotActivities`, the only list of bookable
  * activities there is.
+ *
+ * ONLY SLOT-BOOKABLE PROVIDERS. iOS never opens this flow for Kling or an
+ * unknown provider (`BookingProvider.isSlotBookable`; the venue page lists
+ * only those activities). A caller that passes one anyway, or a legacy
+ * activity the preview does not list as bookable, gets a terminal "can't be
+ * booked in the app" state with no Retry (a retry cannot change it) and no
+ * request to /availability the server would only refuse. A failed read of
+ * the preview is a network failure, and keeps its Retry.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { bookingProvider, fetchWalkInPreview, isSlotBookable, type BookableActivity } from '../../api/walkInPreview';
-import { ErrorState } from '../../components/ui';
+import { EmptyState, ErrorState } from '../../components/ui';
 import { useT } from '../../i18n';
 import { useBusyGuard } from '../../navigation/guards';
 import { isLegacyBookingFlowParams, type SharedRouteProps } from '../../navigation/types';
@@ -65,6 +73,7 @@ function knownVenue(venueId: string): BookingVenue | null {
 }
 
 export default function BookingFlowScreen({ navigation, route }: SharedRouteProps<'BookingFlow'>) {
+  const { t } = useT();
   const params = route.params;
   const legacyActivityId = isLegacyBookingFlowParams(params) ? params.activityId : null;
   const venueId = params.venueId;
@@ -82,12 +91,15 @@ export default function BookingFlowScreen({ navigation, route }: SharedRouteProp
   const [activity, setActivity] = useState<BookableActivity | null>(routeActivity);
   const [venue, setVenue] = useState<BookingVenue | null>(() => knownVenue(venueId));
   const [resolveFailed, setResolveFailed] = useState(false);
+  // A legacy activity the venue does not list as bookable (see the file comment).
+  const [notListed, setNotListed] = useState(false);
 
   // A legacy caller's activity, and the venue's name when the catalogue does
   // not have it: one read of the walk-in preview, best effort for the name.
   const resolve = useCallback(() => {
     let live = true;
-    if (activity && venue) return () => undefined;
+    // Nothing to read: both known, or an activity this flow will not book.
+    if (activity && (venue || !isSlotBookable(activity.provider))) return () => undefined;
     setResolveFailed(false);
     fetchWalkInPreview(venueId).then(
       (preview) => {
@@ -98,7 +110,7 @@ export default function BookingFlowScreen({ navigation, route }: SharedRouteProp
             (candidate) => candidate.id.toLowerCase() === legacyActivityId.toLowerCase(),
           );
           if (found && isSlotBookable(found.provider)) setActivity(found);
-          else setResolveFailed(true);
+          else setNotListed(true);
         }
       },
       () => {
@@ -113,6 +125,17 @@ export default function BookingFlowScreen({ navigation, route }: SharedRouteProp
   }, [venueId]);
 
   useEffect(() => resolve(), [resolve]);
+
+  if (notListed || (activity && !isSlotBookable(activity.provider))) {
+    return (
+      <View style={styles.page} testID="booking.not_bookable">
+        <BookingHeader title={activity ? t('booking.book_name', { name: activity.name }) : ''} onBack={() => navigation.goBack()} />
+        <View style={styles.center}>
+          <EmptyState icon="calendar-outline" message={t('book1.not_bookable')} />
+        </View>
+      </View>
+    );
+  }
 
   if (!activity) {
     return (
@@ -246,6 +269,7 @@ function TimetableHost({
   const selection = useBooking(store, hasSelection);
   const group = useBooking(store, groupBookable);
   const guestBands = useBooking(store, (s) => s.guestAgeBands);
+  const ageBands = useBooking(store, (s) => s.offeredAgeBands);
   const isBooking = useBooking(store, (s) => s.isBooking);
 
   return (
@@ -268,12 +292,14 @@ function TimetableHost({
               venueId,
               activityId: activity.id,
               guests: guestCounts(guestBands),
-              // BOOK-2 fills the section; the party size is the member plus
-              // every guest it reports.
-              onChangeGuests: (guests) => {
-                const total = Object.values(guests).reduce((sum, count) => sum + count, 0);
-                void store.getState().changeParticipants(1 + total);
-              },
+              // BOOK-2 fills the section. Its counts carry every guest's
+              // band, not only the party size: a child reported here is
+              // priced and reserved as a child on the preview, the create
+              // and the payment session (`changeGuests`).
+              onChangeGuests: (guests) => void store.getState().changeGuests(guests),
+              ageBands,
+              guestBands,
+              onChangeGuestBand: (index, band) => void store.getState().changeGuestAgeBand(index, band),
               disabled: isBooking,
             }
           : null

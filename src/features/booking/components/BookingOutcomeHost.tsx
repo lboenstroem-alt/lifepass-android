@@ -8,6 +8,12 @@
 // queues its alerts the same way, and two Android dialogs stacked would hide
 // the one that matters.
 //
+// Only a button answers, as on iOS, whose alerts ignore a tap outside them.
+// F5's Dialog would otherwise take a tap on the dimmed scrim as Cancel: on
+// "Still waiting for an answer" that would drop the busy guard and let the
+// member leave, and book another time, while the first create may still
+// land. Hardware back still presses Cancel (F5's rule), a deliberate act.
+//
 // `onClose` pops the full flow, or closes the class sheet (CLASS-2).
 import { useEffect, useRef } from 'react';
 import { Linking } from 'react-native';
@@ -234,6 +240,9 @@ export default function BookingOutcomeHost({ store, onClose, offers, onStep, onB
       visible={dialog !== null}
       // Every close goes through one of the buttons, which say what it means.
       onClose={() => undefined}
+      // A tap outside never answers (see the file comment). Left unset for a
+      // one-button notice, so back still acknowledges it, as F5 does.
+      cancelable={dialog?.buttons.some((button) => button.role === 'cancel') ? false : undefined}
       title={dialog?.title ?? ''}
       message={dialog?.message}
       buttons={dialog?.buttons ?? []}

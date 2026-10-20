@@ -9,7 +9,7 @@ import { ctaLabelKey, type RefusalCta } from '../../../api/refusals';
 import { LPText } from '../../../components/ui';
 import { hiddenFromAccessibility } from '../../../components/ui/a11y';
 import { useT } from '../../../i18n';
-import { colors, radius } from '../../../theme';
+import { colors, parseColor, radius } from '../../../theme';
 import { bookingCopy, type BookingIcon } from '../bookingCopy';
 import {
   selectedVisitChoice,
@@ -45,6 +45,9 @@ export default function BookingChargeSection({ store, offers, onStep }: BookingC
       {options.length > 0 ? (
         <VisitChoicePicker
           choices={options.map((option) => option.choice)}
+          // Each rung's own price, so the picker can show what it costs (iOS
+          // draws `Venue.iskPrefix(option.priceIsk)` on every row).
+          options={options}
           selected={selected}
           onSelect={(choice) => void store.getState().changeVisitChoice(choice)}
           disabled={isBooking}
@@ -119,6 +122,13 @@ export function BookingDisclosureNote({ icon, text }: { readonly icon: BookingIc
   );
 }
 
+/** A token at an opacity (iOS `Color.lpDestructive.opacity(0.08)`), so the panel follows the token. */
+function tint(token: string, opacity: number): string {
+  const [r, g, b, a] = parseColor(token);
+  const channel = (value: number) => Math.round(value * 255);
+  return `rgba(${channel(r)},${channel(g)},${channel(b)},${+(a * opacity).toFixed(3)})`;
+}
+
 const styles = StyleSheet.create({
   section: {
     gap: 12,
@@ -135,9 +145,9 @@ const styles = StyleSheet.create({
     gap: 10,
     padding: 12,
     borderRadius: 10,
-    backgroundColor: 'rgba(208,37,37,0.08)',
+    backgroundColor: tint(colors.destructive, 0.08),
     borderWidth: 1,
-    borderColor: 'rgba(208,37,37,0.25)',
+    borderColor: tint(colors.destructive, 0.25),
   },
   panelText: {
     flexDirection: 'row',

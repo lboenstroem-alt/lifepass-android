@@ -19,6 +19,34 @@ import { bodyOf, bookingPosts, CONFIRMED, consent, FREE_PREVIEW, plus, respond, 
 // The Kenni sheet (a refusal step) draws icons, whose font loader needs expo-asset.
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 
+// BOOK-2 fills the party section; until then a stand-in that reports what a
+// member adds, the way the slot contract says it will (guests by band).
+jest.mock('../party/GroupPartySection', () => {
+  const { createElement } = jest.requireActual<typeof import('react')>('react');
+  const { Pressable, Text } = jest.requireActual<typeof import('react-native')>('react-native');
+  return {
+    __esModule: true,
+    default: (props: {
+      guests: Record<string, number>;
+      onChangeGuests: (guests: Record<string, number>) => void;
+      ageBands?: readonly { band: string }[];
+      guestBands?: readonly string[];
+    }) =>
+      createElement(
+        Pressable,
+        {
+          testID: 'party.add_child',
+          onPress: () => props.onChangeGuests({ ...props.guests, child: (props.guests.child ?? 0) + 1 }),
+        },
+        createElement(
+          Text,
+          { testID: 'party.state' },
+          `${(props.ageBands ?? []).map((offer) => offer.band).join('+')}|${(props.guestBands ?? []).join('+')}`,
+        ),
+      ),
+  };
+});
+
 stubApiClientPerTest();
 
 const en = (key: string) => lookup(key, 'en');
@@ -227,4 +255,111 @@ it("a first-build caller's { venueId, activityId } finds the activity and its pr
   expect(screen.getByText(en('booking.pick_start_date'))).toBeOnTheScreen();
   expect(screen.getByText(en('booking.two_weeks_hint'))).toBeOnTheScreen();
   expect(screen.getByText(en('booking.class'))).toBeOnTheScreen();
+});
+
+it('a group guest reported by band reaches the preview and the create as that band', async () => {
+  respond((request) => {
+    if (request.path === '/check-ins/walk-in/preview') return walkInPreview();
+    if (request.path.endsWith('/availability')) {
+      return slotsReply([START], {
+        provider: 'bokun',
+        ageBands: [
+          { band: 'adult', rangeLabel: '16+', priceIsk: null },
+          { band: 'child', rangeLabel: '6-15', priceIsk: 3_000 },
+        ],
+      });
+    }
+    if (request.path.endsWith('/booking-preview')) return Reply.ok(FREE_PREVIEW);
+    if (request.method === 'POST' && request.path === '/bookings') return Reply.ok(CONFIRMED);
+    return Reply.problem(404, 'not_found');
+  });
+  await renderFlow({ venueId: VENUE_ID, activity: { ...ACTIVITY, name: 'Sky Lagoon', provider: 'bokun' }, initialDate: '2030-03-14' });
+  await fireEvent.press(await screen.findByTestId('booking.slot.10:00'));
+  // The section is handed the venue's bands and every seat's band.
+  expect(screen.getByTestId('party.state')).toHaveTextContent('adult+child|');
+  await fireEvent.press(screen.getByTestId('party.add_child'));
+  expect(await screen.findByText('adult+child|child')).toBeOnTheScreen();
+  expect(api.requests.filter((r) => r.path.endsWith('/availability')).at(-1)!.query.participants).toBe('2');
+
+  await fireEvent.press(await screen.findByTestId('booking.timetable.next'));
+  await fireEvent.press(await screen.findByTestId('booking.confirm'));
+  expect(await screen.findByText(en('booking.confirmed_title'))).toBeOnTheScreen();
+  const preview = api.requests.filter((r) => r.path.endsWith('/booking-preview')).at(-1)!;
+  expect(preview.query).toMatchObject({ participants: '2', guestAgeBands: 'child' });
+  expect(bodyOf(bookingPosts()[0])).toMatchObject({ participants: 2, guestAgeBands: ['child'] });
+});
+
+it('an activity the app cannot book (Kling, an unknown provider) is said so, with no Retry and no timetable asked', async () => {
+  respond((request) => {
+    if (request.path === '/check-ins/walk-in/preview') return walkInPreview();
+    return Reply.problem(404, 'not_found');
+  });
+  await renderFlow({ venueId: VENUE_ID, activity: { ...ACTIVITY, provider: 'kling' }, initialDate: '2030-03-14' });
+  expect(await screen.findByText(en('book1.not_bookable'))).toBeOnTheScreen();
+  expect(screen.getByText('Book Spin')).toBeOnTheScreen();
+  expect(screen.queryByRole('button', { name: en('health.retry') })).toBeNull();
+  expect(api.requests.filter((r) => r.path.endsWith('/availability'))).toHaveLength(0);
+  expect(api.requests.filter((r) => r.path === '/check-ins/walk-in/preview')).toHaveLength(0);
+  await act(async () => {
+    DeviceEventEmitter.emit('hardwareBackPress');
+  });
+  await waitFor(() => expect(screen.getByText('Venue page')).toBeOnTheScreen());
+});
+
+it("a first-build caller's activity the venue does not list as bookable is said so; a failed read keeps Retry", async () => {
+  respond((request) => {
+    if (request.path === '/check-ins/walk-in/preview') {
+      return walkInPreview([{ id: '5d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6', name: 'Gym', provider: 'internal' }]);
+    }
+    return Reply.problem(404, 'not_found');
+  });
+  await renderFlow({ venueId: VENUE_ID, activityId: ACTIVITY.id });
+  expect(await screen.findByText(en('book1.not_bookable'))).toBeOnTheScreen();
+  expect(screen.queryByRole('button', { name: en('health.retry') })).toBeNull();
+});
+
+it('a failed read of the venue is a network failure, with a Retry that can find the activity', async () => {
+  let up = false;
+  respond((request) => {
+    if (request.path === '/check-ins/walk-in/preview') {
+      return up ? walkInPreview([{ id: ACTIVITY.id, name: 'Spin', provider: 'internal' }]) : Reply.problem(503, 'service_unavailable');
+    }
+    return Reply.problem(404, 'not_found');
+  });
+  await renderFlow({ venueId: VENUE_ID, activityId: ACTIVITY.id });
+  const retry = await screen.findByRole('button', { name: en('health.retry') });
+  expect(screen.queryByText(en('book1.not_bookable'))).toBeNull();
+  up = true;
+  await fireEvent.press(retry);
+  expect(await screen.findByText('Book Spin')).toBeOnTheScreen();
+  expect(screen.getByText(en('booking.select_date'))).toBeOnTheScreen();
+});
+
+it('a tap outside "Still waiting" does not answer it: only its buttons do', async () => {
+  respond((request) => {
+    if (request.path === '/check-ins/walk-in/preview') return walkInPreview();
+    if (request.path.endsWith('/availability')) return slotsReply([START]);
+    if (request.path.endsWith('/booking-preview')) return Reply.ok(FREE_PREVIEW);
+    if (request.method === 'POST' && request.path === '/bookings') return Reply.raw(504, '<html>Gateway Timeout</html>');
+    return Reply.problem(404, 'not_found');
+  });
+  await renderFlow({ venueId: VENUE_ID, activity: ACTIVITY, initialDate: '2030-03-14' });
+  await fireEvent.press(await screen.findByTestId('booking.slot.10:00'));
+  await fireEvent.press(screen.getByTestId('booking.timetable.next'));
+  await fireEvent.press(await screen.findByTestId('booking.confirm'));
+  expect(await screen.findByText(en('booking.timeout_title'))).toBeOnTheScreen();
+  // The dimmed scrim around the card is not a Cancel (F5's Dialog would take
+  // it as one, and drop the busy guard while the create may still land).
+  const card = screen.getByTestId('booking.dialog.timeout.scroll').parent!;
+  const scrim = card.parent!.children[0];
+  expect(typeof scrim).not.toBe('string');
+  await fireEvent.press(scrim as Exclude<typeof scrim, string>);
+  expect(screen.getByText(en('booking.timeout_title'))).toBeOnTheScreen();
+  // Back from the screen is still held while the outcome is unknown.
+  await act(async () => navigationRef.goBack());
+  expect(screen.getByTestId('booking.flow')).toBeOnTheScreen();
+  // Its Check again asks under the same key.
+  await fireEvent.press(screen.getByTestId('booking.timeout.check_again'));
+  await waitFor(() => expect(bookingPosts()).toHaveLength(2));
+  expect(bookingPosts()[1].headers['idempotency-key']).toBe(bookingPosts()[0].headers['idempotency-key']);
 });

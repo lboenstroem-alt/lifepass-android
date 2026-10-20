@@ -16,7 +16,7 @@ import { EmptyState, LPText, PrimaryButton } from '../../../components/ui';
 import { useT, VenueTimeFormat } from '../../../i18n';
 import { colors, radius } from '../../../theme';
 import { bookingCopy, isNotOpenReason } from '../bookingCopy';
-import GroupPartySection, { type GuestCounts } from '../party/GroupPartySection';
+import GroupPartySection, { type GroupPartySectionProps } from '../party/GroupPartySection';
 import SecondaryButton from './SecondaryButton';
 
 export interface TimetableStepProps {
@@ -32,14 +32,8 @@ export interface TimetableStepProps {
   readonly onSelectClass: (klass: ActivityClass) => void;
   readonly onBack: () => void;
   readonly onNext: () => void;
-  /** The group party (Bókun slot activities only), drawn by BOOK-2's section. */
-  readonly party: {
-    readonly venueId: string;
-    readonly activityId: string;
-    readonly guests: GuestCounts;
-    readonly onChangeGuests: (guests: GuestCounts) => void;
-    readonly disabled: boolean;
-  } | null;
+  /** The group party (Bókun slot activities only), drawn by BOOK-2's section with every prop it takes. */
+  readonly party: GroupPartySectionProps | null;
   readonly bottomInset?: number;
 }
 
@@ -52,13 +46,7 @@ export default function TimetableStep(props: TimetableStepProps) {
         {usesClasses ? t('booking.select_class') : t('booking.select_time')}
       </LPText>
       {party ? (
-        <GroupPartySection
-          venueId={party.venueId}
-          activityId={party.activityId}
-          guests={party.guests}
-          onChangeGuests={party.onChangeGuests}
-          disabled={party.disabled}
-        />
+        <GroupPartySection {...party} />
       ) : null}
       <View style={styles.body}>
         {isLoading ? (
