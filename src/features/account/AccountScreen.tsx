@@ -22,6 +22,20 @@
  * Every slot reads what it needs itself and may render nothing; the rows
  * draw their own dividers (./rows.tsx), so a missing slot leaves no line.
  *
+ * THE HAIRLINES AROUND THE SLOTS. iOS draws exactly one `divider` between
+ * two rows. The Membership slot (ACCT-3's cancel row) and Body and goals
+ * (BODY-1, first in its card) draw like our rows: a hairline above, none
+ * below. Two slots draw their own way, so this screen draws for them:
+ * - IdentityRow (AUTH-3) draws a hairline BELOW itself unless told
+ *   `divider={false}`, and renders only once the profile has loaded (iOS
+ *   `if let profile`). It is mounted with `divider={false}`, and the line
+ *   above it is drawn here while the profile is loaded; Language's own line
+ *   is the one below it.
+ * - DeletionRow (ACCT-4) draws none and always renders (iOS always shows the
+ *   row), so the line between Log out and it is drawn here.
+ * Should either slot move to `AccountRowButton` (the contract in
+ * ./rows.tsx), drop the matching line here in the same change.
+ *
  * On every appearance (iOS `.task`), the company context and the referral
  * link are read, best-effort: neither failure is shown, the rows simply stay
  * hidden or fall back.
@@ -33,7 +47,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useContext, useMemo, useState } from 'react';
+import { useCallback, useContext, useMemo, useState, type ComponentType } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -58,13 +72,21 @@ import {
 } from './links';
 import MemberCard from './MemberCard';
 import { shareReferral, useReferral } from './referral';
-import { AccountRowButton, AccountSection } from './rows';
+import { AccountRowButton, AccountRowDivider, AccountSection } from './rows';
 import BillingSection from './slots/BillingSection';
 import BodyGoalsRow from './slots/BodyGoalsRow';
 import CompanyPlanBanner from './slots/CompanyPlanBanner';
 import DeletionRow from './slots/DeletionRow';
 import IdentityRow from './slots/IdentityRow';
 import MembershipActions from './slots/MembershipActions';
+
+/**
+ * The identity slot with its optional `divider` (AUTH-3's: the hairline it
+ * draws below itself, default on). Typed here so the screen can turn it off
+ * whichever body the slot has: a filler may add optional props only, and a
+ * body that takes none ignores it.
+ */
+const IdentitySlot: ComponentType<{ readonly divider?: boolean }> = IdentityRow;
 
 export default function AccountScreen({ navigation }: SharedRouteProps<'Account'>) {
   const { t, language } = useT();
@@ -159,7 +181,8 @@ export default function AccountScreen({ navigation }: SharedRouteProps<'Account'
               testID="account.row.refer"
             />
           ) : null}
-          <IdentityRow />
+          {profile ? <AccountRowDivider /> : null}
+          <IdentitySlot divider={false} />
           <AccountRowButton
             title={t('account.language')}
             subtitle={languageRowSubtitle(language, languageSwitch.saving, language)}
@@ -184,6 +207,7 @@ export default function AccountScreen({ navigation }: SharedRouteProps<'Account'
             onPress={() => void useAppStore.getState().signOut()}
             testID="account.row.logout"
           />
+          <AccountRowDivider />
           <DeletionRow />
         </AccountSection>
 
