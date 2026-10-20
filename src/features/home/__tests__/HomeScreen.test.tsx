@@ -9,7 +9,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
-import { Keyboard, TextInput } from 'react-native';
+import { DeviceEventEmitter, Keyboard, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { translate } from '../../../i18n';
@@ -18,6 +18,7 @@ import { UPGRADED_FROM_PROFILE_TAB_KEY } from '../../../navigation/navPrefs';
 import { profileOpenedKey } from '../../../navigation/profile';
 import { useIntentStore } from '../../../stores/intentStore';
 import { greetingKey } from '../greeting';
+import * as heroRules from '../pickHero';
 import TryNewSection, { type TryNewSectionHandle } from '../TryNewSection';
 import { HOME_ASK_CHIPS, HOME_COACH_CATEGORIES } from '../coachPrompts';
 import {
@@ -104,7 +105,7 @@ describe('the hero', () => {
     const hero = screen.getByTestId('home.hero');
     expect(imageUri(within(hero).getByTestId('home.hero.image.image', HIDDEN))).toBe('https://img.example/1.jpg');
     const greeting = translate(greetingKey(new Date().getHours()), 'en');
-    expect(screen.getByTestId('home.greeting')).toHaveTextContent(`${greeting}, Lucas.`);
+    expect(screen.getByTestId('home.greeting')).toHaveTextContent(`${greeting}, Anna.`);
     expect(within(screen.getByTestId('home.weather')).getByText('CLOUDY · 7° · SPA & HOT SPRING DAY')).toBeOnTheScreen();
     expect(screen.getByText('No upcoming bookings')).toBeOnTheScreen();
     expect(screen.getByText('Explore venues nearby')).toBeOnTheScreen();
@@ -126,7 +127,7 @@ describe('the hero', () => {
     await renderHome();
     const greeting = translate(greetingKey(new Date().getHours()), 'en');
     expect(screen.getByTestId('home.greeting')).toHaveTextContent(`${greeting}, there.`);
-    expect(screen.queryByText(/lucas@example\.com/)).toBeNull();
+    expect(screen.queryByText(/member@example\.com/)).toBeNull();
   });
 
   it('hides the weather line when Open-Meteo fails', async () => {
@@ -179,12 +180,50 @@ describe('the hero', () => {
     await settle();
     expect(heroUri()).toBe(first);
 
-    // Another tab, then Home again: a new visit.
+    // Another tab, then Home again: a new visit. The next hero is rolled the
+    // moment Home is left, so the tab opens on it (no swap after a frame).
     await act(async () => homeNavigation.navigate('Explore'));
     await settle();
+    const rolled = heroUri();
+    expect(rolled).not.toBe(first);
     await act(async () => homeNavigation.navigate('Home'));
     await settle();
-    expect(heroUri()).not.toBe(first);
+    expect(heroUri()).toBe(rolled);
+  });
+
+  it('a modal over the tabs is not a new visit: closing it keeps the hero', async () => {
+    // Real randomness here: React Navigation keys its navigators with
+    // Math.random, and under one fixed value the root stack and Home's stack
+    // would share a key (and navigation between them would fail). The rolls
+    // are counted instead: a new visit is a pick with no current hero.
+    random.mockRestore();
+    const picks = jest.spyOn(heroRules, 'pickHero');
+    const rolls = () => picks.mock.calls.filter(([, input]) => input.currentId === null).length;
+    freshHome();
+    serve();
+    await renderHome({ underRoot: true });
+    const first = heroUri();
+    const rolledAtStart = rolls();
+
+    // Plans, a shared sheet, the runner: a root modal blurs and refocuses the
+    // Home tab, but the tab bar never leaves Home.
+    await act(async () => homeNavigation.navigate('Sheet'));
+    await settle();
+    expect(screen.getByTestId('screen.Sheet')).toBeOnTheScreen();
+    await act(async () => homeNavigation.goBack());
+    await settle();
+    expect(screen.queryByTestId('screen.Sheet')).toBeNull();
+    expect(rolls()).toBe(rolledAtStart);
+    expect(heroUri()).toBe(first);
+
+    // Leaving the tab is still a new visit, rolled as Home is left.
+    await act(async () => homeNavigation.navigate('Tabs', { screen: 'Explore' }));
+    await settle();
+    expect(rolls()).toBe(rolledAtStart + 1);
+    await act(async () => homeNavigation.navigate('Tabs', { screen: 'Home' }));
+    await settle();
+    expect(rolls()).toBe(rolledAtStart + 1);
+    picks.mockRestore();
   });
 });
 
@@ -240,7 +279,7 @@ describe('the avatar and the one-time Profile pointer', () => {
     serve();
     await renderHome();
     const avatar = screen.getByRole('button', { name: 'Open profile: bookings and saved' });
-    expect(within(avatar).getByText('L')).toBeOnTheScreen();
+    expect(within(avatar).getByText('A')).toBeOnTheScreen();
     await fireEvent.press(avatar);
     await settle();
     expect(screen.getByTestId('params.Profile')).toHaveTextContent(JSON.stringify({ initialTab: 'bookings' }));
@@ -359,6 +398,15 @@ describe('the Coach hand-off', () => {
     expect(scroll.props.keyboardDismissMode).toBe('on-drag');
     expect(scroll.props.keyboardShouldPersistTaps).toBe('handled');
   });
+
+  it('the field grows to three lines at every text size (iOS .lineLimit(1...3) follows Dynamic Type)', async () => {
+    const maxHeight = () => (StyleSheet.flatten(screen.getByTestId('home.coachInput').props.style) as { maxHeight: number }).maxHeight;
+    const view = await render(<TryNewSection onPrompt={() => undefined} />);
+    expect(maxHeight()).toBe(60);
+    await act(async () => setTestFontScale(2));
+    view.rerender(<TryNewSection onPrompt={() => undefined} />);
+    expect(maxHeight()).toBe(120);
+  });
 });
 
 describe('the keyboard leaves on a tap outside the field', () => {
@@ -395,6 +443,82 @@ describe('the keyboard leaves on a tap outside the field', () => {
     expect(dismiss).toHaveBeenCalledTimes(1);
     focused.mockRestore();
     dismiss.mockRestore();
+  });
+});
+
+describe('the keyboard never covers the ask field (edge to edge: the window does not shrink)', () => {
+  type Measure = (callback: (x: number, y: number, width: number, height: number) => void) => void;
+  const keyboardUp = { endCoordinates: { screenX: 0, screenY: 500, width: 360, height: 300 } };
+  let focused: jest.SpyInstance;
+  let measure: jest.SpyInstance;
+  let scrollTo: jest.SpyInstance;
+
+  beforeEach(() => {
+    focused = jest.spyOn(TextInput.prototype as unknown as { isFocused(): boolean }, 'isFocused').mockReturnValue(true);
+    // The field's row, measured on screen: its top at 700 dp, 44 dp tall.
+    measure = jest
+      .spyOn(View.prototype as unknown as { measureInWindow: Measure }, 'measureInWindow')
+      .mockImplementation((callback) => callback(24, 700, 312, 44));
+    scrollTo = jest.spyOn(ScrollView.prototype as unknown as { scrollTo(options: object): void }, 'scrollTo');
+  });
+
+  afterEach(() => {
+    focused.mockRestore();
+    measure.mockRestore();
+    scrollTo.mockRestore();
+  });
+
+  const room = () => StyleSheet.flatten(screen.getByTestId('home.keyboardRoom').props.style) as { height: number };
+
+  it('with the field focused, the page makes room for the keyboard, then scrolls the field above it', async () => {
+    freshHome();
+    serve();
+    await renderHome();
+    const page = screen.getByTestId('home.scroll');
+    expect(room().height).toBe(0);
+    await fireEvent.scroll(page, { nativeEvent: { contentOffset: { x: 0, y: 120 } } });
+
+    await act(async () => {
+      DeviceEventEmitter.emit('keyboardDidShow', keyboardUp);
+    });
+    expect(room().height).toBe(300);
+    // Not before the room is laid out: a scroll then would stop at the old end.
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    await fireEvent(page, 'contentSizeChange', 360, 2400);
+    // The row ends at 744; 16 dp above the keyboard's top (500) is 484: up 260.
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ y: 120 + 260, animated: true });
+
+    await act(async () => {
+      DeviceEventEmitter.emit('keyboardDidHide', { endCoordinates: { screenX: 0, screenY: 800, width: 360, height: 0 } });
+    });
+    expect(room().height).toBe(0);
+  });
+
+  it('a field already clear of the keyboard stays where it is', async () => {
+    measure.mockImplementation((callback: Parameters<Measure>[0]) => callback(24, 300, 312, 44));
+    freshHome();
+    serve();
+    await renderHome();
+    await act(async () => {
+      DeviceEventEmitter.emit('keyboardDidShow', keyboardUp);
+    });
+    await fireEvent(screen.getByTestId('home.scroll'), 'contentSizeChange', 360, 2400);
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("another screen's keyboard leaves Home alone", async () => {
+    focused.mockReturnValue(false);
+    freshHome();
+    serve();
+    await renderHome();
+    await act(async () => {
+      DeviceEventEmitter.emit('keyboardDidShow', keyboardUp);
+    });
+    expect(room().height).toBe(0);
+    await fireEvent(screen.getByTestId('home.scroll'), 'contentSizeChange', 360, 2400);
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 });
 

@@ -1,4 +1,4 @@
-// The hero's greeting line, "Good evening, Lucas.": iOS `HomeView.greeting`
+// The hero's greeting line, "Good evening, Anna.": iOS `HomeView.greeting`
 // and `HomeView.firstName`.
 //
 // The hour is the member's OWN clock (iOS `Calendar.current`): a greeting is

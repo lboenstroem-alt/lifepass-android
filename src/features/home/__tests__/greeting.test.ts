@@ -31,9 +31,9 @@ describe('greetingKey', () => {
 
 describe('firstNameOf', () => {
   it('is the first word of the full name', () => {
-    expect(firstNameOf('Lucas Bönström')).toBe('Lucas');
+    expect(firstNameOf('Anna Jónsdóttir')).toBe('Anna');
     expect(firstNameOf('  Guðrún  Jónsdóttir')).toBe('Guðrún');
-    expect(firstNameOf('Lucas')).toBe('Lucas');
+    expect(firstNameOf('Anna')).toBe('Anna');
   });
 
   it('is null with no name, so Home says "there" / "þú" (never the email)', () => {
@@ -46,7 +46,7 @@ describe('firstNameOf', () => {
   });
 
   it('the avatar letter is the first character, upper case', () => {
-    expect(avatarInitial('lucas')).toBe('L');
+    expect(avatarInitial('anna')).toBe('A');
     expect(avatarInitial('þú')).toBe('Þ');
     expect(avatarInitial('Ægir')).toBe('Æ');
     expect(avatarInitial('')).toBe('');

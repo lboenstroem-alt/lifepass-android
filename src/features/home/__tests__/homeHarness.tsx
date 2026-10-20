@@ -1,7 +1,8 @@
 /**
  * Home on a small navigator for its screen tests: the Home tab's stack (Home,
  * plus stand-ins for the pages it pushes) and stand-in tabs to visit, over
- * the stub server. Location is a fake (a fix the test sets, no system
+ * the stub server; optionally under a root stack with a modal that covers the
+ * tabs (as Plans or a shared sheet does in the app). Location is a fake (a fix the test sets, no system
  * dialog), the weather is Open-Meteo stubbed, and every store starts fresh.
  */
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -35,6 +36,7 @@ function StandIn() {
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
+const Root = createNativeStackNavigator();
 
 function HomeStack() {
   return (
@@ -50,13 +52,31 @@ function HomeStack() {
 
 export const homeNavigation = createNavigationContainerRef<Record<string, object | undefined>>();
 
+function Tabs() {
+  return (
+    <Tab.Navigator screenOptions={{ headerShown: false }}>
+      <Tab.Screen name="Home" component={HomeStack} />
+      <Tab.Screen name="Explore" component={StandIn} />
+    </Tab.Navigator>
+  );
+}
+
 export function HomeApp() {
   return (
     <NavigationContainer ref={homeNavigation}>
-      <Tab.Navigator screenOptions={{ headerShown: false }}>
-        <Tab.Screen name="Home" component={HomeStack} />
-        <Tab.Screen name="Explore" component={StandIn} />
-      </Tab.Navigator>
+      <Tabs />
+    </NavigationContainer>
+  );
+}
+
+/** The tabs as the root stack's `Tabs` screen, with a `Sheet` modal over them. */
+export function HomeAppUnderRoot() {
+  return (
+    <NavigationContainer ref={homeNavigation}>
+      <Root.Navigator screenOptions={{ headerShown: false }}>
+        <Root.Screen name="Tabs" component={Tabs} />
+        <Root.Screen name="Sheet" component={StandIn} options={{ presentation: 'modal' }} />
+      </Root.Navigator>
     </NavigationContainer>
   );
 }
@@ -103,8 +123,8 @@ export function weather(answer: Record<string, unknown> | number): void {
 export function profileJSON(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: MEMBER,
-    email: 'lucas@example.com',
-    fullName: 'Lucas Bönström',
+    email: 'member@example.com',
+    fullName: 'Anna Jónsdóttir',
     locale: 'en',
     kennitalaVerified: true,
     marketingConsent: false,
@@ -142,8 +162,8 @@ export function bookingRow(id: string, startsAt: string, venueName: string): Rec
   };
 }
 
-export async function renderHome() {
-  const view = await render(<HomeApp />);
+export async function renderHome(options: { underRoot?: boolean } = {}) {
+  const view = await render(options.underRoot ? <HomeAppUnderRoot /> : <HomeApp />);
   await settle();
   return view;
 }
