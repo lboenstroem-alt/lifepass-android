@@ -1,61 +1,28 @@
 /**
  * The company-plan context the co-pay banner shows, `GET /company-plans/context`
- * (iOS `AccountView.companyContext` and `loadCompanyContext()`).
+ * (iOS `AccountView.companyContext` and `loadCompanyContext()`), for every
+ * reader in ACCT-3.
  *
  * A store rather than component state: the banner is a slot with no props,
- * and the flows (activation, the Kenni sheet's close, the recovery of a page
+ * and the flows (activation, a Kenni sheet's close, the recovery of a page
  * Android closed the app behind) re-read it from outside any component. The
  * newest read wins; a read that a sign-out overtook is dropped, and the
  * sign-out cleaner in ./register.ts forgets the context (it names the
  * member's employer and what it pays for them).
  *
- * ONE READ, TWO READERS. ACCT-1's Account screen reads the same route for its
- * "Have a company plan?" fallback row (src/features/account/companyContext.ts
- * on its branch, with the same state shape: `context`, `failed`). Once both
- * have merged, this module should re-export that store instead of keeping its
- * own, so the screen and the banner share one read: everything in ACCT-3
- * reads the context through the four exports below and nothing else.
+ * The store itself is ./contextStore: ONE store for the whole Account screen,
+ * ACCT-1's once both packages have merged (that file says how), so the
+ * banner and the screen's "Have a company plan?" fallback row share one read.
  */
 import { useContext, useEffect } from 'react';
 import { NavigationContext } from '@react-navigation/native';
-import { create } from 'zustand';
 
-import { fetchCompanyPlanContext, type CompanyPlanContext } from '../../../supabase/services/companyPlans';
+import type { CompanyPlanContext } from '../../../supabase/services/companyPlans';
 
-export interface CopayContextState {
-  /** The last context read; null before the first answer and after a failed read. */
-  readonly context: CompanyPlanContext | null;
-  /** The last read failed (any error, a 404 from a server without the route included). */
-  readonly failed: boolean;
-}
+import { reloadCopayContext, SCREEN_READS_ON_APPEAR, useCopayContextStore } from './contextStore';
 
-const initialState: CopayContextState = { context: null, failed: false };
-
-export const useCopayContextStore = create<CopayContextState>()(() => initialState);
-
-/** Bumped by every read and by `resetCopayContext`; an older read's answer is dropped. */
-let latestRead = 0;
-
-/** Reads the context (iOS `loadCompanyContext`). Never throws. */
-export async function reloadCopayContext(): Promise<void> {
-  latestRead += 1;
-  const read = latestRead;
-  try {
-    const context = await fetchCompanyPlanContext();
-    if (read !== latestRead) return;
-    useCopayContextStore.setState({ context, failed: false });
-  } catch {
-    // iOS: any failure leaves no banner (and Account offers the web dashboard).
-    if (read !== latestRead) return;
-    useCopayContextStore.setState({ context: null, failed: true });
-  }
-}
-
-/** Forgets the context (sign-out) and drops any read still on its way. */
-export function resetCopayContext(): void {
-  latestRead += 1;
-  useCopayContextStore.setState(initialState, true);
-}
+export { reloadCopayContext, resetCopayContext, useCopayContextStore } from './contextStore';
+export type { CopayContextState } from './contextStore';
 
 /** The context as last read, for code outside React. */
 export function copayContext(): CompanyPlanContext | null {
@@ -72,10 +39,15 @@ export function useCopayContext(): CompanyPlanContext | null {
  * `.task` on AccountView): when it mounts on a focused screen, and again each
  * time the member comes back to it. Outside a navigator (a test, a preview)
  * it reads once, on mount.
+ *
+ * Nothing at all once the Account screen reads the context on every focus
+ * itself (ACCT-1's screen, `SCREEN_READS_ON_APPEAR`): one read per
+ * appearance, as on iOS, never two.
  */
 export function useReloadCopayContextOnAppear(): void {
   const navigation = useContext(NavigationContext);
   useEffect(() => {
+    if (SCREEN_READS_ON_APPEAR) return undefined;
     if (!navigation) {
       void reloadCopayContext();
       return undefined;
