@@ -17,7 +17,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { Kicker, LPText } from '../../../components/ui';
 import { useT } from '../../../i18n';
 import type { CompanyPlanContext } from '../../../supabase/services/companyPlans';
-import { colors, radius } from '../../../theme';
+import { colors, parseColor, radius } from '../../../theme';
 
 import { activationCta } from './copayFlows';
 
@@ -99,6 +99,13 @@ export default function CompanyPlanCard({ context, activating, onActivate, onVer
   return null;
 }
 
+/** `color` at `opacity` (SwiftUI `.opacity(_:)`), from the token so it follows it. */
+function withOpacity(color: string, opacity: number): string {
+  const [r, g, b, a] = parseColor(color);
+  const channel = (value: number) => Math.round(value * 255);
+  return `rgba(${channel(r)},${channel(g)},${channel(b)},${a * opacity})`;
+}
+
 const styles = StyleSheet.create({
   // iOS: VStack spacing 10, padding 16, ink2, corner 14, a rust outline at 40 %.
   card: {
@@ -108,7 +115,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.ink2,
     borderRadius: radius.card,
     borderWidth: 1,
-    borderColor: 'rgba(71,133,194,0.4)', // colors.rust (#4785C2) at 40 %
+    borderColor: withOpacity(colors.rust, 0.4),
   },
   // iOS: 13 pt semibold white on rust, padding 14 by 9, a capsule.
   cta: {
