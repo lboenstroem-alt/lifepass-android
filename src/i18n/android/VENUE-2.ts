@@ -7,8 +7,9 @@
 // - venue2.report.*  "Report review" (owner decision D5, Play's user-generated
 //   content policy). iOS 2.5.6 has no report action yet; the reasons are the
 //   API's (ReviewReportInput.reason).
-// - venue2.a11y.*    what TalkBack says where iOS draws only stars or a heart
-//   (an SF Symbol VoiceOver reads by its image name).
+// - venue2.a11y.*    what TalkBack says where iOS draws only stars (an SF
+//   Symbol VoiceOver reads by its image name). VENUE-2 draws no heart: each
+//   surface that does labels its own.
 import { definePack } from './pack';
 
 export default definePack({
@@ -26,7 +27,6 @@ export default definePack({
     'venue2.a11y.rating': '{count} out of 5 stars',
     'venue2.a11y.average': 'Average rating {average} out of 5',
     'venue2.a11y.distribution': 'Rated {star}: {count}',
-    'venue2.a11y.favourite': 'Favourite',
   },
   is: {
     'venue2.report.action': 'Tilkynna umsögn',
@@ -42,6 +42,5 @@ export default definePack({
     'venue2.a11y.rating': '{count} af 5 stjörnum',
     'venue2.a11y.average': 'Meðaleinkunn {average} af 5',
     'venue2.a11y.distribution': 'Einkunn {star}: {count}',
-    'venue2.a11y.favourite': 'Uppáhald',
   },
 });

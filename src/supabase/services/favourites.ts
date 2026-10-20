@@ -11,6 +11,7 @@ import {
   addFavouriteActivity,
   addFavouriteVenue,
   fetchFavourites,
+  isPremiumFavourite,
   removeFavouriteActivity,
   removeFavouriteVenue,
   type FavouriteActivity,
@@ -58,9 +59,10 @@ export function adaptFavouriteVenue(f: FavouriteVenue): AppVenue {
     totalReviews: 0,
     activities: [],
     reviews: [],
-    // The legacy rows draw a price pill from this: a missing marker is premium,
-    // never "Included" (iOS Venue.inBundle defaults to false).
-    inBundle: f.inBundle ?? false,
+    // The legacy rows draw a price pill from this. A favourite with no marker
+    // is in the bundle, as iOS FavouriteVenue.isPremium reads it
+    // (`!(inBundle ?? true)`); one rule with this package's isPremiumFavourite.
+    inBundle: !isPremiumFavourite(f),
   };
 }
 

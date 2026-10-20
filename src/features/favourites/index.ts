@@ -4,7 +4,8 @@
 // COACH-1. Every hook reads ONE store (./store.ts), so every heart on every
 // screen agrees and a tap shows at once:
 //
-//   const heart = useFavourite(venue.id);
+//   const heart = useFavourite(venue.id);                    // a Coach card, a row
+//   const heart = useFavourite(venue.id, { refresh: true }); // the venue page
 //   <Heart filled={heart.isFavourite} onPress={() => heart.toggle()} />
 //
 //   const saved = useFavourites();          // Saved, the Coach
@@ -16,10 +17,14 @@
 //     flight, and on a failure flips back and raises the "Heads up" alert
 //     (`venue.err.favourite`). Where iOS reverts SILENTLY (the Coach's venue
 //     cards, the Saved suggestions' heart), pass `{ alert: false }`.
-//   - `useFavourite` reads `GET /favourites` when it mounts, as iOS reads the
-//     list every time a venue page or a Coach card appears (there is no
-//     per-venue probe); reads already on their way are joined, so a carousel
-//     of cards costs one read.
+//   - `useFavourite` reads `GET /favourites` once, if nothing has been read
+//     yet: every heart reads the one store, which every tap keeps right. The
+//     venue page passes `{ refresh: true }`, which reads the list again each
+//     time the page mounts, as iOS VenueDetailViewModel.load does (there is
+//     no per-venue probe). iOS's Coach cards never read it at all (CoachView:
+//     `isFavourited` starts false); here they show the store, so a lazy
+//     carousel costs no read once anything has loaded the list. Reads on
+//     their way are always joined.
 //   - `useFavourites` reads once if nothing has been read; a screen that iOS
 //     reloads on every appearance (Saved) calls `refresh()` on focus.
 //   - A failed read just means "not saved" (iOS VenueDetailViewModel).
@@ -127,16 +132,28 @@ export function useFavourites(): FavouritesState {
   );
 }
 
+export interface UseFavouriteOptions {
+  /**
+   * Read the list again when this heart mounts (or its venue changes), not
+   * just once per session: the venue page, which iOS re-reads on every load.
+   * A read already on its way is joined.
+   */
+  readonly refresh?: boolean;
+}
+
 /** One venue's heart. */
-export function useFavourite(venueId: string): FavouriteState {
+export function useFavourite(venueId: string, options: UseFavouriteOptions = {}): FavouriteState {
   const id = venueId.toLowerCase();
+  const refreshOnMount = options.refresh === true;
   const saved = useStore(favouritesStore, (s) => s.savedIds.includes(id));
   const toggling = useStore(favouritesStore, (s) => s.inFlight[id] === true);
   const loading = useStore(favouritesStore, (s) => !s.loaded && s.status !== 'failed');
 
   useEffect(() => {
-    if (id) void favouritesStore.getState().load();
-  }, [id]);
+    if (!id) return;
+    const store = favouritesStore.getState();
+    void (refreshOnMount ? store.load() : store.ensureLoaded());
+  }, [id, refreshOnMount]);
 
   const toggleThis = useCallback((options?: FavouriteToggleOptions) => toggle(id, options), [id]);
   return useMemo(

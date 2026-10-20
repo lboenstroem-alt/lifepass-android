@@ -22,7 +22,7 @@ it('a sign-out forgets the reviews cache, which names the member’s own review'
   loadRegistrations();
   venueReviewsStore.setState({
     byVenue: {
-      v: { status: 'loaded', loaded: true, reviews: [], ownReviewId: 'r-1', error: null },
+      v: { status: 'loaded', loaded: true, reviews: [], ownReviewId: 'r-1', error: null, readAt: 0 },
     },
   });
   await runSignOutCleaners({ memberId: 'member-1' });

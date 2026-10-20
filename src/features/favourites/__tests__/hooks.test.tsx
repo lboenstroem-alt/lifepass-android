@@ -51,8 +51,8 @@ afterEach(async () => {
   favouritesStore.getState().reset();
 });
 
-function Heart({ venueId, testID }: { venueId: string; testID: string }) {
-  const heart = useFavourite(venueId);
+function Heart({ venueId, testID, refresh }: { venueId: string; testID: string; refresh?: boolean }) {
+  const heart = useFavourite(venueId, { refresh });
   return (
     <Pressable
       testID={testID}
@@ -115,6 +115,30 @@ it('reads the list when a heart appears, joining a read on its way', async () =>
   await settle();
   expect(screen.getByTestId('one')).toHaveTextContent('saved');
   expect(api.sentAll('/favourites', 'GET')).toHaveLength(1);
+});
+
+it('a heart that mounts later reads nothing once the list is loaded (a lazy Coach carousel)', async () => {
+  server = [A];
+  const first = await render(<Heart venueId={A} testID="card-1" />);
+  await settle();
+  await first.unmount();
+  await render(<Heart venueId={A} testID="card-2" />);
+  await settle();
+  expect(screen.getByTestId('card-2')).toHaveTextContent('saved');
+  expect(api.sentAll('/favourites', 'GET')).toHaveLength(1);
+});
+
+it('the venue page (refresh) reads the list again every time it mounts, as iOS does', async () => {
+  const first = await render(<Heart venueId={A} testID="page" refresh />);
+  await settle();
+  expect(screen.getByTestId('page')).toHaveTextContent('not saved');
+  await first.unmount();
+  // Saved elsewhere (the website) between two visits.
+  server = [A];
+  await render(<Heart venueId={A} testID="page" refresh />);
+  await settle();
+  expect(screen.getByTestId('page')).toHaveTextContent('saved');
+  expect(api.sentAll('/favourites', 'GET')).toHaveLength(2);
 });
 
 it.each([
