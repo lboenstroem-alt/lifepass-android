@@ -20,7 +20,12 @@ export type ClassSheetOccurrence = ClassOccurrence;
 export interface OpenClassSheetOptions {
   /** A booking landed (confirmed, or accepted and pending): the screen underneath refreshes. */
   readonly onBooked?: () => void;
-  /** The sheet has gone, however it closed. */
+  /**
+   * The sheet has gone, however it closed: called exactly once per opening,
+   * on EVERY close path (its close button, hardware back, a swipe down, and
+   * before a page it opens), and after any `onBooked`. The feed re-reads here
+   * after a booking (iOS `.sheet(item:onDismiss:)`).
+   */
   readonly onDismiss?: () => void;
 }
 

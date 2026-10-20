@@ -4,14 +4,19 @@
  * next-match hint), the filters, the full-schedule sheet, load more, the
  * mode switch, and the session a row hands the class sheet.
  */
+import { NavigationContext } from '@react-navigation/native';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
+import type { ContextType, ReactElement } from 'react';
+import { AccessibilityInfo, AppState, type AppStateStatus, type NativeEventSubscription } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { bottomSheetMock } from '../../../components/ui/testing/bottomSheetMock';
 import { setCurrentLanguage } from '../../../i18n';
+import { classLongDay } from '../../../i18n/format';
 import { locationStore } from '../../../stores/locationStore';
 import ClassesDiscovery from '../ClassesDiscovery';
+import { TICK_MS } from '../feed/classesFeedStore';
 import { isoDay } from '../feed/days';
 import { openClassSheet } from '../sheet';
 import { classJSON, day, HRESS, NEARBY, page, REYKJAVIK } from './feedFixtures';
@@ -52,16 +57,80 @@ afterEach(() => {
 
 const rows = () => screen.queryAllByTestId('classes.row');
 
+/**
+ * Give one of React Native's jest mocks (already a `jest.fn`) another
+ * implementation, and return how to put its own back. A spy's `mockRestore`
+ * would not: on a `jest.fn` it wipes the implementation, and every later test
+ * would get `undefined` from it.
+ */
+function swapMock(fn: unknown, implementation: (...args: never[]) => unknown): () => void {
+  const mock = fn as jest.Mock;
+  const own = mock.getMockImplementation();
+  mock.mockImplementation(implementation as (...args: unknown[]) => unknown);
+  return () => {
+    if (own) mock.mockImplementation(own);
+    else mock.mockReset();
+  };
+}
+
+/** The app's foreground changes, driven by the test. */
+function driveAppState() {
+  const listeners = new Set<(state: AppStateStatus) => void>();
+  const restore = swapMock(AppState.addEventListener, (_type: string, listener: (state: AppStateStatus) => void) => {
+    listeners.add(listener);
+    return { remove: () => void listeners.delete(listener) } as NativeEventSubscription;
+  });
+  return {
+    emit: (state: AppStateStatus) => [...listeners].forEach((listener) => listener(state)),
+    get listening() {
+      return listeners.size;
+    },
+    restore,
+  };
+}
+
+/** The screen around the feed (Explore's tab, Plan's sheet), focused and blurred by the test. */
+function driveNavigation() {
+  let focused = true;
+  const listeners = { focus: new Set<() => void>(), blur: new Set<() => void>() };
+  const navigation = {
+    isFocused: () => focused,
+    addListener: (type: 'focus' | 'blur', listener: () => void) => {
+      listeners[type].add(listener);
+      return () => void listeners[type].delete(listener);
+    },
+  } as unknown as ContextType<typeof NavigationContext>;
+  return {
+    wrap: (element: ReactElement) => <NavigationContext.Provider value={navigation}>{element}</NavigationContext.Provider>,
+    emit: (type: 'focus' | 'blur') => {
+      focused = type === 'focus';
+      listeners[type].forEach((listener) => listener());
+    },
+  };
+}
+
+/** The 30 s heartbeat's callback, as the screen handed it to `setInterval`. */
+function heartbeat(intervals: jest.SpyInstance): () => void {
+  const calls = intervals.mock.calls.filter(([, ms]) => ms === TICK_MS);
+  expect(calls.length).toBeGreaterThan(0);
+  return calls[calls.length - 1]![0] as () => void;
+}
+
 describe('opening the feed', () => {
   it('asks for no location, and lists the classes by day', async () => {
     const tomorrow = day(1, 9);
-    api.on(
-      'GET',
-      '/classes',
-      Reply.delayed(30, page([classJSON({ name: 'Yoga Flow', startsAt: tomorrow }), classJSON({ name: 'Spin', startsAt: day(2, 7) })])),
-    );
+    // Held until the loading state has been seen (a fixed delay races a slow first render).
+    let answer: () => void = () => undefined;
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    api.on('GET', '/classes', async () => {
+      await answered;
+      return page([classJSON({ name: 'Yoga Flow', startsAt: tomorrow }), classJSON({ name: 'Spin', startsAt: day(2, 7) })]);
+    });
     await render(<ClassesDiscovery showsModeToggle />);
     expect(screen.getByTestId('classes.loading')).toBeTruthy();
+    answer();
     await waitFor(() => expect(rows()).toHaveLength(2));
 
     expect(requestLocation).not.toHaveBeenCalled();
@@ -113,6 +182,38 @@ describe('opening the feed', () => {
     expect(api.requests).toHaveLength(1);
     await act(async () => options.onDismiss());
     await waitFor(() => expect(api.requests).toHaveLength(2));
+  });
+
+  it('a booking whose sheet never reports its close still re-reads, once, on the next return', async () => {
+    const app = driveAppState();
+    const nav = driveNavigation();
+    try {
+      api.on('GET', '/classes', page([classJSON({ startsAt: day(1, 9) })]));
+      await render(nav.wrap(<ClassesDiscovery showsModeToggle />));
+      await waitFor(() => expect(rows()).toHaveLength(1));
+      await fireEvent.press(rows()[0]!);
+      const calls = (openClassSheet as jest.Mock).mock.calls;
+      const [, options] = calls[calls.length - 1]!;
+
+      // Booked, and the sheet closed without `onDismiss`: the app comes back.
+      await act(async () => options.onBooked());
+      await act(async () => app.emit('active'));
+      await waitFor(() => expect(api.requests).toHaveLength(2));
+      // A late `onDismiss`, or another return, re-reads nothing more.
+      await act(async () => options.onDismiss());
+      await act(async () => app.emit('active'));
+      expect(api.requests).toHaveLength(2);
+
+      // The same through the screen coming back into focus.
+      await fireEvent.press(rows()[0]!);
+      const [, again] = calls[calls.length - 1]!;
+      await act(async () => again.onBooked());
+      await act(async () => nav.emit('blur'));
+      await act(async () => nav.emit('focus'));
+      await waitFor(() => expect(api.requests).toHaveLength(3));
+    } finally {
+      app.restore();
+    }
   });
 
   it('a row of a kind this build does not know cannot be pressed', async () => {
@@ -191,6 +292,144 @@ describe('states', () => {
     await fireEvent.press(screen.getByTestId('classes.load_more'));
     await waitFor(() => expect(rows()).toHaveLength(2));
     expect(screen.queryByTestId('classes.load_more')).toBeNull();
+  });
+});
+
+describe('TalkBack hears the next match', () => {
+  let screenReader = true;
+  const screenReaderOn = AccessibilityInfo.isScreenReaderEnabled as jest.Mock;
+  const spoken = AccessibilityInfo.announceForAccessibility as jest.Mock;
+  let restore: (() => void)[] = [];
+  let intervals: jest.SpyInstance;
+
+  beforeEach(() => {
+    screenReader = true;
+    restore = [
+      swapMock(AccessibilityInfo.isScreenReaderEnabled, async () => screenReader),
+      swapMock(AccessibilityInfo.announceForAccessibility, () => undefined),
+    ];
+    intervals = jest.spyOn(globalThis, 'setInterval');
+  });
+
+  afterEach(() => {
+    restore.forEach((undo) => undo());
+    intervals.mockRestore();
+  });
+
+  const today = () => isoDay(new Date());
+  /** An empty selected day; `later` answers the look-ahead. */
+  const serve = (later: () => ReturnType<typeof page>) =>
+    api.on('GET', '/classes', (r) => (r.query.start === today() ? page([]) : later()));
+  const openOnEmptyPilatesDay = () => render(<ClassesDiscovery showsModeToggle={false} initialCategory="pilates" initialDate={today()} />);
+
+  it('the match, once: not while still looking, not again on a tick', async () => {
+    const match = day(3, 6);
+    serve(() => page([classJSON({ startsAt: match })]));
+    await openOnEmptyPilatesDay();
+    await waitFor(() => expect(spoken).toHaveBeenCalledTimes(1));
+    expect(spoken).toHaveBeenCalledWith(`No Pilates today. Next: ${classLongDay(match, 'en')} at 06:00, Hress.`);
+
+    await act(async () => heartbeat(intervals)());
+    await act(async () => undefined);
+    expect(spoken).toHaveBeenCalledTimes(1);
+  });
+
+  it('the "nothing" sentence when the fortnight is empty', async () => {
+    serve(() => page([]));
+    await openOnEmptyPilatesDay();
+    await waitFor(() => expect(spoken).toHaveBeenCalledTimes(1));
+    expect(spoken).toHaveBeenCalledWith('No Pilates in the next two weeks.');
+  });
+
+  it('the error that replaced the hint when the look-ahead fails', async () => {
+    serve(() => Reply.problem(500, 'internal_error'));
+    await openOnEmptyPilatesDay();
+    await waitFor(() => expect(spoken).toHaveBeenCalledTimes(1));
+    expect(spoken).toHaveBeenCalledWith('Could not load classes. Please try again.');
+  });
+
+  it('nothing with TalkBack off', async () => {
+    screenReader = false;
+    serve(() => page([classJSON({ startsAt: day(3, 6) })]));
+    await openOnEmptyPilatesDay();
+    await waitFor(() => expect(screen.getByTestId('classes.next_match.show')).toBeTruthy());
+    await act(async () => undefined);
+    expect(screenReaderOn).toHaveBeenCalled();
+    expect(spoken).not.toHaveBeenCalled();
+  });
+});
+
+describe('the heartbeat', () => {
+  /** Only the clock is faked: the reads and the waits run on real timers. */
+  const fakeClockOnly = (now: Date) =>
+    jest.useFakeTimers({
+      now,
+      doNotFake: [
+        'hrtime',
+        'nextTick',
+        'performance',
+        'queueMicrotask',
+        'requestAnimationFrame',
+        'cancelAnimationFrame',
+        'requestIdleCallback',
+        'cancelIdleCallback',
+        'setImmediate',
+        'clearImmediate',
+        'setInterval',
+        'clearInterval',
+        'setTimeout',
+        'clearTimeout',
+      ],
+    });
+
+  it('ticks every 30 s and on a return to the app, only while the screen is in front', async () => {
+    const start = new Date();
+    fakeClockOnly(start);
+    const intervals = jest.spyOn(globalThis, 'setInterval');
+    const cleared = jest.spyOn(globalThis, 'clearInterval');
+    const app = driveAppState();
+    const nav = driveNavigation();
+    try {
+      api.on(
+        'GET',
+        '/classes',
+        page([
+          classJSON({ name: 'Soon', startsAt: new Date(start.getTime() + 60_000) }),
+          classJSON({ name: 'Later', startsAt: day(1, 9, start) }),
+        ]),
+      );
+      await render(nav.wrap(<ClassesDiscovery showsModeToggle />));
+      await waitFor(() => expect(rows()).toHaveLength(2));
+      const firstTick = heartbeat(intervals);
+      const firstTimer = intervals.mock.results[intervals.mock.calls.findIndex(([callback]) => callback === firstTick)]!.value;
+
+      // Behind another screen: the heartbeat stops and a return to the app
+      // ticks nothing, so "Soon" stays though it has started.
+      await act(async () => nav.emit('blur'));
+      expect(cleared).toHaveBeenCalledWith(firstTimer);
+      expect(app.listening).toBe(0);
+      jest.setSystemTime(start.getTime() + 90_000);
+      await act(async () => app.emit('active'));
+      expect(rows()).toHaveLength(2);
+
+      // In front again: a new heartbeat, and a return to the app ticks at once.
+      await act(async () => nav.emit('focus'));
+      expect(heartbeat(intervals)).not.toBe(firstTick);
+      expect(app.listening).toBe(1);
+      await act(async () => app.emit('active'));
+      expect(rows()).toHaveLength(1);
+      expect(screen.queryByText('Soon')).toBeNull();
+
+      // The 30 s beat does the same for a class that starts later.
+      jest.setSystemTime(day(1, 10, start));
+      await act(async () => heartbeat(intervals)());
+      expect(rows()).toHaveLength(0);
+    } finally {
+      app.restore();
+      intervals.mockRestore();
+      cleared.mockRestore();
+      jest.useRealTimers();
+    }
   });
 });
 

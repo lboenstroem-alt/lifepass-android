@@ -94,15 +94,31 @@ export default function ClassesDiscovery({ initialCategory, initialDate, showsMo
   /** Set when the class sheet booked something: the feed re-reads once the sheet has gone. */
   const bookedInSheet = useRef(false);
 
+  /**
+   * The re-read after a booking in the class sheet, once (iOS reloads in
+   * `.sheet(item:onDismiss:)` when `bookedInSheet`). The sheet's `onDismiss`
+   * is the normal way in; the screen coming back into focus and the app
+   * returning to the front are a safety net, so a close path that never
+   * reports cannot leave a booked class's chip and spots stale. True when it
+   * re-read.
+   */
+  const rereadAfterBooking = useCallback((): boolean => {
+    if (!bookedInSheet.current) return false;
+    bookedInSheet.current = false;
+    void store.getState().reload();
+    return true;
+  }, [store]);
+
   // One source of "where the member is" for the whole screen.
   useEffect(() => {
     store.getState().setFix(granted);
   }, [store, granted]);
 
-  // The first load (again on a return, if it failed or never ran).
+  // The first load (again on a return, if it failed or never ran). A return
+  // after a booking re-reads instead: one GET, not two.
   useEffect(() => {
-    if (focused) void store.getState().loadInitial();
-  }, [store, focused]);
+    if (focused && !rereadAfterBooking()) void store.getState().loadInitial();
+  }, [store, focused, rereadAfterBooking]);
 
   // The 30 s heartbeat while the screen is in front: started classes drop
   // off, the quick days roll at midnight, a stale day snaps back. A return
@@ -111,13 +127,17 @@ export default function ClassesDiscovery({ initialCategory, initialDate, showsMo
     if (!focused) return;
     const timer = setInterval(() => store.getState().tick(), TICK_MS);
     const subscription = AppState.addEventListener('change', (next) => {
-      if (next === 'active') store.getState().tick();
+      if (next !== 'active') return;
+      // A tick's own reload (a stale day) is superseded by the re-read
+      // before its fetch runs, so this still costs one GET.
+      store.getState().tick();
+      rereadAfterBooking();
     });
     return () => {
       clearInterval(timer);
       subscription.remove();
     };
-  }, [store, focused]);
+  }, [store, focused, rereadAfterBooking]);
 
   useEffect(() => () => store.getState().dispose(), [store]);
 
@@ -180,14 +200,10 @@ export default function ClassesDiscovery({ initialCategory, initialDate, showsMo
         onBooked: () => {
           bookedInSheet.current = true;
         },
-        onDismiss: () => {
-          if (!bookedInSheet.current) return;
-          bookedInSheet.current = false;
-          void store.getState().reload();
-        },
+        onDismiss: () => void rereadAfterBooking(),
       });
     },
-    [store],
+    [rereadAfterBooking],
   );
 
   const groups = selectDayGroups(state);
