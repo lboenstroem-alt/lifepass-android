@@ -17,6 +17,7 @@ import { useAppStore } from '../../../stores/appStore';
 import { endRetryEpisodesExcept } from '../../../supabase/services/companyPlans';
 
 import { reloadCopayContext, resetCopayContext } from './contextSource';
+import { forgetCopayFlows } from './copayFlows';
 
 /** The store subscription below, once per process. */
 let unsubscribeEpisodes: (() => void) | null = null;
@@ -31,10 +32,14 @@ export function installCopayHooks(): void {
    * Sign-out: the context names the member's employer and what it pays for
    * them, and a dunning episode's key is theirs. The next person to sign in on
    * this phone sees neither, and never replays the last member's payment page.
+   * The buttons are theirs too: a flow of the last member's still settling
+   * leaves "Processing…" behind on neither. (Once ACCT-1's store is the
+   * context store, its own cleaner resets it as well; twice is harmless.)
    */
   registerSignOutCleaner('account.copay', () => {
     resetCopayContext();
     endRetryEpisodesExcept(null);
+    forgetCopayFlows();
   });
 
   /**
@@ -54,7 +59,8 @@ export function installCopayHooks(): void {
    * seen on the next launch). iOS clears its key only after its own settle;
    * here any read counts, so a plan cured behind the app's back and past due
    * again a month later never reuses last month's key (and replays last
-   * month's page).
+   * month's page). It also ends with the Account visit, as iOS's key ends
+   * with its AccountView (copayFlows `useRetryEpisodeVisit`).
    */
   if (!unsubscribeEpisodes) {
     unsubscribeEpisodes = useAppStore.subscribe((state, previous) => {

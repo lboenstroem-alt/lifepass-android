@@ -15,14 +15,16 @@ import { stubApiClientPerTest } from '../../../../api/testing';
 import { decodeSubscription } from '../../../../api/subscriptions';
 import { DialogHost, dismissAllDialogs } from '../../../../components/ui/Dialog';
 import { lookup, setCurrentLanguage } from '../../../../i18n';
-import { closeKenniSheetRequest, useKenniSheetRequest } from '../../../kenni';
+import { closeKenniSheetRequest, openKenniSheet, useKenniSheetRequest } from '../../../kenni';
+import { runSignOutCleaners } from '../../../../app/signOut';
 import { flush, freshPaymentsPerTest, MEMBER_A, signIn } from '../../../../payments/__tests__/paymentsHarness';
 import { useAppStore } from '../../../../stores/appStore';
 import { PLUS_SUBSCRIPTION } from '../../../../stores/__tests__/storeHarness';
 import { resetRetryEpisodesForTests } from '../../../../supabase/services/companyPlans';
 import CompanyPlanBanner from '../../slots/CompanyPlanBanner';
 import PastDueFix from '../../slots/PastDueFix';
-import { resetCopayContext } from '../contextSource';
+import { reloadCopayContext, resetCopayContext } from '../contextSource';
+import { SCREEN_READS_ON_APPEAR } from '../contextStore';
 import { resetCopayBusyForTests, useCopayBusy } from '../copayFlows';
 import { installCopayHooks } from '../register';
 
@@ -64,6 +66,11 @@ async function settle(): Promise<void> {
   await act(() => flush(20));
 }
 
+/**
+ * Account appears with the banner on it. The appearance read is the
+ * banner's own until ACCT-1's screen makes it (copay/contextStore); then the
+ * screen's focus read is stood in for here, so these tests hold either way.
+ */
 async function showBanner(): Promise<void> {
   await render(
     <>
@@ -71,6 +78,7 @@ async function showBanner(): Promise<void> {
       <DialogHost />
     </>,
   );
+  if (SCREEN_READS_ON_APPEAR) await act(() => reloadCopayContext());
   await settle();
 }
 
@@ -169,6 +177,42 @@ describe('the company-plan banner', () => {
     expect(screen.getByTestId('copay.banner.activation')).toBeTruthy();
   });
 
+  it('a Kenni sheet another part of Account opened (the identity row) re-reads the context when it closes', async () => {
+    answerContext({ pendingInvite: { companyName: 'Acme ehf.' }, pendingActivation: null });
+    await showBanner();
+    expect(api.sentAll('/company-plans/context')).toHaveLength(1);
+
+    const identityRowClosed = jest.fn();
+    await act(async () => openKenniSheet({ bodyKey: 'kenni.body', onClose: identityRowClosed }));
+    await settle();
+    expect(api.sentAll('/company-plans/context')).toHaveLength(1);
+
+    // Verified there: the claim turned the invitation into a plan to accept.
+    answerContext({ pendingInvite: null, pendingActivation: activationJSON });
+    await act(async () => closeKenniSheetRequest());
+    await settle();
+    expect(identityRowClosed).toHaveBeenCalledTimes(1);
+    expect(api.sentAll('/company-plans/context')).toHaveLength(2);
+    expect(screen.getByTestId('copay.banner.activation')).toBeTruthy();
+  });
+
+  it('a Kenni sheet dropped by a sign-out reads nothing', async () => {
+    answerContext({ pendingInvite: { companyName: 'Acme ehf.' }, pendingActivation: null });
+    const { result } = await renderHook(() => useKenniSheetRequest());
+    await showBanner();
+    await act(async () => openKenniSheet({ bodyKey: 'kenni.body', onClose: () => undefined }));
+    await settle();
+    expect(result.current).not.toBeNull();
+    // The app state is cleared before the cleaners run (src/app/signOut.ts).
+    await act(async () => {
+      useAppStore.setState({ isAuthenticated: false, userId: null, profile: null });
+      await runSignOutCleaners({ memberId: MEMBER_A });
+    });
+    await settle();
+    expect(result.current).toBeNull();
+    expect(api.sentAll('/company-plans/context')).toHaveLength(1);
+  });
+
   it('nothing to show, or a read that failed: nothing drawn', async () => {
     answerContext({ pendingInvite: null, pendingActivation: null });
     await showBanner();
@@ -178,7 +222,7 @@ describe('the company-plan banner', () => {
     expect(screen.toJSON()).toBeNull();
   });
 
-  it('is read each time the screen it sits on appears', async () => {
+  (SCREEN_READS_ON_APPEAR ? it.skip : it)('is read each time the screen it sits on appears', async () => {
     answerContext({ pendingInvite: { companyName: 'Acme ehf.' }, pendingActivation: null });
     const Stack = createNativeStackNavigator();
     function Account() {
@@ -219,6 +263,15 @@ describe('the company-plan banner', () => {
   });
 });
 
+describe('the appearance read, once the Account screen makes it', () => {
+  (SCREEN_READS_ON_APPEAR ? it : it.skip)('the banner reads nothing on its own: one read per appearance, the screen’s', async () => {
+    answerContext({ pendingInvite: { companyName: 'Acme ehf.' }, pendingActivation: null });
+    await render(<CompanyPlanBanner />);
+    await settle();
+    expect(api.sentAll('/company-plans/context')).toHaveLength(0);
+  });
+});
+
 describe('Fix payment', () => {
   function holdSubscription(json: Record<string, unknown>): void {
     useAppStore.setState({ subscription: decodeSubscription(json), subscriptionLoaded: true });
@@ -230,6 +283,28 @@ describe('Fix payment', () => {
     expect(screen.queryByTestId('account.pastDue.fix')).toBeNull();
     await act(async () => holdSubscription({ ...PLUS_SUBSCRIPTION, status: 'past_due' }));
     expect(screen.getByRole('button', { name: lookup('account.past_due_cta', 'en') })).toBeTruthy();
+  });
+
+  it('a new Account visit gets a new key; re-taps within one visit keep it', async () => {
+    holdSubscription({ ...PLUS_SUBSCRIPTION, status: 'past_due' });
+    openAuthSession.mockResolvedValue({ type: 'dismiss' } as WebBrowser.WebBrowserAuthSessionResult);
+    api.on('POST', '/company-plans/retry-payment', Reply.ok({ checkoutUrl: 'https://pay.kling.is/c/retry', shareIsk: 4_900 }, 201));
+    api.on('GET', '/subscriptions', Reply.ok({ ...PLUS_SUBSCRIPTION, status: 'past_due' }));
+
+    const first = await render(<PastDueFix />);
+    await fireEvent.press(screen.getByTestId('account.pastDue.fix'));
+    await settle();
+    await fireEvent.press(screen.getByTestId('account.pastDue.fix'));
+    await settle();
+    await act(async () => first.unmount());
+
+    await render(<PastDueFix />);
+    await fireEvent.press(screen.getByTestId('account.pastDue.fix'));
+    await settle();
+    const keys = api.sentAll('/company-plans/retry-payment').map((r) => r.headers['idempotency-key']);
+    expect(keys).toHaveLength(3);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
   });
 
   it('reads "Processing…" until the payment is confirmed, in Icelandic too', async () => {

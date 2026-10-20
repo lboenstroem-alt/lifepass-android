@@ -162,9 +162,9 @@ describe('activation', () => {
 describe('the dunning episode', () => {
   const checkout = { checkoutUrl: 'https://pay.kling.is/c/retry', shareIsk: 4_900, externalSessionId: SESSION };
 
-  it('sends the subscription id lower case, under the episode key', async () => {
+  it('sends the subscription id lower case, under the key the caller chose', async () => {
     api.on('POST', '/company-plans/retry-payment', Reply.ok(checkout, 201));
-    await expect(retryCopayPayment(SUBSCRIPTION)).resolves.toEqual(checkout);
+    await expect(retryCopayPayment(SUBSCRIPTION, retryEpisodeKey(SUBSCRIPTION))).resolves.toEqual(checkout);
     const sent = expectSentToMatchContract('POST', '/company-plans/retry-payment');
     expect(sent.body).toEqual({ subscriptionId: SUBSCRIPTION.toLowerCase() });
     expect(sent.headers['idempotency-key']).toBe(retryEpisodeKey(SUBSCRIPTION));
@@ -172,16 +172,26 @@ describe('the dunning episode', () => {
 
   it('two taps in one episode send the same key; a cured plan starts a new one', async () => {
     api.on('POST', '/company-plans/retry-payment', Reply.ok(checkout, 201));
-    await retryCopayPayment(SUBSCRIPTION);
-    await retryCopayPayment(SUBSCRIPTION.toLowerCase());
+    await retryCopayPayment(SUBSCRIPTION, retryEpisodeKey(SUBSCRIPTION));
+    await retryCopayPayment(SUBSCRIPTION.toLowerCase(), retryEpisodeKey(SUBSCRIPTION.toLowerCase()));
     const keys = api.sentAll('/company-plans/retry-payment').map((r) => r.headers['idempotency-key']);
     expect(keys[0]).toBeTruthy();
     expect(keys[1]).toBe(keys[0]);
 
     endRetryEpisode(SUBSCRIPTION);
     expect(hasRetryEpisode(SUBSCRIPTION)).toBe(false);
-    await retryCopayPayment(SUBSCRIPTION);
+    await retryCopayPayment(SUBSCRIPTION, retryEpisodeKey(SUBSCRIPTION));
     expect(api.sentAll('/company-plans/retry-payment')[2]!.headers['idempotency-key']).not.toBe(keys[0]);
+  });
+
+  it('with no key, a fresh attempt that joins no episode (only Account’s flow keeps one)', async () => {
+    api.on('POST', '/company-plans/retry-payment', Reply.ok(checkout, 201));
+    await retryCopayPayment(SUBSCRIPTION);
+    await retryCopayPayment(SUBSCRIPTION);
+    const keys = api.sentAll('/company-plans/retry-payment').map((r) => r.headers['idempotency-key']);
+    expect(keys[0]).toBeTruthy();
+    expect(keys[1]).not.toBe(keys[0]);
+    expect(hasRetryEpisode(SUBSCRIPTION)).toBe(false);
   });
 
   it('ends every episode but the past-due one', () => {

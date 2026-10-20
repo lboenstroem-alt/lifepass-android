@@ -36,6 +36,7 @@ import {
   fixPastDuePayment,
   resetCopayBusyForTests,
   useCopayBusy,
+  useRetryEpisodeVisit,
 } from '../copayFlows';
 import { installCopayHooks } from '../register';
 
@@ -79,6 +80,22 @@ function holdSubscription(json: Record<string, unknown> | null): void {
 
 async function settle(): Promise<void> {
   await act(() => flush(20));
+}
+
+/** An Account visit showing "Fix payment" (the slot mounts this); unmount() is leaving Account. */
+async function openAccountVisit(): Promise<{ unmount: () => void }> {
+  return renderHook(() => useRetryEpisodeVisit());
+}
+
+/** Confirms that answer only once `release` is called (a page whose settle is still running). */
+function holdConfirm(): () => void {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  api.on('POST', '/payments/checkout-sessions/confirm', async () => {
+    await gate;
+    return Reply.ok({ status: 'processing' });
+  });
+  return () => release();
 }
 
 beforeEach(() => {
@@ -266,6 +283,78 @@ describe('activating a company plan', () => {
     await act(() => activateCopayPlan());
     expect(api.sentAll('/company-plans/activate')).toHaveLength(0);
   });
+
+  it('while another hosted page is up, no session is minted for a page that cannot open', async () => {
+    holdContext({ pendingActivation: activationJSON });
+    holdSubscription(PAST_DUE);
+    api.on('POST', '/company-plans/retry-payment', Reply.ok({ checkoutUrl: 'https://pay.kling.is/c/retry', shareIsk: 4_900 }, 201));
+    let closePage: (value: WebBrowser.WebBrowserAuthSessionResult) => void = () => undefined;
+    openAuthSession.mockImplementationOnce(() => new Promise((resolve) => (closePage = resolve)));
+    const retry = fixPastDuePayment();
+    await settle();
+    expect(openAuthSession).toHaveBeenCalledTimes(1);
+
+    await act(() => activateCopayPlan());
+    expect(api.sentAll('/company-plans/activate')).toHaveLength(0);
+    expect(useCopayBusy.getState().activating).toBe(false);
+
+    await act(async () => closePage(DISMISSED));
+    await act(() => retry);
+  });
+
+  it('F8 busy (another payment still settling): the state is read again, and a plan still waiting says the tap did nothing', async () => {
+    holdContext({ pendingActivation: activationJSON });
+    holdSubscription(PAST_DUE);
+    api.on('POST', '/company-plans/retry-payment', Reply.ok({ checkoutUrl: 'https://pay.kling.is/c/retry', shareIsk: 4_900, externalSessionId: SESSION }, 201));
+    api.on('GET', '/subscriptions', Reply.ok(PAST_DUE));
+    api.on('GET', '/company-plans/context', Reply.ok({ pendingActivation: activationJSON }));
+    api.on(
+      'POST',
+      '/company-plans/activate',
+      Reply.ok({ kind: 'checkout', checkoutUrl: 'https://pay.kling.is/c/copay', shareIsk: 4_900, externalSessionId: SESSION }, 201),
+    );
+    const release = holdConfirm();
+    openAuthSession.mockResolvedValue(DISMISSED);
+    await render(<DialogHost />);
+    const retry = fixPastDuePayment();
+    await settle();
+    expect(api.sentAll('/payments/checkout-sessions/confirm')).toHaveLength(1);
+
+    await act(() => activateCopayPlan());
+    await settle();
+    expect(openAuthSession).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(lookup('error.generic', 'en'))).toBeTruthy();
+    expect(api.sentAll('/company-plans/context')).toHaveLength(1);
+    expect(useCopayBusy.getState().activating).toBe(false);
+
+    release();
+    await act(() => retry);
+  });
+
+  it('F8 busy, but the plan turns out to be there already: nothing is said', async () => {
+    holdContext({ pendingActivation: activationJSON });
+    holdSubscription(PAST_DUE);
+    api.on('POST', '/company-plans/retry-payment', Reply.ok({ checkoutUrl: 'https://pay.kling.is/c/retry', shareIsk: 4_900, externalSessionId: SESSION }, 201));
+    api.on('GET', '/subscriptions', Reply.ok(PAST_DUE));
+    api.on(
+      'POST',
+      '/company-plans/activate',
+      Reply.ok({ kind: 'checkout', checkoutUrl: 'https://pay.kling.is/c/copay', shareIsk: 4_900, externalSessionId: SESSION }, 201),
+    );
+    const release = holdConfirm();
+    openAuthSession.mockResolvedValue(DISMISSED);
+    await render(<DialogHost />);
+    const retry = fixPastDuePayment();
+    await settle();
+
+    await act(() => activateCopayPlan());
+    await settle();
+    expect(screen.queryByText(lookup('error.generic', 'en'))).toBeNull();
+    expect(copayContext()).toEqual({ pendingInvite: null, pendingActivation: null });
+
+    release();
+    await act(() => retry);
+  });
 });
 
 describe('fixing a past-due payment', () => {
@@ -279,6 +368,7 @@ describe('fixing a past-due payment', () => {
   });
 
   it('two taps in one episode send the same key; once cured, the next episode has a new key', async () => {
+    await openAccountVisit();
     api.on('GET', '/subscriptions', Reply.ok(PAST_DUE));
     await act(() => fixPastDuePayment());
     await act(() => fixPastDuePayment());
@@ -301,6 +391,61 @@ describe('fixing a past-due payment', () => {
     expect(keys).toHaveLength(4);
     expect(keys[2]).toBe(first);
     expect(keys[3]).not.toBe(first);
+  });
+
+  it('leaving Account ends the episode: the next visit sends a new key (iOS: a new AccountView, a new key)', async () => {
+    api.on('GET', '/subscriptions', Reply.ok(PAST_DUE));
+    const visit = await openAccountVisit();
+    await act(() => fixPastDuePayment());
+    await act(() => fixPastDuePayment());
+    expect(hasRetryEpisode(PLUS_SUBSCRIPTION.id)).toBe(true);
+
+    // The page was closed unpaid; the member leaves Account and comes back days later.
+    await act(async () => visit.unmount());
+    expect(hasRetryEpisode(PLUS_SUBSCRIPTION.id)).toBe(false);
+    await openAccountVisit();
+    await act(() => fixPastDuePayment());
+    const [first, second, third] = api.sentAll('/company-plans/retry-payment').map((r) => r.headers['idempotency-key']);
+    expect(second).toBe(first);
+    expect(third).toBeTruthy();
+    expect(third).not.toBe(first);
+  });
+
+  it('leaving Account while the payment is still settling ends the episode once it is done', async () => {
+    api.on('GET', '/subscriptions', Reply.ok(PAST_DUE));
+    const release = holdConfirm();
+    const visit = await openAccountVisit();
+    const running = fixPastDuePayment();
+    await settle();
+    await act(async () => visit.unmount());
+    // Still in use by the payment that is settling.
+    expect(hasRetryEpisode(PLUS_SUBSCRIPTION.id)).toBe(true);
+    release();
+    await act(() => running);
+    expect(hasRetryEpisode(PLUS_SUBSCRIPTION.id)).toBe(false);
+  });
+
+  it('F8 busy (another payment still settling) and still past due: says the tap did nothing', async () => {
+    holdContext({ pendingActivation: activationJSON });
+    api.on('GET', '/subscriptions', Reply.ok(PAST_DUE));
+    api.on(
+      'POST',
+      '/company-plans/activate',
+      Reply.ok({ kind: 'checkout', checkoutUrl: 'https://pay.kling.is/c/copay', shareIsk: 4_900, externalSessionId: SESSION }, 201),
+    );
+    const release = holdConfirm();
+    await render(<DialogHost />);
+    const activating = activateCopayPlan();
+    await settle();
+
+    await act(() => fixPastDuePayment());
+    await settle();
+    expect(openAuthSession).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(lookup('error.generic', 'en'))).toBeTruthy();
+    expect(useCopayBusy.getState().retrying).toBe(false);
+
+    release();
+    await act(() => activating);
   });
 
   it('closing the tab with no link at all still confirms the session, then re-reads the plan', async () => {
@@ -365,6 +510,26 @@ describe('the session hooks', () => {
     await runSignOutCleaners({ memberId: MEMBER_A });
     expect(copayContext()).toBeNull();
     expect(hasRetryEpisode(PLUS_SUBSCRIPTION.id)).toBe(false);
+  });
+
+  it('sign-out frees the buttons at once; the last member’s flow ending later leaves the next member’s alone', async () => {
+    holdSubscription(PAST_DUE);
+    api.on('GET', '/subscriptions', Reply.ok(PAST_DUE));
+    api.on('POST', '/company-plans/retry-payment', Reply.ok({ checkoutUrl: 'https://pay.kling.is/c/retry', shareIsk: 4_900, externalSessionId: SESSION }, 201));
+    const release = holdConfirm();
+    openAuthSession.mockResolvedValue(DISMISSED);
+    const running = fixPastDuePayment();
+    await settle();
+    expect(useCopayBusy.getState().retrying).toBe(true);
+
+    await act(() => runSignOutCleaners({ memberId: MEMBER_A }));
+    expect(useCopayBusy.getState()).toEqual({ activating: false, retrying: false });
+
+    // The next member's own flow is running when the last one's ends.
+    useCopayBusy.setState({ retrying: true });
+    release();
+    await act(() => running);
+    expect(useCopayBusy.getState().retrying).toBe(true);
   });
 
   it('an episode ends as soon as any read shows the plan no longer past due', () => {

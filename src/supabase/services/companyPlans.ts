@@ -13,9 +13,9 @@
  * - `POST /company-plans/activate`: accept it. A FRESH Idempotency-Key per tap:
  *   reusing one would replay a Kling URL that may be dead by now.
  * - `POST /company-plans/retry-payment`: self-cure a past-due co-pay share.
- *   ONE key per dunning episode (`retryEpisodeKey`), the opposite rule: a
- *   re-tap must replay the SAME payable Kling session, never mint a second
- *   one the member could pay beside the first.
+ *   ONE key per dunning episode (`retryEpisodeKey`, passed by Account's
+ *   flow), the opposite rule: a re-tap must replay the SAME payable Kling
+ *   session, never mint a second one the member could pay beside the first.
  *
  * Decoding follows iOS's `Decodable` types: every member iOS requires is
  * required here, and a body that does not decode fails the call (the client
@@ -238,8 +238,12 @@ export function decodeCopayRetry(data: unknown): CopayRetry {
 /**
  * The key of the dunning episode each past-due subscription is in, by
  * subscription id (lower case). In memory only, as on iOS (AccountView's
- * `retryIdempotencyKey`): an episode outlives the Account screen but not the
- * process, the sign-out (Account's copay register clears it) or the cure.
+ * `@State retryIdempotencyKey`), and no longer-lived than iOS's: an episode
+ * ends with the Account visit that started it (Account's copay flows end it
+ * when the screen goes, see `useRetryEpisodeVisit`), at the cure, at
+ * sign-out (Account's copay register) and with the process. A key kept
+ * longer would replay a Kling page that has expired by now (backend
+ * docs/10_COPAY_COMPANY_PLANS.md, "stale-checkout dead-end").
  */
 const retryEpisodes = new Map<string, string>();
 
@@ -278,8 +282,11 @@ export function hasRetryEpisode(subscriptionId: string): boolean {
 
 /**
  * Self-cures a past-due CO-PAY subscription: the server mints a Kling hosted
- * checkout for the overdue share (or replays the episode's). The key defaults
- * to the episode's (`retryEpisodeKey`), never a fresh one.
+ * checkout for the overdue share (or replays the one minted under the same
+ * key). The caller chooses the key, as on iOS (`SubscriptionService
+ * .retryCopayPayment(subscriptionId:idempotencyKey:)`): Account's flow
+ * passes its episode's (`retryEpisodeKey`). Without one the call is a fresh
+ * attempt; it never joins an episode no screen will end.
  *
  * A personal (Kling-billed) past-due plan is refused with
  * `copay_subscription_not_found`: Kling's own dunning retries those, so the
@@ -289,7 +296,7 @@ export function hasRetryEpisode(subscriptionId: string): boolean {
  */
 export function retryCopayPayment(
   subscriptionId: string,
-  idempotencyKey: string = retryEpisodeKey(subscriptionId),
+  idempotencyKey: string = newIdempotencyKey(),
 ): Promise<CopayRetry> {
   return apiPost<CopayRetry>(
     '/company-plans/retry-payment',

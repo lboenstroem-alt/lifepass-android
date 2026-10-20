@@ -6,7 +6,9 @@
  * The button only: the card above it says why access is paused
  * (`account.past_due_body`, ACCT-1's). A tap pays the overdue share on the
  * hosted page under the dunning episode's key (copay/copayFlows); it reads
- * "Processing…" until the payment is confirmed.
+ * "Processing…" until the payment is confirmed. The episode lasts as long as
+ * this Account visit (`useRetryEpisodeVisit`), as iOS's key lasts as long as
+ * its AccountView.
  */
 import { Pressable, StyleSheet } from 'react-native';
 
@@ -15,10 +17,11 @@ import { LPText } from '../../../components/ui';
 import { useT } from '../../../i18n';
 import { useAppStore } from '../../../stores/appStore';
 import { colors, radius } from '../../../theme';
-import { fixPastDuePayment, useCopayBusy } from '../copay/copayFlows';
+import { fixPastDuePayment, useCopayBusy, useRetryEpisodeVisit } from '../copay/copayFlows';
 import '../copay/register';
 
 export default function PastDueFix() {
+  useRetryEpisodeVisit();
   const { t } = useT();
   const pastDue = useAppStore((state) => isSubscriptionPastDue(state.subscription));
   const retrying = useCopayBusy((state) => state.retrying);

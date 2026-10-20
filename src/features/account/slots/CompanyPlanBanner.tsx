@@ -4,17 +4,25 @@
  * invitation (iOS `AccountView.companyPlanBanner`). Nothing when neither
  * applies, or while the context has not loaded or failed to.
  *
- * It reads the context itself, each time the Account screen appears, as iOS
- * does in AccountView's `.task` (see copay/contextSource for how that read
- * is shared with the screen's fallback row).
+ * The context is read each time the Account screen appears, as iOS does in
+ * AccountView's `.task`: by this slot until ACCT-1's screen does it itself
+ * (copay/contextStore says how the two share one store), and again whenever
+ * a Kenni sheet closes while it is on screen (the verification is where an
+ * invitation is claimed), whoever opened the sheet.
  */
 import CompanyPlanCard from '../copay/CompanyPlanCard';
 import { useCopayContext, useReloadCopayContextOnAppear } from '../copay/contextSource';
-import { confirmCopayActivation, openCopayKenniSheet, useCopayBusy } from '../copay/copayFlows';
+import {
+  confirmCopayActivation,
+  openCopayKenniSheet,
+  useContextReadAfterKenni,
+  useCopayBusy,
+} from '../copay/copayFlows';
 import '../copay/register';
 
 export default function CompanyPlanBanner() {
   useReloadCopayContextOnAppear();
+  useContextReadAfterKenni();
   const context = useCopayContext();
   const activating = useCopayBusy((state) => state.activating);
   const activation = context?.pendingActivation ?? null;
