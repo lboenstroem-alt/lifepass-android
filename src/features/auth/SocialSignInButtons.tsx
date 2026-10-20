@@ -21,9 +21,17 @@
  * has no Terms checkbox, so the notice sits where the tap is. While a sign-in
  * runs (a provider one, or the screen's email one passed in as `disabled`)
  * the whole block is disabled at 0.6 opacity, as iOS's one `isLoading` does.
+ *
+ * Each time its screen comes to the front (iOS `.task` on every appearance)
+ * the block asks again which providers to show, so Log in, uncovered again
+ * after Sign up, shows the buttons a later read found even when its own
+ * first read failed. The screen in front also shows a failure of a sign-in
+ * the router finished with no button waiting (`unreportedFailure`, after a
+ * process death behind the page).
  */
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState, type ReactNode } from 'react';
+import { NavigationContext } from '@react-navigation/native';
+import { useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
@@ -31,7 +39,7 @@ import { announce, hiddenFromAccessibility, LPText } from '../../components/ui';
 import { MerchantInfo } from '../../config/merchantInfo';
 import { env } from '../../config/env';
 import { hasFixture } from '../../dev/fixtures';
-import { MarkupText, useT } from '../../i18n';
+import { MarkupText, t as translateNow, useT } from '../../i18n';
 import { colors, sans } from '../../theme';
 import {
   cachedSocialProviders,
@@ -41,7 +49,14 @@ import {
   visibleSocialProviders,
   type SocialProviders,
 } from './providerSettings';
-import { resumeSocialSignIn, signInWithSocialProvider, useSocialSignInBusy, type SocialProvider } from './social';
+import {
+  resumeSocialSignIn,
+  signInWithSocialProvider,
+  takeUnreportedSocialFailure,
+  useSocialSignInBusy,
+  useSocialSignInStore,
+  type SocialProvider,
+} from './social';
 
 /** Where the "or" divider goes: above the buttons (Log in) or below them (Sign up). */
 export type SocialDividerPlacement = 'above' | 'below';
@@ -86,38 +101,62 @@ function termsKey(providers: SocialProviders): string {
 
 export default function SocialSignInButtons({ divider, disabled = false }: SocialSignInButtonsProps) {
   const { t } = useT();
+  // The screen this block sits on; absent outside a navigator (tests, a preview).
+  const navigation = useContext(NavigationContext);
   const [providers, setProviders] = useState<SocialProviders>(initialProviders);
   const [failed, setFailed] = useState(false);
   // `running`: a provider sign-in of ours; `busy`: that, or the email form's.
   const running = useSocialSignInBusy();
   const busy = running || disabled;
+  const unreportedFailure = useSocialSignInStore((state) => state.unreportedFailure);
 
-  useEffect(() => {
-    let alive = true;
-    void loadSocialProviders().then((loaded) => {
-      if (alive) setProviders(loaded);
-    });
-    // A start from the page's return link (Android dropped the app behind
-    // the page): the sign-in it was in the middle of finishes now.
-    void resumeSocialSignIn().then((outcome) => {
-      if (alive && outcome === 'failed') setFailed(true);
-    });
-    return () => {
-      alive = false;
-    };
+  /** Shows the failure line and says it to TalkBack, once, when it happens. */
+  const showFailure = useCallback(() => {
+    setFailed(true);
+    announce(translateNow('auth.social_failed'));
   }, []);
 
   useEffect(() => {
-    if (failed) announce(t('auth.social_failed'));
-  }, [failed, t]);
+    let alive = true;
+    const refresh = () => {
+      // A cached answer comes back at once; a read that failed is tried again.
+      void loadSocialProviders().then((loaded) => {
+        if (alive) setProviders(loaded);
+      });
+    };
+    refresh();
+    const stopFocus = navigation?.addListener('focus', refresh);
+    // The fallback for a start from the page's return link (the router
+    // finishes it first): a failure arrives as `unreportedFailure`.
+    void resumeSocialSignIn();
+    return () => {
+      alive = false;
+      stopFocus?.();
+    };
+  }, [navigation]);
 
-  if (!hasAnySocialProvider(providers)) return null;
+  // A failure no button was waiting for: the screen in front shows it, once
+  // its buttons show (a screen covered by another, Log in under Sign up,
+  // leaves it to that one).
+  const visible = hasAnySocialProvider(providers);
+  useEffect(() => {
+    if (!visible) return undefined;
+    const takeIfInFront = () => {
+      if (navigation && !navigation.isFocused()) return;
+      if (takeUnreportedSocialFailure()) showFailure();
+    };
+    if (unreportedFailure) takeIfInFront();
+    const stopFocus = navigation?.addListener('focus', takeIfInFront);
+    return () => stopFocus?.();
+  }, [navigation, unreportedFailure, showFailure, visible]);
+
+  if (!visible) return null;
 
   const start = (provider: SocialProvider) => {
     if (busy) return;
     setFailed(false);
     void signInWithSocialProvider(provider).then((outcome) => {
-      if (outcome === 'failed') setFailed(true);
+      if (outcome === 'failed') showFailure();
     });
   };
 
@@ -162,7 +201,8 @@ export default function SocialSignInButtons({ divider, disabled = false }: Socia
       )}
 
       {failed && (
-        <LPText size={13} color={colors.destructive} align="center" accessibilityLiveRegion="polite">
+        // Said to TalkBack by `showFailure` once; no live region, which would say it twice.
+        <LPText size={13} color={colors.destructive} align="center" testID="auth.social_failed">
           {t('auth.social_failed')}
         </LPText>
       )}

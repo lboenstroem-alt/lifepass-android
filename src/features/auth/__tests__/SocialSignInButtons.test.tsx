@@ -4,7 +4,9 @@
  * gate, the terms line for what shows, the divider placement, the busy
  * state, and "a cancel is silent; anything else says auth.social_failed".
  */
+import { NavigationContext } from '@react-navigation/native';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import type { ReactElement } from 'react';
 import { AccessibilityInfo, Linking } from 'react-native';
 
 import { Reply, supabase as authHost } from '@test/server';
@@ -40,20 +42,50 @@ function serverHas(external: { apple?: boolean; google?: boolean }) {
 
 beforeEach(() => {
   resetSocialProviderSettingsForTests();
-  useSocialSignInStore.setState({ busy: false });
+  useSocialSignInStore.setState({ busy: false, unreportedFailure: false });
   signIn.mockReset().mockResolvedValue('cancelled');
   resume.mockReset().mockResolvedValue('ignored');
   setEnv({ EXPO_PUBLIC_SOCIAL_SIGN_IN: 'YES' });
 });
 
+/** Lets pending reads and effects run. */
+async function flush() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 /** Renders and lets the settings read (and the launch check) answer. */
 async function renderButtons(divider: 'above' | 'below' = 'above') {
   // RNTL 14: render, act and fireEvent are all async and must be awaited.
   const view = await render(<SocialSignInButtons divider={divider} />);
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await flush();
   return view;
+}
+
+/**
+ * The screen the block sits on, as React Navigation hands it down: whether
+ * it is in front, and its `focus` event.
+ */
+function fakeScreen(focused: boolean) {
+  const listeners = new Set<() => void>();
+  const navigation = {
+    focused,
+    isFocused: () => navigation.focused,
+    addListener: (type: string, listener: () => void) => {
+      if (type === 'focus') listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    /** The screen comes (back) to the front. */
+    focus: () => {
+      navigation.focused = true;
+      listeners.forEach((listener) => listener());
+    },
+  };
+  const wrap = (element: ReactElement) => (
+    <NavigationContext.Provider value={navigation as never}>{element}</NavigationContext.Provider>
+  );
+  return { navigation, wrap };
 }
 
 describe('what shows', () => {
@@ -187,14 +219,20 @@ describe('tapping', () => {
     expect(screen.queryByText(FAILED)).toBeNull();
   });
 
-  it('a failure says auth.social_failed under the buttons, and TalkBack hears it', async () => {
+  it('a failure says auth.social_failed under the buttons, and TalkBack hears it once', async () => {
     const spoken = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
     serverHas({ google: true });
     signIn.mockResolvedValue('failed');
     await renderButtons();
     await fireEvent.press(await screen.findByTestId('auth.google'));
     expect(await screen.findByText(FAILED)).toBeTruthy();
+    expect(spoken).toHaveBeenCalledTimes(1);
     expect(spoken).toHaveBeenCalledWith(FAILED);
+    // Said once: no live region repeats it, and a language change does not say it again.
+    expect(screen.getByTestId('auth.social_failed')).not.toHaveProp('accessibilityLiveRegion', 'polite');
+    await act(() => setCurrentLanguage('is'));
+    await act(() => setCurrentLanguage('en'));
+    expect(spoken).toHaveBeenCalledTimes(1);
 
     // The next try clears it.
     signIn.mockResolvedValue('cancelled');
@@ -261,12 +299,98 @@ describe('tapping', () => {
   });
 });
 
-describe('a start from the page’s return link', () => {
-  it('finishes the sign-in it was in the middle of, and says so when that fails', async () => {
+describe('a sign-in no button was waiting for (the router finished it after a process death)', () => {
+  it('the block still runs the launch-link fallback when it appears', async () => {
     serverHas({ apple: true, google: true });
-    resume.mockResolvedValue('failed');
     await renderButtons();
     expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it('its failure shows on the screen that appears next, once', async () => {
+    const spoken = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    serverHas({ apple: true, google: true });
+    useSocialSignInStore.setState({ unreportedFailure: true });
+    const first = await renderButtons();
     expect(await screen.findByText(FAILED)).toBeTruthy();
+    expect(spoken).toHaveBeenCalledWith(FAILED);
+    expect(useSocialSignInStore.getState().unreportedFailure).toBe(false);
+
+    // The next screen does not show it again.
+    await first.unmount();
+    await renderButtons('below');
+    await screen.findByTestId('auth.apple');
+    expect(screen.queryByText(FAILED)).toBeNull();
+    expect(spoken).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the buttons to show (the settings read answers), then shows with them', async () => {
+    let answer!: () => void;
+    authHost.on(
+      'GET',
+      '/auth/v1/settings',
+      () =>
+        new Promise((resolve) => {
+          answer = () => resolve(Reply.json(200, { external: { google: true } }));
+        }),
+    );
+    useSocialSignInStore.setState({ unreportedFailure: true });
+    const view = await renderButtons();
+    expect(view.toJSON()).toBeNull();
+    // Not taken by a block that shows nothing.
+    expect(useSocialSignInStore.getState().unreportedFailure).toBe(true);
+    await act(async () => answer());
+    expect(await screen.findByText(FAILED)).toBeTruthy();
+    expect(useSocialSignInStore.getState().unreportedFailure).toBe(false);
+  });
+
+  it('arriving while the screen is up, it shows at once', async () => {
+    serverHas({ google: true });
+    await renderButtons();
+    await screen.findByTestId('auth.google');
+    await act(() => useSocialSignInStore.setState({ unreportedFailure: true }));
+    expect(await screen.findByText(FAILED)).toBeTruthy();
+  });
+
+  it('a covered screen (Log in under Sign up) leaves it for the one in front, then shows it when uncovered if still untaken', async () => {
+    serverHas({ apple: true, google: true });
+    const { navigation, wrap } = fakeScreen(false);
+    await render(wrap(<SocialSignInButtons divider="above" />));
+    await flush();
+    await screen.findByTestId('auth.apple');
+    await act(() => useSocialSignInStore.setState({ unreportedFailure: true }));
+    expect(screen.queryByText(FAILED)).toBeNull();
+    expect(useSocialSignInStore.getState().unreportedFailure).toBe(true);
+
+    await act(() => navigation.focus());
+    expect(await screen.findByText(FAILED)).toBeTruthy();
+    expect(useSocialSignInStore.getState().unreportedFailure).toBe(false);
+  });
+});
+
+describe('each time the screen comes to the front (iOS .task on every appearance)', () => {
+  it('a failed first read is tried again, and the buttons show', async () => {
+    authHost.on('GET', '/auth/v1/settings', Reply.json(503, {}));
+    const { navigation, wrap } = fakeScreen(true);
+    const view = await render(wrap(<SocialSignInButtons divider="above" />));
+    await flush();
+    expect(view.toJSON()).toBeNull();
+
+    // Sign up's read answered meanwhile (or the network came back); Log in is uncovered.
+    serverHas({ apple: true, google: true });
+    await act(() => navigation.focus());
+    await flush();
+    expect(await screen.findByTestId('auth.apple')).toBeTruthy();
+    expect(screen.getByTestId('auth.google')).toBeTruthy();
+  });
+
+  it('an answer the session has is not asked for again', async () => {
+    serverHas({ apple: true });
+    const { navigation, wrap } = fakeScreen(true);
+    await render(wrap(<SocialSignInButtons divider="above" />));
+    await flush();
+    await screen.findByTestId('auth.apple');
+    await act(() => navigation.focus());
+    await flush();
+    expect(authHost.sentAll('/auth/v1/settings')).toHaveLength(1);
   });
 });
