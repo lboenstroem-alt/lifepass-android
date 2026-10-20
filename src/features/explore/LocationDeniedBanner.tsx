@@ -12,8 +12,10 @@
 // is on.
 //
 // The banner draws itself only while location is off, so a host can mount it
-// unconditionally. The map's own overlay stack (EXPL-2) decides where it sits;
-// until then Explore lays it over the top of the map.
+// unconditionally. It belongs to the map, as on iOS (never over the list):
+// the map's own overlay stack (EXPL-2, `ExploreMap`) mounts it under the
+// sights toggle and the legend, 20 in from the sides and 8 below them. The
+// Explore screen does not draw it as well, so there is only ever one.
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, View } from 'react-native';
 

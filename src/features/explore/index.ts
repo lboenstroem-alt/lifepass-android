@@ -4,7 +4,8 @@
 //                         (CLASS-1) draws it in its own filter row, as iOS
 //                         `ClassesDiscoveryView` draws `ExploreModeToggle`.
 //   LocationDeniedBanner  "Location is off" with Open; the Explore map
-//                         (EXPL-2) places it in its overlay stack.
+//                         (EXPL-2) mounts it in its overlay stack, under
+//                         the legend. Nothing else draws it.
 export { default as ExploreModeToggle } from './ExploreModeToggle';
 export type { ExploreMode, ExploreModeToggleProps } from './ExploreModeToggle';
 export { default as LocationDeniedBanner } from './LocationDeniedBanner';

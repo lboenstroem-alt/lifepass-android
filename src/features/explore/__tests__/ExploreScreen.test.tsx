@@ -1,11 +1,13 @@
 /**
  * The Explore screen (iOS SearchMapView): the shell, the launch presentation,
  * the Map/List switch and what it says to TalkBack, the debounced search, the
- * load failure, the filters, the list, the sights intent and the location
- * banner. Rendered in a real stack; the map, the classes feed and the sights
- * group are their packages' slots, stood in for here.
+ * load failure, the filters, the list, the sights intent, the map kept under
+ * the list, and a fresh start on every visit to the tab. Rendered in a real
+ * stack (and, for the tab visits, in real tabs); the map, the classes feed
+ * and the sights group are their packages' slots, stood in for here.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNavigationContainerRef, NavigationContainer, type ParamListBase } from '@react-navigation/native';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
@@ -36,24 +38,35 @@ jest.mock('expo-video', () => {
   };
 });
 
+// The map stand-in counts its mounts: each mount is a fresh map (camera and
+// sights layer back at their defaults), so a test can tell a kept map from a
+// new one.
+let mockMapMounts = 0;
 jest.mock('../map/ExploreMap', () => {
+  const { useState: mockUseState } = require('react');
   const { Pressable: MockPressable, Text: MockText, View: MockView } = require('react-native');
   return {
     __esModule: true,
-    default: (props: {
+    default: function MockExploreMap(props: {
       venues: readonly { slug: string; name: string }[];
       onOpenVenue: (venue: unknown) => void;
       onOpenSight: (slug: string) => void;
       showSightsOnOpen?: boolean;
-    }) => (
-      <MockView>
-        <MockText testID="map.venues">{props.venues.map((v) => v.name).join(', ')}</MockText>
-        <MockText testID="map.sights">{props.showSightsOnOpen ? 'sights on open' : 'plain'}</MockText>
-        <MockPressable onPress={() => props.onOpenVenue(props.venues[0])}>
-          <MockText>Second tap on the first pin</MockText>
-        </MockPressable>
-      </MockView>
-    ),
+      active?: boolean;
+    }) {
+      const [mount] = mockUseState(() => (mockMapMounts += 1));
+      return (
+        <MockView>
+          <MockText testID="map.venues">{props.venues.map((v) => v.name).join(', ')}</MockText>
+          <MockText testID="map.sights">{props.showSightsOnOpen ? 'sights on open' : 'plain'}</MockText>
+          <MockText testID="map.mount">{`map ${mount}`}</MockText>
+          <MockText testID="map.active">{props.active ? 'active' : 'covered'}</MockText>
+          <MockPressable onPress={() => props.onOpenVenue(props.venues[0])}>
+            <MockText>Second tap on the first pin</MockText>
+          </MockPressable>
+        </MockView>
+      );
+    },
   };
 });
 
@@ -109,6 +122,8 @@ const originalRequestLocation = locationStore.getState().requestLocation;
 
 const Stack = createNativeStackNavigator();
 const navigationRef = createNavigationContainerRef<ParamListBase>();
+/** Everything the map stand-in draws, hidden or not (a covered map is hidden from TalkBack). */
+const ALL = { includeHiddenElements: true } as const;
 
 function Place({ route }: NativeStackScreenProps<ParamListBase>) {
   return <Text>{`${route.name} ${JSON.stringify(route.params)}`}</Text>;
@@ -136,6 +151,7 @@ async function renderExplore() {
 }
 
 beforeEach(async () => {
+  mockMapMounts = 0;
   resetAppStoreForTests();
   resetIntentStoreForTests();
   // The emphasis has run already unless a test says otherwise.
@@ -248,6 +264,24 @@ describe('the search', () => {
     await fireEvent.press(screen.getByText('Sights for thing'));
     await act(async () => undefined);
     expect(screen.getByText('AttractionDetail {"slug":"thingvellir"}')).toBeTruthy();
+
+    // Back from the sight: the map, not the results already used.
+    await act(async () => navigationRef.goBack());
+    expect(navigationRef.getCurrentRoute()?.name).toBe('ExploreMain');
+    expect(screen.queryByText('Sights for thing')).toBeNull();
+    expect(screen.getByTestId('explore.search').props.value).toBe('thing');
+
+    // Tapping back into the box brings the group back.
+    await fireEvent(screen.getByTestId('explore.search'), 'focus');
+    expect(screen.getByText('Sights for thing')).toBeTruthy();
+
+    // So does typing again, after another sight was opened from it.
+    await fireEvent.press(screen.getByText('Sights for thing'));
+    await act(async () => undefined);
+    await act(async () => navigationRef.goBack());
+    expect(screen.queryByText('Sights for thing')).toBeNull();
+    await fireEvent.changeText(screen.getByTestId('explore.search'), 'thingv');
+    expect(screen.getByText('Sights for thingv')).toBeTruthy();
   });
 });
 
@@ -337,33 +371,71 @@ describe('the list', () => {
 });
 
 describe('Home’s "See all on the map"', () => {
-  it('opens the map with the sights, even from the list', async () => {
+  it('opens a new map with the sights, even from the list, and a list round trip keeps it', async () => {
     await renderExplore();
     await fireEvent.press(screen.getByTestId('explore.mapListToggle'));
     expect(screen.queryByTestId('explore.map')).toBeNull();
     await act(async () => useIntentStore.getState().requestExploreSights());
     expect(screen.getByTestId('map.sights')).toHaveTextContent('sights on open');
+    expect(screen.getByTestId('map.mount')).toHaveTextContent('map 2');
     expect(useIntentStore.getState().pendingExploreSights).toBe(false);
-    // Moving on: the next map is a plain one.
+    // To the list and back: the same map, still on all of Iceland (iOS keeps
+    // the camera in the screen's state through the switch).
     await fireEvent.press(screen.getByTestId('explore.mapListToggle'));
     await fireEvent.press(screen.getByTestId('explore.mapListToggle'));
-    expect(screen.getByTestId('map.sights')).toHaveTextContent('plain');
+    expect(screen.getByTestId('map.mount')).toHaveTextContent('map 2');
+    expect(screen.getByTestId('map.sights')).toHaveTextContent('sights on open');
+  });
+});
+
+describe('the map under the list, the classes feed and a failed load', () => {
+  it('stays mounted, hidden and told it is covered, and comes back as it was', async () => {
+    await renderExplore();
+    expect(screen.getByTestId('map.mount')).toHaveTextContent('map 1');
+    expect(screen.getByTestId('map.active')).toHaveTextContent('active');
+
+    // The list over it: hidden from TalkBack and touch, told it is covered.
+    await fireEvent.press(screen.getByTestId('explore.mapListToggle'));
+    expect(screen.queryByTestId('explore.map')).toBeNull();
+    const covered = screen.getByTestId('explore.map', ALL);
+    expect(covered.props.importantForAccessibility).toBe('no-hide-descendants');
+    expect(covered.props.pointerEvents).toBe('none');
+    expect(screen.getByTestId('map.active', ALL)).toHaveTextContent('covered');
+    await fireEvent.press(screen.getByTestId('explore.mapListToggle'));
+    expect(screen.getByTestId('map.active')).toHaveTextContent('active');
+
+    // The classes feed over it, then back.
+    await fireEvent.press(screen.getByTestId('explore.filters'));
+    await fireEvent.press(screen.getByTestId('explore.mode.classes'));
+    expect(screen.getByText('Classes feed, toggle shown')).toBeTruthy();
+    expect(screen.getByTestId('map.active', ALL)).toHaveTextContent('covered');
+    await fireEvent.press(screen.getByText('Classes feed, toggle shown'));
+    expect(screen.getByTestId('map.active')).toHaveTextContent('active');
+
+    // A failed load over it, then a retry that works.
+    fetchMock.mockRejectedValue(new TypeError('Network request failed'));
+    await act(async () => explore.store.getState().reset());
+    await act(async () => explore.loadNow(null));
+    expect(screen.getByTestId('explore.venues.error')).toBeTruthy();
+    expect(screen.getByTestId('map.active', ALL)).toHaveTextContent('covered');
+    fetchMock.mockResolvedValue(catalog);
+    await fireEvent.press(screen.getByLabelText('Try again'));
+    await act(async () => undefined);
+
+    // One map all along.
+    expect(screen.getByTestId('map.active')).toHaveTextContent('active');
+    expect(screen.getByTestId('map.mount')).toHaveTextContent('map 1');
   });
 });
 
 describe('location', () => {
-  it('shows "Location is off" over the map while location is refused', async () => {
+  it('leaves "Location is off" to the map, so it is only ever drawn once', async () => {
     await renderExplore();
-    expect(screen.queryByTestId('explore.locationOff')).toBeNull();
     await act(async () => locationStore.setState({ permission: 'denied', permissionKnown: true, servicesEnabled: true }));
-    expect(screen.getByText('Location is off')).toBeTruthy();
-    expect(screen.getByText('Turn it on in Settings to see your spot on the map')).toBeTruthy();
-    // Not over the list: the banner belongs to the map.
+    // The map's overlay stack (EXPL-2) mounts the banner; the screen never does.
+    expect(screen.queryByText('Location is off', ALL)).toBeNull();
     await fireEvent.press(screen.getByTestId('explore.mapListToggle'));
-    expect(screen.queryByTestId('explore.locationOff')).toBeNull();
-    await act(async () => locationStore.setState({ permission: 'granted' }));
-    await fireEvent.press(screen.getByTestId('explore.mapListToggle'));
-    expect(screen.queryByTestId('explore.locationOff')).toBeNull();
+    expect(screen.queryByText('Location is off', ALL)).toBeNull();
   });
 });
 
@@ -388,5 +460,120 @@ describe('the Map/List emphasis', () => {
     });
     expect(screen.queryByTestId('explore.mapListToggle.hint')).toBeNull();
     expect(await AsyncStorage.getItem(MAP_TOGGLE_HINT_KEY)).toBe('true');
+  });
+});
+
+describe('every visit to the tab starts fresh (iOS rebuilds SearchMapView)', () => {
+  const Tabs = createBottomTabNavigator();
+  const Root = createNativeStackNavigator();
+  const ExploreStack = createNativeStackNavigator();
+
+  function ExploreTab() {
+    return (
+      <ExploreStack.Navigator screenOptions={{ headerShown: false }}>
+        <ExploreStack.Screen name="ExploreMain">{() => <ExploreScreen venues={explore} />}</ExploreStack.Screen>
+        <ExploreStack.Screen name="VenueDetail" component={Place} />
+      </ExploreStack.Navigator>
+    );
+  }
+
+  function Main() {
+    return (
+      <Tabs.Navigator screenOptions={{ headerShown: false }}>
+        <Tabs.Screen name="Explore" component={ExploreTab} />
+        <Tabs.Screen name="Home" component={Place} />
+      </Tabs.Navigator>
+    );
+  }
+
+  function TabsApp() {
+    return (
+      <NavigationContainer ref={navigationRef}>
+        <UiKitProvider>
+          <Root.Navigator screenOptions={{ headerShown: false }}>
+            <Root.Screen name="Main" component={Main} />
+            <Root.Screen name="Plans" component={Place} options={{ presentation: 'modal' }} />
+          </Root.Navigator>
+        </UiKitProvider>
+      </NavigationContainer>
+    );
+  }
+
+  async function renderTabs() {
+    const view = await render(<TabsApp />);
+    await act(async () => undefined);
+    return view;
+  }
+
+  /** Searches "sky" (past the debounce), turns Premium on, and shows the list. */
+  async function narrowDown() {
+    await fireEvent.changeText(screen.getByTestId('explore.search'), 'sky');
+    await act(async () => {
+      jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+    await fireEvent.press(screen.getByTestId('explore.class.premium'));
+    await fireEvent.press(screen.getByTestId('explore.mapListToggle'));
+    expect(screen.getByTestId('explore.list.count')).toHaveTextContent('1 VENUES');
+  }
+
+  it('a switch to another tab and back opens the map, an empty box, no filters, the panel closed, the catalogue', async () => {
+    jest.useFakeTimers();
+    useIntentStore.getState().setExploreLaunchPresentation(true);
+    await renderTabs();
+    expect(screen.getByTestId('explore.filters.panel')).toBeTruthy();
+    await narrowDown();
+    fetchMock.mockClear();
+
+    await act(async () => navigationRef.navigate('Home'));
+    // The list goes back to the catalogue as the member leaves.
+    expect(fetchMock.mock.calls.map(([query]) => query)).toEqual([{ limit: 100 }]);
+
+    await act(async () => navigationRef.navigate('Explore'));
+    expect(screen.getByTestId('explore.search').props.value).toBe('');
+    expect(screen.queryByTestId('explore.filters.panel')).toBeNull();
+    expect(screen.queryByTestId('explore.filters.badge', ALL)).toBeNull();
+    expect(screen.queryByTestId('explore.list')).toBeNull();
+    expect(screen.getByTestId('map.active')).toHaveTextContent('active');
+    // A new map (the default camera and sights layer), with every venue.
+    expect(screen.getByTestId('map.mount')).toHaveTextContent('map 2');
+    expect(screen.getByTestId('map.sights')).toHaveTextContent('plain');
+    expect(screen.getByText('3 VENUES')).toBeTruthy();
+    expect(fetchMock.mock.calls.every(([query]) => query.search === undefined)).toBe(true);
+  });
+
+  it('leaves Classes for the venues on the next visit', async () => {
+    await renderTabs();
+    await fireEvent.press(screen.getByTestId('explore.filters'));
+    await fireEvent.press(screen.getByTestId('explore.mode.classes'));
+    expect(screen.getByText('Classes feed, toggle shown')).toBeTruthy();
+    await act(async () => navigationRef.navigate('Home'));
+    await act(async () => navigationRef.navigate('Explore'));
+    expect(screen.queryByText('Classes feed, toggle shown')).toBeNull();
+    expect(screen.getByTestId('explore.search')).toBeTruthy();
+  });
+
+  it('a page pushed on Explore, or a modal over the tabs, keeps everything', async () => {
+    jest.useFakeTimers();
+    await renderTabs();
+    await fireEvent.press(screen.getByTestId('explore.filters'));
+    await narrowDown();
+
+    // A venue page and back.
+    await fireEvent.press(screen.getByTestId('explore.row.v2'));
+    await act(async () => undefined);
+    expect(navigationRef.getCurrentRoute()?.name).toBe('VenueDetail');
+    await act(async () => navigationRef.goBack());
+
+    // A modal over the tabs and back.
+    await act(async () => navigationRef.navigate('Plans'));
+    expect(navigationRef.getCurrentRoute()?.name).toBe('Plans');
+    await act(async () => navigationRef.goBack());
+
+    expect(navigationRef.getCurrentRoute()?.name).toBe('ExploreMain');
+    expect(screen.getByTestId('explore.search').props.value).toBe('sky');
+    expect(screen.getByTestId('explore.filters.panel')).toBeTruthy();
+    expect(screen.getByTestId('explore.filters.badge', ALL)).toHaveTextContent('1');
+    expect(screen.getByTestId('explore.list')).toBeTruthy();
+    expect(screen.getByTestId('map.mount', ALL)).toHaveTextContent('map 1');
   });
 });
