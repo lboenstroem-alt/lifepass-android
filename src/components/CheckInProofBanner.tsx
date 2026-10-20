@@ -127,6 +127,8 @@ export default function CheckInProofBanner({ checkIn: given }: CheckInProofBanne
             onPress={() => setShown(checkIn)}
             accessibilityRole="button"
             accessibilityLabel={t('checkin.proof.show_staff')}
+            // iOS's capsule is drawn 36 dp tall; the target reaches Android's 48.
+            hitSlop={SHOW_HIT_SLOP}
             style={({ pressed }) => [styles.showButton, pressed && styles.pressed]}
             testID="checkin.proofBanner.show"
           >
@@ -146,6 +148,9 @@ export default function CheckInProofBanner({ checkIn: given }: CheckInProofBanne
     </>
   );
 }
+
+/** The capsule's 36 dp plus 6 above and below: the 48 dp touch target. */
+const SHOW_HIT_SLOP = { top: 6, bottom: 6, left: 4, right: 4 } as const;
 
 const styles = StyleSheet.create({
   banner: {

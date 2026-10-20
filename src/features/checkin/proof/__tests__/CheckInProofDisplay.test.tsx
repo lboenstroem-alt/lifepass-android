@@ -5,7 +5,7 @@
  * at the accessibility text sizes.
  */
 import { render, screen, within } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { Text, View } from 'react-native';
 
 import { FONT_SCALE_CAP } from '../../../../hooks/useA11ySize';
 import { restoreTestFontScale, setTestFontScale } from '../../../../hooks/testing';
@@ -74,6 +74,24 @@ describe('the three big lines', () => {
       await render(<CheckInProofDisplay {...proof({ memberShortName: name })} />);
       expect(screen.getByTestId('checkin.proof.name')).toHaveTextContent(name);
     }
+  });
+
+  it('centres a fixed-size mark above the eyebrow, whatever the caller hands in', async () => {
+    // The walk-in's pulsing tick is a fixed-size View with no alignment of
+    // its own; under the stretching column it would sit at the left margin.
+    await render(<CheckInProofDisplay {...proof({ mark: <View testID="mark" style={{ width: 120, height: 120 }} /> })} />);
+    const slot = screen.getByTestId('checkin.proof.markSlot');
+    expect(slot).toHaveStyle({ alignItems: 'center' });
+    expect(within(slot).getByTestId('mark')).toBeOnTheScreen();
+  });
+
+  it('stands the mark beside the eyebrow at the accessibility sizes, centred in its row', async () => {
+    setTestFontScale(2);
+    await render(<CheckInProofDisplay {...proof()} />);
+    expect(screen.queryByTestId('checkin.proof.markSlot')).toBeNull();
+    const row = screen.getByTestId('checkin.proof.markBeside');
+    expect(row).toHaveStyle({ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' });
+    expect(within(row).getByTestId('mark')).toBeOnTheScreen();
   });
 
   it('writes the day in the account language, not the phone', async () => {

@@ -67,6 +67,15 @@ describe('the bar', () => {
     expect(screen.getByRole('button', { name: 'Show to staff' })).toBeOnTheScreen();
   });
 
+  it('"Show to staff" looks like iOS\'s 36 dp capsule but takes a 48 dp touch', async () => {
+    signedInWith(profileWith(recentCheckInJSON('Anna J.')));
+    await render(<CheckInProofBanner />);
+    const show = screen.getByRole('button', { name: 'Show to staff' });
+    expect(show).toHaveStyle({ minHeight: 36 });
+    const slop = show.props.hitSlop as { top: number; bottom: number };
+    expect(36 + slop.top + slop.bottom).toBeGreaterThanOrEqual(48);
+  });
+
   it('speaks Icelandic for an Icelandic account', async () => {
     setCurrentLanguage('is');
     signedInWith(profileWith(recentCheckInJSON('Anna J.'), 'is'));
@@ -181,8 +190,10 @@ describe('the re-offered proof', () => {
 
     await openProof();
     expect(screen.getByTestId('checkin.proof')).toBeOnTheScreen();
-    // Android's back button reaches the Modal as onRequestClose.
-    await fireEvent(screen.getByTestId('checkin.reoffer'), 'requestClose');
+    // Android's back button reaches the Modal (the cover's parent) as onRequestClose.
+    const modal = screen.getByTestId('checkin.reoffer').parent;
+    expect(modal?.props.onRequestClose).toBeDefined();
+    await fireEvent(modal!, 'requestClose');
     expect(screen.queryByTestId('checkin.proof')).toBeNull();
   });
 

@@ -124,13 +124,18 @@ export default function CheckInProofDisplay({
       testID="checkin.proof"
     >
       {compact ? (
-        <View style={styles.markBeside}>
+        <View style={styles.markBeside} testID="checkin.proof.markBeside">
           {mark}
           <View style={styles.eyebrowBeside}>{eyebrow}</View>
         </View>
       ) : (
         <>
-          {mark}
+          {/* Centred here, whatever the caller hands in: iOS's VStack centres
+              its mark, while this column stretches its children, and a fixed
+              width under stretch sits at the left margin. */}
+          <View style={styles.markStacked} testID="checkin.proof.markSlot">
+            {mark}
+          </View>
           {eyebrow}
         </>
       )}
@@ -175,7 +180,7 @@ export default function CheckInProofDisplay({
             align="center"
             numberOfLines={3}
             adjustsFontSizeToFit
-          minimumFontScale={0.45}
+            minimumFontScale={0.45}
             maxScale={FONT_SCALE_CAP.accessibility1}
             style={[styles.display, trim(compact, 9), { marginTop: compact ? 6 - 9 : 14 }]}
           >
@@ -190,7 +195,7 @@ export default function CheckInProofDisplay({
             align="center"
             numberOfLines={2}
             adjustsFontSizeToFit
-          minimumFontScale={0.5}
+            minimumFontScale={0.5}
             maxScale={FONT_SCALE_CAP.accessibility1}
             style={[styles.display, trim(compact, 8), { marginTop: compact ? 4 - 8 : 6 }]}
             testID="checkin.proof.name"
@@ -264,6 +269,7 @@ const styles = StyleSheet.create({
   content: { flexGrow: 1, justifyContent: 'center', alignItems: 'stretch', paddingHorizontal: 24 },
   contentRoomy: { paddingVertical: 28 },
   contentCompact: { paddingVertical: 6 },
+  markStacked: { alignItems: 'center' },
   markBeside: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingTop: 2 },
   eyebrowBeside: { flexShrink: 1 },
   eyebrowStacked: { marginTop: 14 },

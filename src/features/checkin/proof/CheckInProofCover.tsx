@@ -10,7 +10,14 @@
  *
  * Android: edge to edge (it draws under the status and navigation bars and
  * pads for them), and hardware back is Done, the only way out iOS offers.
+ *
+ * THE PROOF STAYS DRAWN WHILE THE COVER SLIDES OUT. A caller closes it by
+ * dropping `proof` and `visible` together; iOS clears its snapshot only in
+ * the cover's `onDismiss`, after it has gone, and Android's Modal has no
+ * such callback. So the last proof shown is kept and drawn through the
+ * close animation, rather than an empty page with only Done sliding away.
  */
+import { useEffect, useRef } from 'react';
 import { Modal, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -22,7 +29,7 @@ import CheckInProofDisplay, { type CheckInProofDisplayProps } from './CheckInPro
 
 export interface CheckInProofCoverProps {
   readonly visible: boolean;
-  /** What the proof shows; null draws nothing (the cover is closing). */
+  /** What the proof shows; null closes the cover (the last proof stays drawn while it slides out). */
   readonly proof: CheckInProofDisplayProps | null;
   /** Done, or hardware back. */
   readonly onDone: () => void;
@@ -33,6 +40,11 @@ export default function CheckInProofCover({ visible, proof, onDone, testID }: Ch
   const { t } = useT();
   const insets = useSafeAreaInsets();
   const compact = useA11ySize().isAccessibilitySize;
+  const lastShown = useRef<CheckInProofDisplayProps | null>(null);
+  useEffect(() => {
+    if (proof) lastShown.current = proof;
+  }, [proof]);
+  const drawn = proof ?? lastShown.current;
 
   return (
     <Modal
@@ -44,7 +56,7 @@ export default function CheckInProofCover({ visible, proof, onDone, testID }: Ch
       onRequestClose={onDone}
     >
       <View style={[styles.cover, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID={testID}>
-        {proof ? <CheckInProofDisplay {...proof} /> : null}
+        {drawn ? <CheckInProofDisplay {...drawn} /> : null}
         <View style={[styles.done, { paddingTop: compact ? 8 : 12, paddingBottom: compact ? 14 : 32 }]}>
           <PrimaryButton title={t('common.done')} onPress={onDone} shape="flat" testID={testID ? `${testID}.done` : undefined} />
         </View>
