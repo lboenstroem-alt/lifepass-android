@@ -11,18 +11,27 @@
 // the name, city and address with accents folded, and what a venue offers
 // through English and Icelandic words ("gufubað", "heitur pottur"), word by
 // word with the last word allowed to be a prefix. A search is sent 300 ms after
-// the last keystroke, so typing "pool" sends one request, not four, and a new
-// request cancels the one still on its way (AbortController); only the latest
-// answer lands either way (the list store's own rule). A search of nothing but
+// the last keystroke, so typing "pool" sends one request, not four. A
+// keystroke also cancels the request still on its way, as iOS's
+// `searchTask?.cancel()` does: typing "s", then "sk" after the "s" request
+// went out, never shows the "s" answer on the way to the "sk" one. A newer
+// load cancels an older one too (AbortController), and only the latest answer
+// lands either way (the list store's own rule). A search of nothing but
 // spaces is no search: the catalogue is fetched and refreshed. A load with no
 // search (opening Explore, Try again on an empty search) is sent at once.
+//
+// LEAVING THE TAB. iOS builds Explore afresh on every visit to the tab, with
+// a new view model. Here the list outlives the visit, so `forgetSearch` does
+// the same job: a search still waiting or on its way is dropped, and a list
+// that holds a search's results loads the catalogue again, so the next visit
+// never opens on an old search's venues.
 //
 // SIGN-OUT. Prices in the list are resolved for the member who asked, so the
 // list is forgotten at sign-out (./register.ts), with any search still on its
 // way.
 import { fetchVenues, type VenueQuery } from '../../api/venues';
 import type { BrowseSessionStore } from '../../stores/browseSession';
-import { createVenueListStore, type VenueListStore } from '../../stores/venuesStore';
+import { createVenueListStore, isFilteredQuery, type VenueListStore } from '../../stores/venuesStore';
 import type { Venue } from '../../types/venue';
 
 /** How long after the last keystroke a search is sent (iOS: 300 ms). */
@@ -42,21 +51,41 @@ export interface ExploreVenues {
   /**
    * iOS `loadVenues(search:)`: no search (undefined or null) loads the
    * catalogue at once; a search, even an empty one, waits out the debounce.
-   * Either way it cancels a search still waiting.
+   * Either way it cancels a search still waiting and the request still on
+   * its way.
    */
   search(text?: string | null): void;
   /** Loads now, without the debounce (a return to Explore, a retry). */
   loadNow(text?: string | null): Promise<void>;
   /** A search still waiting out its debounce is dropped. */
   cancelPending(): void;
+  /**
+   * The member left the Explore tab (iOS builds the screen and its view
+   * model afresh on the next visit): a search waiting or on its way is
+   * dropped, and a list showing a search's results loads the catalogue.
+   */
+  forgetSearch(): void;
   /** Forgets the list and anything on its way (sign-out). */
   reset(): void;
+}
+
+/**
+ * A promise that never settles: what a cancelled request hands the list store
+ * instead of its answer or its abort. The store's load for it simply never
+ * lands, so it can neither show stale venues nor read the cancel as a failed
+ * load ("We couldn't load the venues"). Nothing keeps a reference to it, so it
+ * is collected along with the load that awaited it.
+ */
+function never<T>(): Promise<T> {
+  return new Promise<T>(() => undefined);
 }
 
 export function createExploreVenues(options: ExploreVenuesOptions = {}): ExploreVenues {
   const fetch: FetchVenues = options.fetch ?? ((query, callOptions) => fetchVenues(query, callOptions));
   const debounceMs = options.debounceMs ?? SEARCH_DEBOUNCE_MS;
   let inFlight: AbortController | null = null;
+  /** Requests cancelled by a keystroke or by leaving the tab (not by a newer load). */
+  const cancelled = new WeakSet<AbortController>();
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const store = createVenueListStore({
@@ -67,9 +96,14 @@ export function createExploreVenues(options: ExploreVenuesOptions = {}): Explore
       inFlight?.abort();
       const mine = new AbortController();
       inFlight = mine;
-      return fetch(query, { signal: mine.signal }).finally(() => {
-        if (inFlight === mine) inFlight = null;
-      });
+      return fetch(query, { signal: mine.signal })
+        .then(
+          (rows) => (cancelled.has(mine) ? never<Venue[]>() : rows),
+          (error: unknown) => (cancelled.has(mine) ? never<Venue[]>() : Promise.reject(error)),
+        )
+        .finally(() => {
+          if (inFlight === mine) inFlight = null;
+        });
     },
   });
 
@@ -78,6 +112,21 @@ export function createExploreVenues(options: ExploreVenuesOptions = {}): Explore
       clearTimeout(timer);
       timer = null;
     }
+  };
+
+  /**
+   * iOS `searchTask?.cancel()`: the request on its way is cancelled and its
+   * answer never lands. No newer load has started yet (the next search waits
+   * out its debounce), so the store's latest-load rule alone would let that
+   * answer in. The list stops loading, as iOS's cancelled task leaves it,
+   * until the next load starts.
+   */
+  const cancelInFlight = () => {
+    if (inFlight === null) return;
+    cancelled.add(inFlight);
+    inFlight.abort();
+    inFlight = null;
+    store.setState({ isLoading: false });
   };
 
   const loadNow = (text?: string | null) => {
@@ -89,6 +138,7 @@ export function createExploreVenues(options: ExploreVenuesOptions = {}): Explore
     store,
     search(text) {
       cancelPending();
+      cancelInFlight();
       if (text === undefined || text === null) {
         void store.getState().load({});
         return;
@@ -100,6 +150,11 @@ export function createExploreVenues(options: ExploreVenuesOptions = {}): Explore
     },
     loadNow,
     cancelPending,
+    forgetSearch() {
+      cancelPending();
+      cancelInFlight();
+      if (isFilteredQuery(store.getState().query)) void store.getState().load({});
+    },
     reset() {
       cancelPending();
       inFlight?.abort();

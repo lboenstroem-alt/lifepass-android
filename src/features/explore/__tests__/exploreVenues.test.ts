@@ -1,7 +1,8 @@
 /**
  * Explore's list and its server search (iOS MapViewModel.loadVenues): the
- * 300 ms debounce, a new request cancelling the old, the request it sends,
- * a search ordered within the catalogue, and the sign-out cleaner.
+ * 300 ms debounce, a new request or a keystroke cancelling the old, the
+ * request it sends, a search ordered within the catalogue, leaving the tab,
+ * and the sign-out cleaner.
  */
 import { api, Reply } from '@test/server';
 
@@ -118,6 +119,67 @@ describe('cancelling', () => {
     expect(explore.store.getState().query).toEqual({ search: 'pool' });
   });
 
+  describe('a keystroke (iOS searchTask?.cancel())', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    /** A fetch the test answers by hand; an aborted call can be made to reject as fetch does. */
+    function manualFetch(rejectOnAbort: boolean) {
+      const pending: ((venues: Venue[]) => void)[] = [];
+      const signals: AbortSignal[] = [];
+      const fetch = jest.fn(
+        (_query: VenueQuery, options: { signal?: AbortSignal }) =>
+          new Promise<Venue[]>((resolve, reject) => {
+            signals.push(options.signal!);
+            pending.push(resolve);
+            if (rejectOnAbort) {
+              options.signal!.addEventListener('abort', () =>
+                reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
+              );
+            }
+          }),
+      );
+      return { fetch, pending, signals };
+    }
+
+    it('cancels the search on its way: its answer never lands, even before the next one is sent', async () => {
+      const { fetch, pending, signals } = manualFetch(false);
+      const explore = createExploreVenues({ fetch, session: createBrowseSession({ seed: 1 }) });
+      explore.search('s');
+      jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+      await flush();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(explore.store.getState().isLoading).toBe(true);
+
+      explore.search('sk');
+      expect(signals[0]!.aborted).toBe(true);
+      expect(explore.store.getState().isLoading).toBe(false);
+      pending[0]!([catalog[2]!]);
+      await flush();
+      expect(explore.store.getState().fetched).toEqual([]);
+      expect(explore.store.getState().error).toBeNull();
+
+      jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+      await flush();
+      expect(fetch.mock.calls[1]![0]).toEqual({ search: 'sk', limit: 100 });
+      pending[1]!([catalog[3]!]);
+      await flush();
+      expect(ids(explore.store.getState().fetched)).toEqual([catalog[3]!.id]);
+    });
+
+    it('never reads the cancel as a failed load', async () => {
+      const { fetch } = manualFetch(true);
+      const explore = createExploreVenues({ fetch, session: createBrowseSession({ seed: 1 }) });
+      explore.search('s');
+      jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+      await flush();
+      explore.search('sk');
+      await flush();
+      expect(explore.store.getState().error).toBeNull();
+      expect(explore.store.getState().isLoading).toBe(false);
+    });
+  });
+
   it('reset forgets the list and aborts what is on its way', async () => {
     const signals: AbortSignal[] = [];
     let release: (venues: Venue[]) => void = () => undefined;
@@ -185,6 +247,52 @@ describe('the order', () => {
         }
       }
     }
+  });
+});
+
+describe('leaving the tab (iOS builds Explore afresh on the next visit)', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it('a list showing a search loads the catalogue again', async () => {
+    const { fetch, calls } = fakeFetch((query) => (query.search ? catalog.slice(2, 3) : catalog));
+    const explore = createExploreVenues({ fetch, session: createBrowseSession({ seed: 1 }) });
+    await explore.loadNow('sky');
+    expect(explore.store.getState().query).toEqual({ search: 'sky' });
+    explore.forgetSearch();
+    await flush();
+    expect(calls.map((call) => call.query)).toEqual([{ search: 'sky', limit: 100 }, { limit: 100 }]);
+    expect(ids(explore.store.getState().fetched)).toEqual(ids(catalog));
+  });
+
+  it('drops a search still waiting, and sends nothing when the list is the catalogue', async () => {
+    const { fetch, calls } = fakeFetch();
+    const explore = createExploreVenues({ fetch, session: createBrowseSession({ seed: 1 }) });
+    await explore.loadNow(null);
+    explore.search('sauna');
+    explore.forgetSearch();
+    jest.advanceTimersByTime(1_000);
+    await flush();
+    expect(calls.map((call) => call.query)).toEqual([{ limit: 100 }]);
+  });
+
+  it('drops a search on its way, so it cannot land after the member left', async () => {
+    let answer: (venues: Venue[]) => void = () => undefined;
+    const fetch = jest.fn(
+      (_query: VenueQuery, _options: { signal?: AbortSignal }) =>
+        new Promise<Venue[]>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const explore = createExploreVenues({ fetch, session: createBrowseSession({ seed: 1 }) });
+    explore.search('sauna');
+    jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    await flush();
+    explore.forgetSearch();
+    answer(catalog.slice(0, 1));
+    await flush();
+    expect(explore.store.getState().fetched).toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
 
