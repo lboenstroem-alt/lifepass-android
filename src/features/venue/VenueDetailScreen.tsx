@@ -23,7 +23,14 @@
  *
  * While loading: a spinner. A failed load with no venue: the reason, or "Could
  * not load venue details.", and "Try again". A failure after the venue loaded
- * (its reviews): the "Heads up" alert, the page staying as it is.
+ * (its reviews): the "Heads up" alert, the page staying as it is, shown only
+ * while the page is the one in front.
+ *
+ * Coming back to the page (from a booking, the scanner, a plan bought from a
+ * refusal, another tab) reads it again, as iOS's `.task` does on reappear, so
+ * the prices the server works out for the member are current. Coming back
+ * from the reviews page reads only the reviews, since only they can have
+ * changed there.
  *
  * Process death: the page holds nothing a restart must restore; it reloads
  * from its slug, which the navigation state keeps.
@@ -60,7 +67,7 @@ import ReviewsBlock from './components/ReviewsBlock';
 import { BAR_MATERIAL } from './components/shared';
 import { openInGoogleMaps, openInOtherMapsApp } from './directions';
 import { HERO_HEIGHT, STATUS_BAND_FADE, statusBarBandFullAt, venueShareMessage } from './model';
-import { useVenueDetail, type VenueTarget } from './useVenueDetail';
+import { useVenueDetail, venueTargetKey, type VenueTarget } from './useVenueDetail';
 
 /** The gap between the floating bar and the tab bar (iOS: 110 pt from the bottom, over a 96 pt bar). */
 const BAR_GAP = 14;
@@ -75,8 +82,9 @@ export default function VenueDetailScreen({ navigation, route }: SharedRouteProp
   const params = route.params;
   // A first-build caller may still pass `{ venueId }` (looked up, ./resolveSlug.ts).
   const target = useMemo<VenueTarget>(() => venueDetailTarget(params), [params]);
+  const targetKey = venueTargetKey(target);
   const model = useVenueDetail(target);
-  const { reloadReviews } = model;
+  const { refresh, reloadReviews } = model;
   const { t } = useT();
   const insets = useSafeAreaInsets();
   // The tab bar floats over the page; in the shared sheet there is none (the
@@ -96,18 +104,50 @@ export default function VenueDetailScreen({ navigation, route }: SharedRouteProp
   const [heroHeight, setHeroHeight] = useState(HERO_HEIGHT);
   const [directionsOpen, setDirectionsOpen] = useState(false);
 
+  // Whether this page is the one in front; the "Heads up" alert waits for it.
+  const [isFocused, setIsFocused] = useState(() => navigation.isFocused());
+  // The member left the page (another screen or tab came in front of it). A
+  // page restored under another screen has not been seen yet: its first
+  // focus is a return.
+  const left = useRef(!isFocused);
   // iOS reloads the reviews when the reviews page reports a new one; here the
   // page reads them again when the member comes back from the reviews page.
   const reviewsOpened = useRef(false);
-  useEffect(
-    () =>
-      navigation.addListener('focus', () => {
-        if (!reviewsOpened.current) return;
+  useEffect(() => {
+    const offBlur = navigation.addListener('blur', () => {
+      left.current = true;
+      setIsFocused(false);
+    });
+    const offFocus = navigation.addListener('focus', () => {
+      setIsFocused(true);
+      // The first focus is the arrival: the page's own load is running.
+      if (!left.current) return;
+      left.current = false;
+      if (reviewsOpened.current) {
         reviewsOpened.current = false;
         reloadReviews();
-      }),
-    [navigation, reloadReviews],
-  );
+        return;
+      }
+      refresh();
+    });
+    setIsFocused(navigation.isFocused());
+    return () => {
+      offBlur();
+      offFocus();
+    };
+  }, [navigation, refresh, reloadReviews]);
+
+  // Another venue in the same screen (params swapped in place) starts at its
+  // top, with nothing measured or opened for the previous one.
+  const shownTarget = useRef(targetKey);
+  useEffect(() => {
+    if (shownTarget.current === targetKey) return;
+    shownTarget.current = targetKey;
+    geometry.current = { viewport: geometry.current.viewport, activities: 0, classes: 0 };
+    reviewsOpened.current = false;
+    setDirectionsOpen(false);
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [targetKey]);
 
   const venue = model.venue;
 
@@ -251,7 +291,7 @@ export default function VenueDetailScreen({ navigation, route }: SharedRouteProp
         testID="venue.directions"
       />
       <Dialog
-        visible={model.error !== null && venue !== null && !model.isLoading}
+        visible={isFocused && model.error !== null && venue !== null && !model.isLoading}
         onClose={model.clearError}
         title={t('common.heads_up')}
         message={model.error ?? undefined}

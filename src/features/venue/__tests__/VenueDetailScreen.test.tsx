@@ -42,17 +42,26 @@ type Listener = () => void;
 
 function fakeNavigation() {
   const listeners = new Map<string, Listener[]>();
+  let focused = true;
   return {
     navigate: jest.fn(),
     goBack: jest.fn(),
+    isFocused: jest.fn(() => focused),
     addListener: jest.fn((event: string, listener: Listener) => {
       listeners.set(event, [...(listeners.get(event) ?? []), listener]);
       return () => listeners.set(event, (listeners.get(event) ?? []).filter((l) => l !== listener));
     }),
-    emit(event: string) {
+    emit(event: 'focus' | 'blur') {
+      focused = event === 'focus';
       for (const listener of listeners.get(event) ?? []) listener();
     },
   };
+}
+
+/** Another screen (or tab) comes in front of the page, then the member comes back. */
+async function leaveAndReturn() {
+  await act(async () => navigation.emit('blur'));
+  await act(async () => navigation.emit('focus'));
 }
 
 let navigation: ReturnType<typeof fakeNavigation>;
@@ -168,21 +177,37 @@ describe('a gym with walk-ins and classes, in the plan', () => {
     expect(scrollTo).toHaveBeenLastCalledWith({ y: 990, animated: true });
   });
 
-  it('the rating opens the reviews, and coming back reads them again', async () => {
+  it('the rating opens the reviews, and coming back reads only them again', async () => {
     serve();
     await renderPage();
+    // Arriving is not a return: nothing is read twice.
+    await act(async () => navigation.emit('focus'));
+    expect(api.sentAll(`/venues/by-slug/${VENUE_SLUG}`)).toHaveLength(1);
+
     await fireEvent.press(screen.getByTestId('venue.meta.rating'));
     expect(navigation.navigate).toHaveBeenCalledWith('VenueReviews', { venueId: VENUE_ID, venueName: 'Hress Reykjavík' });
 
     const before = api.sentAll(`/venues/${VENUE_ID}/reviews`).length;
     api.on('GET', `/venues/${VENUE_ID}/reviews`, Reply.ok(reviewsJson([REVIEW_C])));
-    await act(async () => navigation.emit('focus'));
+    await leaveAndReturn();
     await waitFor(() => expect(screen.getByTestId(`venue.review.${REVIEW_C.id}`)).toBeOnTheScreen());
     expect(api.sentAll(`/venues/${VENUE_ID}/reviews`)).toHaveLength(before + 1);
+    expect(api.sentAll(`/venues/by-slug/${VENUE_SLUG}`)).toHaveLength(1);
+  });
 
-    // An ordinary return (from the scanner, a booking) reads nothing.
-    await act(async () => navigation.emit('focus'));
-    expect(api.sentAll(`/venues/${VENUE_ID}/reviews`)).toHaveLength(before + 1);
+  it('coming back from a booking or the scanner reads the page again, keeping it on screen', async () => {
+    serve({ venue: { inBundle: false, surchargePrice: 1990 }, classes: [] });
+    await renderPage();
+    expect(screen.getByTestId('venue.kicker')).toHaveTextContent('PREMIUM · FROM ISK 1,990');
+
+    // The member bought a plan from a booking refusal: the venue is now in it.
+    api.on('GET', '/venues/by-slug/:slug', Reply.delayed(50, Reply.ok(venueJson({ inBundle: true }))));
+    await leaveAndReturn();
+    // No spinner while it reads: the page stays where the member left it.
+    expect(screen.queryByTestId('venue.loading')).toBeNull();
+    expect(screen.getByRole('header', { name: 'Hress Reykjavík' })).toBeOnTheScreen();
+    await waitFor(() => expect(screen.getByTestId('venue.kicker')).toHaveTextContent('IN YOUR PLAN'));
+    expect(api.sentAll(`/venues/by-slug/${VENUE_SLUG}`)).toHaveLength(2);
   });
 
   it('back leaves the page', async () => {
@@ -376,6 +401,25 @@ describe('failures', () => {
     await fireEvent.press(screen.getByRole('button', { name: en('common.ok') }));
     expect(screen.queryByRole('header', { name: en('common.heads_up') })).toBeNull();
     expect(screen.getByRole('header', { name: 'Hress Reykjavík' })).toBeOnTheScreen();
+  });
+
+  it('the "Heads up" alert waits until the page is in front again', async () => {
+    serve();
+    api.on('GET', `/venues/${VENUE_ID}/reviews`, Reply.delayed(50, Reply.raw(502, '<html>Bad gateway</html>')));
+    await render(
+      <VenueDetailScreen
+        navigation={navigation as never}
+        route={{ key: 'VenueDetail-1', name: 'VenueDetail', params: { slug: VENUE_SLUG } } as never}
+      />,
+    );
+    // The member switched tab while the page was loading.
+    await act(async () => navigation.emit('blur'));
+    await waitFor(() => expect(screen.getByRole('header', { name: 'Hress Reykjavík' })).toBeOnTheScreen());
+    expect(screen.queryByRole('header', { name: en('common.heads_up') })).toBeNull();
+
+    // Back on the page, it reads again; the reviews still fail, and now it says so.
+    await act(async () => navigation.emit('focus'));
+    await waitFor(() => expect(screen.getByRole('header', { name: en('common.heads_up') })).toBeOnTheScreen());
   });
 
   it("a first-build caller's id still opens the page", async () => {
