@@ -18,7 +18,18 @@
 // A REQUEST'S OPENER hears `onClose` once the sheet has left the screen (iOS
 // `onDismiss`), so whatever it opens next never collides with a sheet still
 // sliding away. Every close, of either kind, is announced to
-// `onKenniSheetClosed` (./events.ts) for the company-plan context.
+// `onKenniSheetClosed` (./events.ts) for the company-plan context (by the
+// sheet itself).
+//
+// A REDIRECT WITHOUT ITS TAB (Android only, ./callbackLink.ts). The host is
+// where such a link is heard and finished, because it mounts only with the
+// tabs: once the session is restored and the member signed in. On every
+// mount it reads the launch link (a cold start after Android stopped the
+// app, or a recreated Activity), and while up it listens for link events (a
+// redirect later than the tab's grace). A link the claim allows goes to the
+// sheet on screen, which keeps its opener's body, "See visitor passes" and
+// `onClose` (iOS: the sheet the member is looking at finishes its own round
+// trip); with no sheet up, one opens with the membership body.
 //
 // THE MODULE PATH. The sheet is rendered through
 // src/components/KenniVerificationModal (now a thin shim over ./KenniSheet)
@@ -26,14 +37,19 @@
 // (`jest.mock('../../components/KenniVerificationModal')`). Point this at
 // ./KenniSheet, and delete the shim, once they mock ./KenniSheet instead and
 // PLANS-1 has replaced the legacy plans screen that still imports it.
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Linking } from 'react-native';
 
 import KenniVerificationModal from '../../components/KenniVerificationModal';
 import { useAppStore } from '../../stores/appStore';
 
-import { notifyKenniSheetClosed } from './events';
-import type { KenniSheetOutcome } from './KenniSheet';
-import { closeKenniSheetRequest, useKenniSheetRequest, type KenniSheetRequest } from './sheetRequests';
+import {
+  claimParkedKenniResume,
+  handleKenniCallbackLink,
+  reparkKenniResume,
+  useParkedKenniResume,
+} from './callbackLink';
+import { closeKenniSheetRequest, presentRequest, useKenniSheetRequest, type KenniSheetRequest } from './sheetRequests';
 
 /** A stable key per request object, so a request that replaces another is a fresh sheet. */
 const requestKeys = new WeakMap<KenniSheetRequest, number>();
@@ -63,6 +79,49 @@ export default function KenniNudgeHost() {
   const shown = useRef<KenniSheetRequest | null>(null);
   if (visible) shown.current = showingRequest;
   const presented = shown.current;
+  const key = keyOf(presented);
+
+  // A redirect without its tab, given to the sheet on screen: `key` is the
+  // presentation it was given to (another sheet never completes it).
+  const [handed, setHanded] = useState<{ readonly key: string; readonly url: string } | null>(null);
+  const resumeUrl = presented?.resumeUrl ?? (handed !== null && handed.key === key ? handed.url : undefined);
+
+  // Read where the claim lands (it is asynchronous).
+  const screenRef = useRef({ visible, key });
+  screenRef.current = { visible, key };
+  const mounted = useRef(true);
+
+  // The launch link on every mount, then every link event while up.
+  useEffect(() => {
+    mounted.current = true;
+    const subscription = Linking.addEventListener('url', ({ url }: { url: string }) => {
+      handleKenniCallbackLink(url);
+    });
+    Linking.getInitialURL()
+      .then((url) => {
+        if (url && mounted.current) handleKenniCallbackLink(url);
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted.current = false;
+      subscription.remove();
+    };
+  }, []);
+
+  const parked = useParkedKenniResume();
+  useEffect(() => {
+    if (parked === null) return;
+    void claimParkedKenniResume(parked).then((allowed) => {
+      if (!allowed) return;
+      if (!mounted.current) {
+        reparkKenniResume(parked);
+        return;
+      }
+      const now = screenRef.current;
+      if (now.visible) setHanded({ key: now.key, url: parked });
+      else presentRequest({ bodyKey: 'kenni.body', onClose: () => undefined, resumeUrl: parked });
+    });
+  }, [parked]);
 
   /** The member closed it (Cancel, Continue, See visitor passes, back, a pan down). */
   function memberClosed() {
@@ -73,22 +132,22 @@ export default function KenniNudgeHost() {
     if (showingRequest) setClosedRequest(showingRequest);
   }
 
-  /** The sheet has left the screen. */
-  function gone(outcome: KenniSheetOutcome) {
+  /** The sheet has left the screen (it announces its own close, ./events.ts). */
+  function gone() {
     const closed = shown.current;
     shown.current = null;
     setClosedRequest(null);
+    setHanded(null);
     if (closed) closeKenniSheetRequest(closed);
-    notifyKenniSheetClosed(outcome);
   }
 
   return (
     <KenniVerificationModal
-      key={keyOf(presented)}
+      key={key}
       visible={visible}
       bodyKey={presented ? presented.bodyKey : 'kenni.onboarding_body'}
       onSeePasses={presented?.onSeePasses}
-      resumeUrl={presented?.resumeUrl}
+      resumeUrl={resumeUrl}
       onClose={memberClosed}
       onClosed={gone}
     />

@@ -29,6 +29,7 @@
 import { isApiError } from '../../api';
 import { track } from '../../lib/analytics';
 
+import { kenniRoundTrip, type KenniRoundTrip } from './roundTrip';
 import { KenniNoAuthorizationUrlError, kenniService, type KenniService } from './service';
 import { KenniWebAuthError, type Authenticate } from './webAuth';
 
@@ -221,6 +222,19 @@ export interface KenniModelDeps {
   readonly authenticate: Authenticate;
   /** Runs once the kennitala is verified (the app re-reads `GET /profile`). Awaited. */
   readonly onVerified: () => Promise<void> | void;
+  /**
+   * Android: the in-flight record a redirect without its tab is checked
+   * against (./roundTrip.ts); the app's own by default.
+   */
+  readonly roundTrip?: KenniRoundTrip;
+  /**
+   * Android: the tab caught its redirect after the sheet showing this model
+   * had gone (the app's views were rebuilt while the member was in the
+   * Auðkenni app). The redirect goes to whoever shows the sheet now
+   * (./callbackLink.ts `parkKenniResume`) instead of being completed where
+   * nobody sees it.
+   */
+  readonly onRedirectWithoutSheet?: (callbackUrl: string) => void;
 }
 
 const INITIAL: KenniModelState = { phase: 'idle', failure: null };
@@ -235,11 +249,31 @@ export class KenniVerificationModel {
   private readonly service: KenniService;
   private readonly authenticate: Authenticate;
   private readonly onVerified: () => Promise<void> | void;
+  private readonly roundTrip: KenniRoundTrip;
+  private readonly onRedirectWithoutSheet?: (callbackUrl: string) => void;
+  /** No sheet shows this model (see `detach`). */
+  private detached = false;
 
   constructor(deps: KenniModelDeps) {
     this.service = deps.service ?? kenniService;
     this.authenticate = deps.authenticate;
     this.onVerified = deps.onVerified;
+    this.roundTrip = deps.roundTrip ?? kenniRoundTrip;
+    this.onRedirectWithoutSheet = deps.onRedirectWithoutSheet;
+  }
+
+  /** A sheet shows this model (again). */
+  attach(): void {
+    this.detached = false;
+  }
+
+  /**
+   * The sheet showing this model has gone from the screen (unmounted). A tab
+   * still open then belongs to nobody on screen: its redirect is handed on
+   * (`onRedirectWithoutSheet`) rather than completed here.
+   */
+  detach(): void {
+    this.detached = true;
   }
 
   getState = (): KenniModelState => this.state;
@@ -291,11 +325,20 @@ export class KenniVerificationModel {
       return;
     }
 
+    // Android: what lets a redirect that comes back without this tab (the
+    // app was stopped meanwhile) be completed (./roundTrip.ts).
+    await this.roundTrip.begin();
+
     let callback: string;
     try {
       callback = await this.authenticate(authorizationUrl);
     } catch (error) {
       this.fail(failureFromAuthentication(error));
+      return;
+    }
+    if (this.detached && this.onRedirectWithoutSheet) {
+      this.fail('cancelled');
+      this.onRedirectWithoutSheet(callback);
       return;
     }
     await this.complete(callback);
@@ -315,6 +358,9 @@ export class KenniVerificationModel {
   }
 
   private async complete(callback: string): Promise<void> {
+    // The state is single use: whatever the answer, no other copy of this
+    // redirect is completed after this one (./roundTrip.ts).
+    await this.roundTrip.spend();
     const refused = failureFromCallback(callback);
     if (refused) {
       this.fail(refused);

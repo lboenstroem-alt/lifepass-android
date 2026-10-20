@@ -27,6 +27,12 @@
  * turn true (the HealthConsentSheet pattern), so a re-opened sheet never
  * shows the last one's failure for a frame.
  *
+ * EVERY CLOSE IS ANNOUNCED. Once a presentation has left the screen, the
+ * sheet tells `onKenniSheetClosed` (./events.ts) itself, wherever it is
+ * mounted, so a screen that holds something a verification changes (the
+ * company-plan context: the completion claims invitations) re-reads it
+ * whoever opened the sheet (iOS AccountView's `onDismiss`).
+ *
  * Callers do not mount this themselves: `openKenniSheet` (./sheetRequests.ts)
  * asks the host the tabs shell mounts once (./KenniNudgeHost.tsx).
  */
@@ -40,6 +46,8 @@ import { useT } from '../../i18n';
 import { useAppStore } from '../../stores/appStore';
 import { colors } from '../../theme';
 
+import { parkKenniResume } from './callbackLink';
+import { notifyKenniSheetClosed } from './events';
 import {
   failureMessageKey,
   failureOffersSignInOther,
@@ -83,8 +91,9 @@ export type KenniSheetProps = {
   /** The API calls; the app's own by default. */
   service?: KenniService;
   /**
-   * Opened by a `lifepass://kenni-callback` link whose tab Android had
-   * closed with the app (./callbackLink.ts): the sheet completes it at once.
+   * A `lifepass://kenni-callback` redirect that came without its tab
+   * (./callbackLink.ts): the sheet completes it as soon as it shows, or as
+   * soon as it is given while showing (once per link).
    */
   resumeUrl?: string;
   testID?: string;
@@ -120,19 +129,28 @@ function KenniPresentation({
         // iOS `onVerified: { await appState.loadProfile() }`: the openers
         // read `kennitalaVerified` from the profile once the sheet has gone.
         onVerified: () => useAppStore.getState().loadProfile(),
+        onRedirectWithoutSheet: (url) => parkKenniResume(url),
       }),
   );
+  // While this presentation is mounted it shows the model; once it has gone
+  // (the app's views rebuilt behind the eID app), a redirect its tab still
+  // catches goes to the sheet that shows now (./callbackLink.ts).
+  useEffect(() => {
+    model.attach();
+    return () => model.detach();
+  }, [model]);
   const state = useSyncExternalStore(model.subscribe, model.getState);
   const [signingOut, setSigningOut] = useState(false);
   const titleRef = useRef<Text>(null);
   const stateRef = useRef<KenniModelState>(state);
   stateRef.current = state;
 
-  // The resume link completes once, when this presentation first shows.
-  const resumed = useRef(false);
+  // A resume link completes once, as soon as this presentation shows it
+  // (the model ignores it unless idle: a round trip already running wins).
+  const resumed = useRef<string | null>(null);
   useEffect(() => {
-    if (!visible || !resumeUrl || resumed.current) return;
-    resumed.current = true;
+    if (!visible || !resumeUrl || resumed.current === resumeUrl) return;
+    resumed.current = resumeUrl;
     void model.resume(resumeUrl);
   }, [visible, resumeUrl, model]);
 
@@ -177,7 +195,11 @@ function KenniPresentation({
     <Sheet
       visible={visible}
       onClose={onClose}
-      onClosed={() => onClosed?.({ verified: stateRef.current.phase === 'verified' })}
+      onClosed={() => {
+        const outcome: KenniSheetOutcome = { verified: stateRef.current.phase === 'verified' };
+        onClosed?.(outcome);
+        notifyKenniSheetClosed(outcome);
+      }}
       fullHeight
       initialFocusRef={titleRef}
       testID={testID}

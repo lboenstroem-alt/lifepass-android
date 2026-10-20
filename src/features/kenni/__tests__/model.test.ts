@@ -458,6 +458,69 @@ describe('Android only', () => {
     expect(denied.failure).toBe('cancelled');
   });
 
+  it('records the round trip just before the tab opens, and spends it at the completion, however it came', async () => {
+    const events: string[] = [];
+    const roundTrip = {
+      begin: async () => void events.push('begin'),
+      spend: async () => void events.push('spend'),
+    };
+    const make = () =>
+      new KenniVerificationModel({
+        authenticate: async () => {
+          events.push('tab');
+          return GOOD_CALLBACK;
+        },
+        onVerified: () => undefined,
+        roundTrip,
+      });
+
+    answer({ complete: Reply.ok(VERIFIED) });
+    await make().start();
+    expect(events).toEqual(['begin', 'tab', 'spend']);
+
+    events.length = 0;
+    await make().resume(GOOD_CALLBACK);
+    expect(events).toEqual(['spend']);
+
+    // Already verified: no tab, nothing recorded.
+    events.length = 0;
+    answer({ start: Reply.ok({ alreadyVerified: true }), complete: Reply.ok(VERIFIED) });
+    await make().start();
+    expect(events).toEqual([]);
+  });
+
+  it('a tab that ends after its sheet has gone hands the redirect on instead of completing it unseen', async () => {
+    answer({ complete: Reply.ok(VERIFIED) });
+    let release: (url: string) => void = () => undefined;
+    const handedOn: string[] = [];
+    const model = new KenniVerificationModel({
+      authenticate: () => new Promise<string>((resolve) => (release = resolve)),
+      onVerified: () => {
+        verifiedCalls += 1;
+      },
+      onRedirectWithoutSheet: (url) => handedOn.push(url),
+    });
+    model.attach();
+    const running = model.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    model.detach();
+    release(GOOD_CALLBACK);
+    await running;
+    expect(handedOn).toEqual([GOOD_CALLBACK]);
+    expect(completions()).toHaveLength(0);
+    expect(verifiedCalls).toBe(0);
+
+    // Shown again before the tab ended: it completes here as usual.
+    const shown = makeModel(() => new Promise<string>((resolve) => (release = resolve)));
+    const again = shown.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    shown.detach();
+    shown.attach();
+    release(GOOD_CALLBACK);
+    await again;
+    expect(shown.phase).toBe('verified');
+  });
+
   it('a profile read that fails after a verification still leaves it verified', async () => {
     answer({ complete: Reply.ok(VERIFIED) });
     const model = new KenniVerificationModel({

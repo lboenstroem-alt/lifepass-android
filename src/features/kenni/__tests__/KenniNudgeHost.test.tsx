@@ -2,14 +2,16 @@
  * The Kenni host the tabs shell mounts (iOS MainTabView's nudge `.sheet`, and
  * the sheet every `openKenniSheet` caller asks for): the nudge's close is
  * persisted once per phone, a retract by the app is not, an opener hears its
- * sheet closed once it has gone, and a redirect that reaches the router after
- * Android stopped the app is completed.
+ * sheet closed once it has gone, and a redirect that came without its tab
+ * (Android stopped the app, recreated the Activity, or the redirect lost the
+ * race) is completed once, by the sheet on screen, and only for a round trip
+ * this phone started for this member.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
 import * as WebBrowser from 'expo-web-browser';
-import { AccessibilityInfo } from 'react-native';
+import { AccessibilityInfo, Linking } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { decodeProfile } from '../../../api/profile';
@@ -26,6 +28,8 @@ import {
   openKenniSheet,
   type KenniSheetOutcome,
 } from '..';
+import { resetKenniCallbackLinksForTests } from '../callbackLink';
+import { KENNI_RESUME_WINDOW_MS, KENNI_ROUND_TRIP_KEY } from '../roundTrip';
 import { resetKenniSheetRequestsForTests } from '../sheetRequests';
 import { resetKenniWebAuthForTests, setKenniLateRedirectGraceForTests } from '../webAuth';
 
@@ -61,6 +65,19 @@ function verifiesOnTheServer() {
 const sheetTitle = () => screen.queryByRole('header', { name: en('kenni.title') });
 const cancel = () => fireEvent.press(screen.getByRole('button', { name: en('common.cancel') }));
 
+/** This phone opened a tab for `member` `ago` ms ago (./roundTrip.ts). */
+async function roundTripStarted(member: string = MEMBER, ago = 60_000) {
+  await AsyncStorage.setItem(KENNI_ROUND_TRIP_KEY, JSON.stringify({ startedAt: Date.now() - ago, member }));
+}
+
+/** The app's own link events, as the host and the tab listen for them. */
+type UrlHandler = (event: { url: string }) => void;
+let urlHandlers: UrlHandler[];
+const sendLink = (url: string) => {
+  for (const handler of [...urlHandlers]) handler({ url });
+};
+let launchUrl: string | null;
+
 let closures: KenniSheetOutcome[];
 let stopListening: () => void;
 
@@ -69,9 +86,21 @@ beforeEach(() => {
   resetAppStoreForTests();
   resetKenniSheetRequestsForTests();
   resetKenniWebAuthForTests();
+  resetKenniCallbackLinksForTests();
   setKenniLateRedirectGraceForTests(0);
   openTab.mockReset();
   jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
+  urlHandlers = [];
+  launchUrl = null;
+  jest.spyOn(Linking, 'addEventListener').mockImplementation(((type: string, handler: UrlHandler) => {
+    urlHandlers.push(handler);
+    return {
+      remove: () => {
+        urlHandlers = urlHandlers.filter((h) => h !== handler);
+      },
+    };
+  }) as never);
+  jest.spyOn(Linking, 'getInitialURL').mockImplementation(async () => launchUrl);
   closures = [];
   stopListening = onKenniSheetClosed((outcome) => closures.push(outcome));
 });
@@ -80,6 +109,7 @@ afterEach(() => {
   stopListening();
   useAppStore.setState({ signOut: originalSignOut });
   resetKenniSheetRequestsForTests();
+  resetKenniCallbackLinksForTests();
   resetAppStoreForTests();
   jest.restoreAllMocks();
 });
@@ -217,7 +247,7 @@ describe('a request', () => {
   });
 });
 
-describe('a kenni-callback link that reached the router', () => {
+describe('a kenni-callback link that came without its tab', () => {
   it('is only ours when it is a Kenni redirect', () => {
     expect(isKenniCallbackUrl(GOOD_CALLBACK)).toBe(true);
     expect(isKenniCallbackUrl('lifepass://kenni-callback')).toBe(true);
@@ -228,22 +258,133 @@ describe('a kenni-callback link that reached the router', () => {
     expect(handleKenniCallbackLink('lifepass://scan?v=x')).toBe(false);
   });
 
-  it('after Android stopped the app, opens the sheet and completes the verification', async () => {
+  it('after Android stopped the app: the launch link opens the sheet and completes, without a browser', async () => {
     signIn();
     verifiesOnTheServer();
+    await roundTripStarted();
+    launchUrl = GOOD_CALLBACK;
     await render(<KenniNudgeHost />);
-    let handled = false;
-    await act(async () => {
-      handled = handleKenniCallbackLink(GOOD_CALLBACK);
-    });
-    expect(handled).toBe(true);
     await waitFor(() => expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen());
+    expect(screen.getByText(en('kenni.body'))).toBeOnTheScreen();
     expect(openTab).not.toHaveBeenCalled();
     expect(api.sentAll('/auth/kenni/start')).toHaveLength(0);
     expect(api.sent('/auth/kenni/complete', 'POST').body).toEqual({ code: 'the-code', state: 'the-state' });
+    // The state is spent: the record that allowed it is gone.
+    expect(await AsyncStorage.getItem(KENNI_ROUND_TRIP_KEY)).toBeNull();
   });
 
-  it('is left to the open tab while one is waiting, and does nothing signed out', async () => {
+  it('arriving while the session is still restoring, it waits for the host instead of being dropped', async () => {
+    useAppStore.setState({ isLoading: true, isAuthenticated: false, userId: null, profile: null });
+    await roundTripStarted();
+    expect(handleKenniCallbackLink(GOOD_CALLBACK)).toBe(true);
+    expect(isKenniSheetRequested()).toBe(false);
+
+    // Restored: the tabs (and the host) come up.
+    signIn();
+    useAppStore.setState({ isLoading: false });
+    verifiesOnTheServer();
+    await render(<KenniNudgeHost />);
+    await waitFor(() => expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen());
+    expect(api.sentAll('/auth/kenni/complete')).toHaveLength(1);
+  });
+
+  it('a link replayed from Recents after it was completed (no round trip on record) does nothing', async () => {
+    signIn();
+    verifiesOnTheServer();
+    launchUrl = GOOD_CALLBACK;
+    await render(<KenniNudgeHost />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(sheetTitle()).toBeNull();
+    expect(isKenniSheetRequested()).toBe(false);
+    expect(api.sentAll('/auth/kenni/complete')).toHaveLength(0);
+  });
+
+  it('is completed once: the same launch link at the next mount does nothing', async () => {
+    signIn();
+    verifiesOnTheServer();
+    await roundTripStarted();
+    launchUrl = GOOD_CALLBACK;
+    const first = await render(<KenniNudgeHost />);
+    await waitFor(() => expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen());
+    await first.unmount();
+    resetKenniSheetRequestsForTests();
+
+    // A fresh process (the record is what survives it) with the same launch link.
+    resetKenniCallbackLinksForTests();
+    signIn();
+    await render(<KenniNudgeHost />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(sheetTitle()).toBeNull();
+    expect(api.sentAll('/auth/kenni/complete')).toHaveLength(1);
+  });
+
+  it("is dropped for another member's round trip, a stale one, or a profile already verified", async () => {
+    signIn();
+    verifiesOnTheServer();
+    await render(<KenniNudgeHost />);
+    const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+
+    await roundTripStarted('another-member');
+    await act(async () => void handleKenniCallbackLink(`${GOOD_CALLBACK}&n=1`));
+    await settle();
+    expect(isKenniSheetRequested()).toBe(false);
+
+    await roundTripStarted(MEMBER, KENNI_RESUME_WINDOW_MS + 1_000);
+    await act(async () => void handleKenniCallbackLink(`${GOOD_CALLBACK}&n=2`));
+    await settle();
+    expect(isKenniSheetRequested()).toBe(false);
+
+    await roundTripStarted();
+    signIn(true);
+    await act(async () => void handleKenniCallbackLink(`${GOOD_CALLBACK}&n=3`));
+    await settle();
+    expect(isKenniSheetRequested()).toBe(false);
+    expect(await AsyncStorage.getItem(KENNI_ROUND_TRIP_KEY)).toBeNull();
+    expect(api.sentAll('/auth/kenni/complete')).toHaveLength(0);
+  });
+
+  it("later than the tab's grace: the sheet that said cancelled finishes it, keeping its opener", async () => {
+    signIn();
+    verifiesOnTheServer();
+    openTab.mockResolvedValue({ type: 'dismiss' } as never);
+    const onClose = jest.fn();
+    const onSeePasses = jest.fn();
+    await render(<KenniNudgeHost />);
+    await act(async () => openKenniSheet({ bodyKey: 'kenni.body', onSeePasses, onClose }));
+    await fireEvent.press(screen.getByRole('button', { name: en('kenni.cta') }));
+    await waitFor(() => expect(screen.getByText(en('kenni.err.cancelled'))).toBeOnTheScreen());
+
+    await act(async () => sendLink(GOOD_CALLBACK));
+    await waitFor(() => expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen());
+    // The same sheet: its opener was not told it closed, its body stayed.
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText(en('kenni.body'))).toBeOnTheScreen();
+    expect(screen.getAllByRole('header', { name: en('kenni.title') })).toHaveLength(1);
+    expect(api.sentAll('/auth/kenni/complete')).toHaveLength(1);
+
+    await waitFor(() => expect(useAppStore.getState().profile?.kennitalaVerified).toBe(true));
+    await fireEvent.press(screen.getByRole('button', { name: en('common.continue') }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(closures).toEqual([{ verified: true }]);
+  });
+
+  it('with the sign-up nudge up, the nudge finishes it in its own words', async () => {
+    signIn();
+    verifiesOnTheServer();
+    await roundTripStarted();
+    useAppStore.setState({ pendingKennitalaPrompt: true });
+    launchUrl = GOOD_CALLBACK;
+    await render(<KenniNudgeHost />);
+    await waitFor(() => expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen());
+    expect(screen.getByText(en('kenni.onboarding_body'))).toBeOnTheScreen();
+    expect(isKenniSheetRequested()).toBe(false);
+  });
+
+  it("while a tab is open, goes to the tab's session, which ends verified rather than cancelled", async () => {
     signIn();
     let finish: (value: WebBrowser.WebBrowserAuthSessionResult) => void = () => undefined;
     openTab.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
@@ -255,18 +396,51 @@ describe('a kenni-callback link that reached the router', () => {
     await fireEvent.press(screen.getByRole('button', { name: en('kenni.cta') }));
     await waitFor(() => expect(openTab).toHaveBeenCalledTimes(1));
 
+    // A recreated Activity's launch link: never a link event the tab hears.
     expect(handleKenniCallbackLink(GOOD_CALLBACK)).toBe(true);
-    // The same request is still the one on screen; the tab's session completes.
     expect(onClose).not.toHaveBeenCalled();
+    await act(async () => finish({ type: 'dismiss' } as never));
+    await waitFor(() => expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen());
+    expect(screen.queryByText(en('kenni.err.cancelled'))).toBeNull();
+    expect(api.sentAll('/auth/kenni/complete')).toHaveLength(1);
+  });
+
+  it('caught by a tab whose sheet was rebuilt meanwhile, it is finished by the sheet on screen now', async () => {
+    signIn();
+    verifiesOnTheServer();
+    let finish: (value: WebBrowser.WebBrowserAuthSessionResult) => void = () => undefined;
+    openTab.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    const onClose = jest.fn();
+    const before = await render(<KenniNudgeHost />);
+    await act(async () => openKenniSheet({ bodyKey: 'kenni.body', onClose }));
+    await fireEvent.press(screen.getByRole('button', { name: en('kenni.cta') }));
+    await waitFor(() => expect(openTab).toHaveBeenCalledTimes(1));
+
+    // Android rebuilt the app's views behind the eID app: a new host shows the same request.
+    await before.unmount();
+    await render(<KenniNudgeHost />);
+    expect(screen.getByText(en('kenni.body'))).toBeOnTheScreen();
     await act(async () => finish({ type: 'success', url: GOOD_CALLBACK }));
     await waitFor(() => expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen());
     expect(api.sentAll('/auth/kenni/complete')).toHaveLength(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
 
-    useAppStore.setState({ isAuthenticated: false });
-    await cancel();
-    await waitFor(() => expect(isKenniSheetRequested()).toBe(false));
-    expect(handleKenniCallbackLink(GOOD_CALLBACK)).toBe(true);
-    expect(isKenniSheetRequested()).toBe(false);
+  it('is forgotten at sign-out, with the round trip it belonged to', async () => {
+    useAppStore.setState({ isLoading: true, isAuthenticated: false });
+    await roundTripStarted();
+    handleKenniCallbackLink(GOOD_CALLBACK);
+    await act(async () => runSignOutCleaners({ memberId: MEMBER }));
+    expect(await AsyncStorage.getItem(KENNI_ROUND_TRIP_KEY)).toBeNull();
+
+    signIn();
+    verifiesOnTheServer();
+    await render(<KenniNudgeHost />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(sheetTitle()).toBeNull();
+    expect(api.sentAll('/auth/kenni/complete')).toHaveLength(0);
   });
 });
 

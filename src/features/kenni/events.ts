@@ -10,6 +10,10 @@
 // `GET /company-plans/context` whenever any Kenni sheet closes, wherever it
 // was opened from (a verification from the plans screen claims an invite
 // just the same).
+//
+// WHO ANNOUNCES. The sheet itself (./KenniSheet.tsx), once per presentation
+// when it has left the screen, so a sheet mounted anywhere (the host, or
+// the first build's plans screen through the legacy shim) is heard.
 import { useEffect, useRef } from 'react';
 
 import type { KenniSheetOutcome } from './KenniSheet';
@@ -33,7 +37,7 @@ export function useOnKenniSheetClosed(listener: Listener): void {
   useEffect(() => onKenniSheetClosed((outcome) => latest.current(outcome)), []);
 }
 
-/** The host: a sheet has left the screen. */
+/** KenniSheet: a presentation has left the screen. */
 export function notifyKenniSheetClosed(outcome: KenniSheetOutcome): void {
   for (const listener of [...listeners]) {
     try {

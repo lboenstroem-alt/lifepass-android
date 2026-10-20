@@ -15,6 +15,8 @@ import { decodeProfile } from '../../../api/profile';
 import { bottomSheetMock } from '../../../components/ui/testing/bottomSheetMock';
 import { setCurrentLanguage, translate, type Lang } from '../../../i18n';
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
+import KenniVerificationModal from '../../../components/KenniVerificationModal';
+import { onKenniSheetClosed } from '../events';
 import KenniSheet, { KENNI_SUPPORT_URL, type KenniSheetOutcome, type KenniSheetProps } from '../KenniSheet';
 import { failureMessageKey, KENNI_FAILURES, type KenniFailure } from '../model';
 import { KenniWebAuthError, type Authenticate } from '../webAuth';
@@ -329,4 +331,74 @@ it('a completion that lands after Cancel still re-reads the profile, and says no
   await act(async () => release(GOOD_CALLBACK));
   await waitFor(() => expect(useAppStore.getState().profile?.kennitalaVerified).toBe(true));
   expect(announced).not.toHaveBeenCalledWith(en('kenni.verified'));
+});
+
+describe('its close is announced by the sheet itself, wherever it is mounted', () => {
+  let heard: KenniSheetOutcome[];
+  let stop: () => void;
+  beforeEach(() => {
+    heard = [];
+    stop = onKenniSheetClosed((outcome) => heard.push(outcome));
+  });
+  afterEach(() => stop());
+
+  it('once per presentation, with how it ended', async () => {
+    signIn();
+    answer();
+    const closed = jest.fn<void, [KenniSheetOutcome]>();
+    await render(<Harness onClosed={closed} />);
+    await fireEvent.press(verifyButton());
+    await waitFor(() => expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen());
+    await fireEvent.press(screen.getByRole('button', { name: en('common.continue') }));
+    await waitFor(() => expect(heard).toEqual([{ verified: true }]));
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(closed).toHaveBeenCalledWith({ verified: true });
+  });
+
+  it("through the first build's plans screen path (the legacy shim) too", async () => {
+    signIn();
+    answer();
+    const onVerified = jest.fn();
+    function Legacy() {
+      const [visible, setVisible] = useState(true);
+      return (
+        <KenniVerificationModal
+          visible={visible}
+          onClose={() => setVisible(false)}
+          onVerified={onVerified}
+          authenticate={async () => GOOD_CALLBACK}
+        />
+      );
+    }
+    await render(<Legacy />);
+    await fireEvent.press(screen.getByRole('button', { name: en('common.cancel') }));
+    await waitFor(() => expect(heard).toEqual([{ verified: false }]));
+    expect(onVerified).not.toHaveBeenCalled();
+  });
+});
+
+it('a resume link given while it shows completes once, keeping the body it was opened with', async () => {
+  signIn();
+  answer();
+  const authenticate = jest.fn<Promise<string>, [string]>(async () => {
+    throw new KenniWebAuthError('cancelled');
+  });
+  function Given() {
+    const [resumeUrl, setResumeUrl] = useState<string | undefined>(undefined);
+    return (
+      <>
+        <Harness bodyKey="kenni.onboarding_body" authenticate={authenticate} resumeUrl={resumeUrl} />
+        <Pressable testID="give" onPress={() => setResumeUrl(GOOD_CALLBACK)} />
+      </>
+    );
+  }
+  await render(<Given />);
+  await fireEvent.press(verifyButton());
+  await waitFor(() => expect(screen.getByText(en('kenni.err.cancelled'))).toBeOnTheScreen());
+
+  await fireEvent.press(screen.getByTestId('give'));
+  await waitFor(() => expect(screen.getByText(en('kenni.verified'))).toBeOnTheScreen());
+  expect(screen.getByText(en('kenni.onboarding_body'))).toBeOnTheScreen();
+  expect(api.sentAll('/auth/kenni/complete')).toHaveLength(1);
+  expect(authenticate).toHaveBeenCalledTimes(1);
 });

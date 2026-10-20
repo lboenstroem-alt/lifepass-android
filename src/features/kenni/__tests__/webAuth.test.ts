@@ -7,6 +7,7 @@ import { Linking } from 'react-native';
 
 import {
   authenticateWithCustomTab,
+  deliverKenniRedirect,
   isKenniWebAuthInFlight,
   KENNI_CALLBACK_PREFIX,
   KENNI_LATE_REDIRECT_GRACE_MS,
@@ -157,5 +158,34 @@ describe('a redirect handed to the sheet', () => {
     });
     await authenticateWithCustomTab(URL);
     expect(wasKenniCallbackConsumed(CALLBACK)).toBe(true);
+  });
+});
+
+describe('a redirect that reaches the app only as a launch link (a recreated Activity)', () => {
+  it('handed to the open tab, it is the answer when the tab comes back without one', async () => {
+    let finish: (value: WebBrowser.WebBrowserAuthSessionResult) => void = () => undefined;
+    open.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    const answer = authenticateWithCustomTab(URL);
+    expect(deliverKenniRedirect('lifepass://scan?v=x')).toBe(false);
+    expect(deliverKenniRedirect(CALLBACK)).toBe(true);
+    // The first one wins.
+    expect(deliverKenniRedirect('lifepass://kenni-callback?code=other&state=s')).toBe(false);
+    finish(DISMISSED);
+    await expect(answer).resolves.toBe(CALLBACK);
+    expect(wasKenniCallbackConsumed(CALLBACK)).toBe(true);
+  });
+
+  it('wakes a tab already waiting out its grace', async () => {
+    jest.useFakeTimers();
+    open.mockResolvedValue(DISMISSED);
+    const answer = authenticateWithCustomTab(URL);
+    await jest.advanceTimersByTimeAsync(50);
+    expect(deliverKenniRedirect(CALLBACK)).toBe(true);
+    await expect(answer).resolves.toBe(CALLBACK);
+  });
+
+  it('with no tab open, nobody takes it', () => {
+    expect(isKenniWebAuthInFlight()).toBe(false);
+    expect(deliverKenniRedirect(CALLBACK)).toBe(false);
   });
 });

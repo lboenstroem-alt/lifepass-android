@@ -54,6 +54,14 @@
  * router afterwards is never completed a second time (./callbackLink.ts):
  * a state completes once, and a second try would turn "verified" into
  * "couldn't finish".
+ *
+ * A REDIRECT THAT NEVER COMES AS A LINK EVENT. When Android recreates the
+ * Activity while the JS keeps running (memory pressure, "Don't keep
+ * activities"), the redirect reaches JS only as the new Activity's launch
+ * link (`Linking.getInitialURL`), which neither the polyfill nor the
+ * listener here hears. ./callbackLink.ts hands such a link to the open tab
+ * (`deliverKenniRedirect`), so the tab's session ends with it instead of
+ * saying "cancelled".
  */
 import { Linking } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
@@ -94,6 +102,9 @@ let lateRedirectGraceMs = KENNI_LATE_REDIRECT_GRACE_MS;
 
 let inFlight = false;
 
+/** The open tab's session takes a redirect it has not had yet (null when no tab is open). */
+let takeRedirect: ((url: string) => boolean) | null = null;
+
 /** Redirects a tab handed to the sheet in this process (each completes once). */
 const consumed = new Set<string>();
 
@@ -111,6 +122,16 @@ export function wasKenniCallbackConsumed(url: string): boolean {
   return consumed.has(url);
 }
 
+/**
+ * Hands a `lifepass://kenni-callback` link that reached the app some other
+ * way (the launch link of a recreated Activity) to the open tab's session.
+ * True when a tab is open and took it; false when no tab is open, or it
+ * already has its redirect.
+ */
+export function deliverKenniRedirect(url: string): boolean {
+  return takeRedirect?.(url) ?? false;
+}
+
 function isOurRedirect(url: unknown): url is string {
   return typeof url === 'string' && url.toLowerCase().startsWith(KENNI_CALLBACK_PREFIX);
 }
@@ -126,10 +147,15 @@ export const authenticateWithCustomTab: Authenticate = async (authorizationUrl) 
   let arrived: (() => void) | null = null;
   // Read through a call: the listener sets it while this function awaits.
   const seenRedirect = (): string | null => lateRedirect;
-  const subscription = Linking.addEventListener('url', (event: { url: string }) => {
-    if (lateRedirect !== null || !isOurRedirect(event.url)) return;
-    lateRedirect = event.url;
+  const take = (url: string): boolean => {
+    if (lateRedirect !== null || !isOurRedirect(url)) return false;
+    lateRedirect = url;
     arrived?.();
+    return true;
+  };
+  takeRedirect = take;
+  const subscription = Linking.addEventListener('url', (event: { url: string }) => {
+    take(event.url);
   });
 
   const consume = (url: string): string => {
@@ -167,6 +193,7 @@ export const authenticateWithCustomTab: Authenticate = async (authorizationUrl) 
     }
   } finally {
     subscription.remove();
+    if (takeRedirect === take) takeRedirect = null;
     inFlight = false;
   }
 };
@@ -174,6 +201,7 @@ export const authenticateWithCustomTab: Authenticate = async (authorizationUrl) 
 /** For tests: forget a session a failed test left marked open, and the redirects seen. */
 export function resetKenniWebAuthForTests(): void {
   inFlight = false;
+  takeRedirect = null;
   consumed.clear();
   lateRedirectGraceMs = KENNI_LATE_REDIRECT_GRACE_MS;
 }
