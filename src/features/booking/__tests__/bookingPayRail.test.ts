@@ -19,6 +19,7 @@ import { bookingInProgress, canConfirmOccurrence, classRefusal, confirmChargeIsk
 import {
   ablerOccurrence,
   ACTIVITY_ID,
+  BOKUN,
   bodyOf,
   bookingPosts,
   classesReply,
@@ -37,6 +38,7 @@ import {
   START,
   SURCHARGE_PREVIEW,
   testSession,
+  VENUE_DAY,
   type TestSession,
 } from './bookingHarness';
 
@@ -400,6 +402,75 @@ it("a slot's session carries its own times and the booking's key", async () => {
   });
   expect(sessionPosts()[0].headers['idempotency-key']).toBe(bookingPosts()[0].headers['idempotency-key']);
   expect(session.store.getState().bookingComplete).toBe(true);
+});
+
+it("a group's session carries every guest's band, so a child is paid for and booked as a child", async () => {
+  respond((request) => {
+    if (request.path.endsWith('/availability')) {
+      return slotsReply([START], {
+        provider: 'bokun',
+        ageBands: [
+          { band: 'adult', rangeLabel: '16+', priceIsk: null },
+          { band: 'child', rangeLabel: '6-15', priceIsk: 3_000 },
+        ],
+      });
+    }
+    if (request.path.endsWith('/booking-preview')) return Reply.ok(SURCHARGE_PREVIEW);
+    if (request.method === 'POST' && request.path === '/bookings/payment-sessions') {
+      return Reply.ok({ hasCard: false, externalSessionId: 'kling_cs_9', url: 'https://pay.kling.is/c/kling_cs_9', amountIsk: 8_970 });
+    }
+    if (request.method === 'POST' && request.path === '/bookings/payment-sessions/confirm') return FULFILLED;
+    if (request.method === 'POST' && request.path === '/bookings') {
+      return bodyOf(request).acceptCharge === true ? Reply.problem(402, 'no_payment_method_on_file') : consent(8_970);
+    }
+    return Reply.problem(404, 'not_found');
+  });
+  openAuthSession.mockResolvedValueOnce(DONE);
+  const session = testSession({ activity: BOKUN, initialDay: VENUE_DAY });
+  await session.store.getState().loadTimetable();
+  session.store.getState().selectSlot(session.store.getState().availableSlots[0]);
+  session.store.setState({ currentStep: 2 });
+  // The party section reports one adult and one child guest.
+  await session.store.getState().changeGuests({ adult: 1, child: 1 });
+  await session.store.getState().confirmBooking();
+  await session.store.getState().acceptCharge();
+
+  expect(bodyOf(bookingPosts()[0])).toMatchObject({ participants: 3, guestAgeBands: ['adult', 'child'] });
+  expect(bodyOf(sessionPosts()[0])).toMatchObject({
+    participants: 3,
+    guestAgeBands: ['adult', 'child'],
+    acceptedChargeAmountIsk: 8_970,
+  });
+  expect(session.store.getState().bookingComplete).toBe(true);
+});
+
+it("a class sold as a slot keeps the class's name on the payment record, for a reminder after the screen is gone", async () => {
+  respond((request) => {
+    if (request.path.endsWith('/availability')) return slotsReply([START]);
+    if (request.path.endsWith('/booking-preview')) return Reply.ok(SURCHARGE_PREVIEW);
+    if (request.method === 'POST' && request.path === '/bookings/payment-sessions') {
+      return Reply.ok({ hasCard: false, externalSessionId: 'kling_cs_9', url: 'https://pay.kling.is/c/kling_cs_9', amountIsk: 1_990 });
+    }
+    if (request.method === 'POST' && request.path === '/bookings/payment-sessions/confirm') return FULFILLED;
+    if (request.method === 'POST' && request.path === '/bookings') {
+      return bodyOf(request).acceptCharge === true ? Reply.problem(402, 'no_payment_method_on_file') : consent(1_990);
+    }
+    return Reply.problem(404, 'not_found');
+  });
+  openAuthSession.mockResolvedValueOnce(DONE);
+  const presenter = jest.fn();
+  registerPaymentOutcomePresenter('booking', presenter);
+  const session = testSession();
+  session.store.getState().setScreenAlive(() => false);
+  await session.store.getState().prepare({ ...slotOccurrence(plus(START, 2700)), className: 'Hot Yoga' });
+  await session.store.getState().confirmBooking();
+  await session.store.getState().acceptCharge();
+  expect(presenter).toHaveBeenCalledTimes(1);
+  expect(presenter.mock.calls[0][0]).toMatchObject({
+    rail: 'booking',
+    settlement: { kind: 'fulfilled' },
+    record: { booking: { kind: 'slot', className: 'Hot Yoga', activityName: 'Spin', startsAt: iso(START) } },
+  });
 });
 
 it('for every kind of member the line is the amount offered, consented to and charged', async () => {

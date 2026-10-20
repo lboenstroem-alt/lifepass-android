@@ -7,7 +7,7 @@
  */
 import { api, Reply, type StubReply } from '@test/server';
 
-import { apiPost } from '../../../api/client';
+import { API_TIMEOUTS, apiClient, apiPost } from '../../../api/client';
 import { createBookingBody, decodeCreateBookingResult, makeSlot, type CreateBookingInput } from '../../../api/bookings';
 import { stubApiClientPerTest } from '../../../api/testing';
 import { lookup, setCurrentLanguage } from '../../../i18n';
@@ -16,6 +16,7 @@ import {
   canConfirmOccurrence,
   confirmChargeIsk,
   DECLINED_ATTEMPT_CODES,
+  guestBandsFromCounts,
   loadsInitialDayOnAppear,
   needsMembership,
   visitChoiceOptions,
@@ -46,6 +47,7 @@ import {
   SURCHARGE_PREVIEW,
   testSession,
   VENUE_DAY,
+  type TestSession,
 } from './bookingHarness';
 
 stubApiClientPerTest();
@@ -86,18 +88,45 @@ describe('the money paths (BookingMoneyPathTests)', () => {
   }
 
   it('a create waits longer than a minute (120 s) and books', async () => {
-    const seen: number[] = [];
-    const { store } = bokunSession({
-      createBooking: (input: CreateBookingInput, key: string) => {
-        const options = { idempotencyKey: key, timeoutMs: 120_000, decode: decodeCreateBookingResult };
-        seen.push(options.timeoutMs);
-        return apiPost('/bookings', createBookingBody(input), options);
-      },
-    });
-    respond(() => Reply.ok(CONFIRMED));
-    await store.getState().confirmBooking();
-    expect(store.getState().bookingComplete).toBe(true);
-    expect(seen).toEqual([120_000]);
+    // The app's own create (src/api/bookings.ts) through the real client:
+    // the post is asked for the long ceiling, and the session books.
+    expect(API_TIMEOUTS.bookingCreate).toBe(120_000);
+    const post = jest.spyOn(apiClient, 'post');
+    try {
+      const { store } = bokunSession();
+      respond(() => Reply.ok(CONFIRMED));
+      await store.getState().confirmBooking();
+      expect(store.getState().bookingComplete).toBe(true);
+      const creates = post.mock.calls.filter(([path]) => path === '/bookings');
+      expect(creates).toHaveLength(1);
+      expect(creates[0][2]?.timeoutMs).toBe(120_000);
+    } finally {
+      post.mockRestore();
+    }
+  });
+
+  it('a create with no answer is still waited on past a minute, and only at 120 s is the outcome unknown', async () => {
+    // The 2.5.5 failure: a client that gives up at 60 s tells the member it
+    // failed while the server is still booking and charging.
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
+    try {
+      const { store } = bokunSession();
+      respond(() => Reply.hang());
+      const confirming = store.getState().confirmBooking();
+      await jest.advanceTimersByTimeAsync(61_000);
+      expect(bookingPosts()).toHaveLength(1);
+      expect(store.getState().isBooking).toBe(true);
+      expect(store.getState().bookingOutcomeUnknown).toBe(false);
+      expect(store.getState().error).toBeNull();
+
+      await jest.advanceTimersByTimeAsync(59_000);
+      await confirming;
+      expect(store.getState().bookingOutcomeUnknown).toBe(true);
+      expect(store.getState().error).toBeNull();
+      expect(store.getState().idempotencyKey).not.toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('a timeout is not a failure, and checking again can only return the same booking', async () => {
@@ -406,6 +435,34 @@ describe('a first-party slot', () => {
     });
   });
 
+  it("a class sold as a slot is reminded by the class's name, never the activity's", async () => {
+    // iOS ClassBookingSheet passes `occurrence.className ?? activity.name`.
+    respond((request) => {
+      if (request.path.endsWith('/availability')) return slotsReply([START]);
+      if (request.path.endsWith('/booking-preview')) return Reply.ok(FREE_PREVIEW);
+      if (request.method === 'POST' && request.path === '/bookings') return Reply.ok(CONFIRMED);
+      return Reply.problem(404, 'not_found');
+    });
+    const { store, reminders } = testSession();
+    await store.getState().prepare({ ...slotOccurrence(plus(START, 2700)), className: 'Hot Yoga' });
+    await store.getState().confirmBooking();
+    expect(store.getState().bookingComplete).toBe(true);
+    expect(reminders).toHaveBeenCalledWith({ className: 'Hot Yoga', startsAt: START, language: 'en' });
+
+    // With no class name, the activity's (the full flow's title).
+    api.reset();
+    respond((request) => {
+      if (request.path.endsWith('/availability')) return slotsReply([START]);
+      if (request.path.endsWith('/booking-preview')) return Reply.ok(FREE_PREVIEW);
+      if (request.method === 'POST' && request.path === '/bookings') return Reply.ok(CONFIRMED);
+      return Reply.problem(404, 'not_found');
+    });
+    const unnamed = testSession();
+    await unnamed.store.getState().prepare({ ...slotOccurrence(plus(START, 2700)), className: null });
+    await unnamed.store.getState().confirmBooking();
+    expect(unnamed.reminders).toHaveBeenCalledWith({ className: FIRST_PARTY.name, startsAt: START, language: 'en' });
+  });
+
   it('a Coach slot with no end takes it from the re-check, and is never booked blind', async () => {
     respond((request) => {
       if (request.path.endsWith('/availability')) return slotsReply([START]);
@@ -426,6 +483,106 @@ describe('a first-party slot', () => {
     expect(blind.store.getState().occurrenceStatus).toBe('unresolved');
     await blind.store.getState().confirmBooking();
     expect(bookingPosts()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The group party (the section reports guests by band)
+
+describe('the group party', () => {
+  const BANDS = [
+    { band: 'adult', rangeLabel: '16+', priceIsk: null },
+    { band: 'child', rangeLabel: '6-15', priceIsk: 3_000 },
+    { band: 'infant', rangeLabel: '0-5', priceIsk: 0 },
+  ];
+
+  it('counts by band become one band per guest seat: kept in place, freed seats filled, new seats at the end', () => {
+    const order = ['adult', 'child', 'infant'];
+    expect(guestBandsFromCounts([], { adult: 1, child: 1 }, order)).toEqual(['adult', 'child']);
+    // Same size, another age: the seat that lost its band takes the new one.
+    expect(guestBandsFromCounts(['adult', 'adult'], { adult: 1, child: 1 }, order)).toEqual(['adult', 'child']);
+    expect(guestBandsFromCounts(['child', 'adult'], { adult: 2 }, order)).toEqual(['adult', 'adult']);
+    // A choice stays with its person when another guest leaves.
+    expect(guestBandsFromCounts(['child', 'adult', 'infant'], { child: 1, infant: 1 }, order)).toEqual(['child', 'infant']);
+    expect(guestBandsFromCounts(['child'], { child: 1, adult: 2 }, order)).toEqual(['child', 'adult', 'adult']);
+    // A band the venue's list does not name still counts, after the known ones.
+    expect(guestBandsFromCounts([], { senior: 1, adult: 1 }, order)).toEqual(['adult', 'senior']);
+    // Nonsense counts are none; ten people at most.
+    expect(guestBandsFromCounts(['adult'], { adult: -2, child: Number.NaN, infant: 0.5 }, order)).toEqual([]);
+    expect(guestBandsFromCounts([], { adult: 20 }, order)).toHaveLength(9);
+  });
+
+  function partyWorld(): void {
+    respond((request) => {
+      if (request.path.endsWith('/availability')) return slotsReply([START], { provider: 'bokun', ageBands: BANDS });
+      if (request.path.endsWith('/booking-preview')) return Reply.ok(FREE_PREVIEW);
+      if (request.method === 'POST' && request.path === '/bookings') return Reply.ok(CONFIRMED);
+      return Reply.problem(404, 'not_found');
+    });
+  }
+
+  async function onConfirmStep(): Promise<TestSession> {
+    partyWorld();
+    const session = testSession({ activity: BOKUN, initialDay: VENUE_DAY });
+    await session.store.getState().loadTimetable();
+    session.store.getState().selectSlot(session.store.getState().availableSlots[0]);
+    session.store.setState({ currentStep: 2 });
+    await session.store.getState().loadPreview();
+    return session;
+  }
+
+  it('a child guest is priced and booked as a child: the preview and the create carry every band', async () => {
+    const { store } = await onConfirmStep();
+    await store.getState().changeGuests({ adult: 1, child: 1 });
+    expect(store.getState().participants).toBe(3);
+    expect(store.getState().guestAgeBands).toEqual(['adult', 'child']);
+    // The party re-read the timetable for three, kept the time and re-priced it.
+    expect(requests('/availability').at(-1)!.query.participants).toBe('3');
+    expect(store.getState().selectedSlot?.startTime).toEqual(START);
+    const preview = requests('/booking-preview').at(-1)!;
+    expect(preview.query).toMatchObject({ participants: '3', guestAgeBands: 'adult,child' });
+
+    await store.getState().confirmBooking();
+    expect(bodyOf(bookingPosts()[0])).toMatchObject({ participants: 3, guestAgeBands: ['adult', 'child'] });
+  });
+
+  it('the same party size with another age re-prices in place, with the bands, and drops the offer and the rung', async () => {
+    const { store } = await onConfirmStep();
+    await store.getState().changeGuests({ adult: 2 });
+    const availabilityReads = requests('/availability').length;
+    const previewReads = requests('/booking-preview').length;
+    store.setState({ pendingOffer: { kind: 'surcharge', amountIsk: 9_000 }, offerWasReoffered: true, visitChoice: 'keep_visit' });
+
+    await store.getState().changeGuests({ adult: 1, child: 1 });
+
+    expect(store.getState().participants).toBe(3);
+    expect(store.getState().guestAgeBands).toEqual(['adult', 'child']);
+    expect(store.getState().pendingOffer).toBeNull();
+    expect(store.getState().offerWasReoffered).toBe(false);
+    expect(store.getState().visitChoice).toBeNull();
+    // No timetable read (capacity is the same), one re-price with the new ages.
+    expect(requests('/availability')).toHaveLength(availabilityReads);
+    expect(requests('/booking-preview')).toHaveLength(previewReads + 1);
+    expect(requests('/booking-preview').at(-1)!.query.guestAgeBands).toBe('adult,child');
+
+    // The same answer again changes nothing.
+    await store.getState().changeGuests({ child: 1, adult: 1 });
+    expect(requests('/booking-preview')).toHaveLength(previewReads + 1);
+
+    await store.getState().confirmBooking();
+    expect(bodyOf(bookingPosts()[0]).guestAgeBands).toEqual(['adult', 'child']);
+  });
+
+  it('all-adult guests send no bands, and nothing changes while a booking is in flight', async () => {
+    const { store } = await onConfirmStep();
+    await store.getState().changeGuests({ adult: 1 });
+    expect(store.getState().participants).toBe(2);
+    expect(requests('/booking-preview').at(-1)!.query).not.toHaveProperty('guestAgeBands');
+
+    store.setState({ isBooking: true });
+    await store.getState().changeGuests({ adult: 1, child: 2 });
+    expect(store.getState().participants).toBe(2);
+    expect(store.getState().guestAgeBands).toEqual(['adult']);
   });
 });
 

@@ -24,6 +24,7 @@ export {
   gateRefusalForCode,
   groupBookable,
   guestAgeBandsForRequest,
+  guestBandsFromCounts,
   hasSelection,
   needsMembership,
   occurrenceEnd,
@@ -49,6 +50,7 @@ export {
   type BookingVenue,
   type CreateBookingSessionOptions,
   type GateRefusal,
+  type GuestBandCounts,
   type OccurrenceSnapshot,
   type OccurrenceStatus,
 } from './bookingSession';

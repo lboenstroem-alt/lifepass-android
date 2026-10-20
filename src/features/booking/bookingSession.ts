@@ -262,6 +262,11 @@ export interface BookingSessionActions {
   resetParty(): void;
   changeParticipants(next: number): Promise<void>;
   changeGuestAgeBand(index: number, band: string): Promise<void>;
+  /**
+   * The party section's answer, as guests by band (the slot contract): the
+   * party size and every guest seat's band at once (see `guestBandsFromCounts`).
+   */
+  changeGuests(counts: GuestBandCounts): Promise<void>;
   changeVisitChoice(next: string): Promise<void>;
   loadTimetable(): Promise<void>;
   loadPreview(): Promise<void>;
@@ -647,6 +652,60 @@ function syncedGuestBands(participants: number, bands: readonly string[]): strin
   return [...bands, ...Array<string>(wanted - bands.length).fill('adult')];
 }
 
+/** Guests by age band (`{ adult: 1, child: 2 }`), as the party section reports them. */
+export type GuestBandCounts = Readonly<Record<string, number>>;
+
+/** The most guests one booking takes: ten people, the member included. */
+const MAX_GUESTS = 9;
+
+/**
+ * The per-seat band list (`guestAgeBands`) for a party reported as counts by
+ * band. Every guest's band rides on the preview, the create and the payment
+ * session, so a child reported here must reach those as a child: priced and
+ * reserved as one.
+ *
+ * iOS edits one seat at a time (`changeGuestAgeBand(at:to:)`) and its
+ * stepper grows or shrinks the list at the end; this keeps the same shape. A
+ * seat whose band is still wanted keeps it, in place (a choice stays with its
+ * person); what is left fills the seats that lost theirs, then new seats at
+ * the end, in the venue's band order. Seats nobody fills are dropped. A count
+ * that is not a whole, positive number is none; the list stops at nine guests.
+ */
+export function guestBandsFromCounts(
+  current: readonly string[],
+  counts: GuestBandCounts,
+  bandOrder: readonly string[] = [],
+): string[] {
+  const remaining = new Map<string, number>();
+  for (const [band, raw] of Object.entries(counts)) {
+    const count = Number.isFinite(raw) ? Math.floor(raw) : 0;
+    if (count > 0) remaining.set(band, count);
+  }
+  const take = (band: string): boolean => {
+    const left = remaining.get(band) ?? 0;
+    if (left <= 0) return false;
+    remaining.set(band, left - 1);
+    return true;
+  };
+  const seats = current.map((band) => (take(band) ? band : null));
+  const order = [...bandOrder.filter((band) => remaining.has(band)), ...[...remaining.keys()].filter((band) => !bandOrder.includes(band))];
+  const fill: string[] = [];
+  for (const band of order) {
+    for (let left = remaining.get(band) ?? 0; left > 0; left -= 1) fill.push(band);
+  }
+  const bands: string[] = [];
+  for (const seat of seats) {
+    if (seat !== null) bands.push(seat);
+    else if (fill.length > 0) bands.push(fill.shift()!);
+  }
+  bands.push(...fill);
+  return bands.slice(0, MAX_GUESTS);
+}
+
+function sameBands(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((band, index) => band === b[index]);
+}
+
 /** A new booking session (one per screen). */
 export function createBookingSession(options: CreateBookingSessionOptions = {}): BookingSessionStore {
   const deps: BookingSessionDeps = { ...defaultDeps, ...options.deps };
@@ -678,7 +737,12 @@ export function createBookingSession(options: CreateBookingSessionOptions = {}):
       if (!startsAt) return;
       void deps
         .scheduleCheckInReminder({
-          className: s.selectedClass?.name ?? s.activity?.name ?? null,
+          // The class's own name, else what the screen calls it: the class
+          // sheet passes `occurrence.className ?? activity.name` (iOS
+          // ClassBookingSheet), so a first-party class booked as a slot
+          // still reads "Hot Yoga starts soon"; the full flow passes the
+          // activity's name.
+          className: s.selectedClass?.name ?? s.occurrence?.className ?? s.activity?.name ?? null,
           startsAt,
           language: deps.language(),
         })
@@ -799,7 +863,9 @@ export function createBookingSession(options: CreateBookingSessionOptions = {}):
         startsAt: startsAt ? toWireDate(startsAt) : null,
         endsAt: endsAt ? toWireDate(endsAt) : null,
         eventId: klass?.eventId ?? null,
-        className: klass?.name ?? null,
+        // As the reminder names it (`markBooked`): the class sheet's session
+        // keeps its class name even when it is booked as a slot.
+        className: klass?.name ?? s.occurrence?.className ?? null,
         participants: groupBookable(s) && s.participants > 1 ? s.participants : null,
       };
     }
@@ -1177,6 +1243,47 @@ export function createBookingSession(options: CreateBookingSessionOptions = {}):
       if (get().occurrenceStatus === 'ready') await loadPreview();
     }
 
+    // --- The party ----------------------------------------------------------
+
+    /**
+     * A new party size (iOS `changeParticipants`), with the guests' bands when
+     * the caller knows them (null: keep the seats, grow with adults, shrink
+     * from the end). The pending consent belongs to the OLD party, and so
+     * does a rung; the timetable is read again so capacity covers everyone,
+     * and a kept selection re-previews at the new composition.
+     */
+    async function resizeParty(participants: number, bands: readonly string[] | null): Promise<void> {
+      set((state) => ({
+        participants,
+        guestAgeBands: syncedGuestBands(participants, bands ?? state.guestAgeBands),
+        pendingOffer: null,
+        offerWasReoffered: false,
+        visitChoice: null,
+      }));
+      // The selection survives unless its known capacity can't seat the party.
+      const kept = get().selectedSlot;
+      await loadTimetable();
+      if (!kept) return;
+      const refreshed = get().availableSlots.find((slot) => slot.id === kept.id);
+      if (
+        refreshed &&
+        refreshed.isAvailable &&
+        (refreshed.remainingCapacity == null || refreshed.remainingCapacity >= participants)
+      ) {
+        set((state) => slotPatch(state, refreshed));
+        if (get().currentStep === 2) await loadPreview();
+      }
+    }
+
+    /**
+     * Same party size, other bands (iOS `changeGuestAgeBand`): re-prices in
+     * place. The pending consent and the rung belong to the OLD composition.
+     */
+    async function recompose(bands: readonly string[]): Promise<void> {
+      set({ guestAgeBands: [...bands], pendingOffer: null, offerWasReoffered: false, visitChoice: null });
+      await loadPreview();
+    }
+
     return {
       ...INITIAL,
       activity: options.activity ?? null,
@@ -1218,27 +1325,7 @@ export function createBookingSession(options: CreateBookingSessionOptions = {}):
       async changeParticipants(next) {
         const clamped = Math.min(10, Math.max(1, Math.round(next)));
         if (clamped === get().participants) return;
-        // The pending consent belongs to the OLD size, and so does a rung.
-        set((state) => ({
-          participants: clamped,
-          guestAgeBands: syncedGuestBands(clamped, state.guestAgeBands),
-          pendingOffer: null,
-          offerWasReoffered: false,
-          visitChoice: null,
-        }));
-        // The selection survives unless its known capacity can't seat the party.
-        const kept = get().selectedSlot;
-        await loadTimetable();
-        if (!kept) return;
-        const refreshed = get().availableSlots.find((slot) => slot.id === kept.id);
-        if (
-          refreshed &&
-          refreshed.isAvailable &&
-          (refreshed.remainingCapacity == null || refreshed.remainingCapacity >= clamped)
-        ) {
-          set((state) => slotPatch(state, refreshed));
-          if (get().currentStep === 2) await loadPreview();
-        }
+        await resizeParty(clamped, null);
       },
 
       async changeGuestAgeBand(index, band) {
@@ -1246,8 +1333,28 @@ export function createBookingSession(options: CreateBookingSessionOptions = {}):
         if (index < 0 || index >= bands.length || bands[index] === band) return;
         const next = [...bands];
         next[index] = band;
-        set({ guestAgeBands: next, pendingOffer: null, offerWasReoffered: false, visitChoice: null });
-        await loadPreview();
+        await recompose(next);
+      },
+
+      async changeGuests(counts) {
+        const s = get();
+        // A booking in flight was consented to for THIS party (the section is
+        // disabled then too).
+        if (s.isBooking) return;
+        const bands = guestBandsFromCounts(
+          s.guestAgeBands,
+          counts,
+          s.offeredAgeBands.map((offer) => offer.band),
+        );
+        const participants = 1 + bands.length;
+        if (participants !== s.participants) {
+          // The stepper's path, with the composition the section reported.
+          await resizeParty(participants, bands);
+        } else if (!sameBands(bands, s.guestAgeBands)) {
+          // Same size, other ages (two adults become an adult and a child):
+          // the picker's path, a re-price in place.
+          await recompose(bands);
+        }
       },
 
       async changeVisitChoice(next) {
