@@ -24,6 +24,7 @@ import { useAppStore } from '../../../stores/appStore';
 import { supabase } from '../../../supabase/lib/client';
 import { RECOVERY_REQUESTED_AT_KEY } from '../../../supabase/services/auth';
 import { handleAuthCallback, isSocialReturnLink, resetAuthCallbackForTests } from '../authCallback';
+import { RECOVERY_PENDING_KEY } from '../recovery';
 import { SPENT_AUTH_LINKS_KEY } from '../spentLinks';
 
 stubApiClientPerTest();
@@ -296,6 +297,9 @@ describe('with the real sign-in, for a fresh unverified account', () => {
     expect(store().isAuthenticated).toBe(true);
     expect(store().pendingPasswordRecovery).toBe(true);
     expect(store().pendingKennitalaPrompt).toBe(false);
+    // Written down for a restart, and kept through the link's own sign-in.
+    const mark = JSON.parse((await AsyncStorage.getItem(RECOVERY_PENDING_KEY)) ?? 'null') as { userId: string } | null;
+    expect(mark?.userId).toBe(MEMBER_A);
   });
 
   it('a nudge armed by another sign-in is held back while the screen is up', async () => {

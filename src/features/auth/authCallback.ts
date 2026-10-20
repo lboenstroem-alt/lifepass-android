@@ -101,7 +101,7 @@ async function handle(url: string): Promise<void> {
     isRecovery = isRecovery || exchanged.recovery;
     const session = exchanged.session;
     // Up before the sign-in runs, so nothing the sign-in arms can cover it.
-    if (isRecovery) beginPasswordRecovery();
+    if (isRecovery) beginPasswordRecovery(session.user.id);
     // Android: a link that worked retires the banner an earlier failed one
     // left (iOS keeps it until the email is edited, so it would greet the
     // member again at their next sign-out).

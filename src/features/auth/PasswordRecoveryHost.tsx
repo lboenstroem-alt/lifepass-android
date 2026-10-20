@@ -27,7 +27,7 @@ import { modalRequestClose } from '../../navigation/guards';
 import { useAppStore } from '../../stores/appStore';
 import { updatePassword } from '../../supabase/services/auth';
 import { colors } from '../../theme';
-import { endPasswordRecovery } from './recovery';
+import { endPasswordRecovery, forgetPendingRecovery } from './recovery';
 import { newPasswordProblem } from './validation';
 
 export default function PasswordRecoveryHost() {
@@ -64,6 +64,8 @@ function SetNewPassword() {
     setError(null);
     try {
       await updatePassword(password);
+      // Changed: a restart before the alert's OK must not ask again.
+      void forgetPendingRecovery();
       if (mounted.current) setDone(true);
     } catch (failure) {
       if (mounted.current) setError(errorMessage(failure));

@@ -4,6 +4,7 @@
  * password (never by back), at least 12 characters and the same twice, the
  * change made through Supabase, and a sign-out takes it away.
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import { Reply, supabase as authHost } from '@test/server';
@@ -13,6 +14,7 @@ import { freshStorePerTest, MEMBER_A, phoneLanguage, sessionJSON } from '../../.
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
 import { supabase } from '../../../supabase/lib/client';
 import PasswordRecoveryHost from '../PasswordRecoveryHost';
+import { RECOVERY_PENDING_KEY } from '../recovery';
 
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 
@@ -31,6 +33,8 @@ async function openRecovery(lang: Lang = 'en') {
   phoneLanguage(lang);
   resetAppStoreForTests();
   useAppStore.setState({ isLoading: false, pendingPasswordRecovery: true });
+  // As the reset link leaves it: written down for a restart.
+  await AsyncStorage.setItem(RECOVERY_PENDING_KEY, JSON.stringify({ userId: MEMBER_A, at: Date.now() }));
   await render(<PasswordRecoveryHost />);
 }
 
@@ -76,6 +80,8 @@ it('changes the password, says so, and OK closes it', async () => {
   await waitFor(() => expect(screen.getByText(en('auth.password_updated_title'))).toBeOnTheScreen());
   expect((authHost.sent('/auth/v1/user', 'PUT').body as { password: string }).password).toBe('a long new password');
   expect(useAppStore.getState().pendingPasswordRecovery).toBe(true);
+  // Changed: a restart before OK must not ask again.
+  await waitFor(async () => expect(await AsyncStorage.getItem(RECOVERY_PENDING_KEY)).toBeNull());
 
   await fireEvent.press(screen.getByRole('button', { name: en('common.ok') }));
   expect(useAppStore.getState().pendingPasswordRecovery).toBe(false);
@@ -97,11 +103,12 @@ it('shows why a change was refused, and stays', async () => {
   expect(useAppStore.getState().pendingPasswordRecovery).toBe(true);
 });
 
-it('"Later" closes it without a change', async () => {
+it('"Later" closes it without a change, and a restart does not bring it back', async () => {
   await openRecovery();
   await fireEvent.press(screen.getByRole('button', { name: en('auth.later') }));
   expect(useAppStore.getState().pendingPasswordRecovery).toBe(false);
   expect(authHost.requests).toHaveLength(0);
+  await waitFor(async () => expect(await AsyncStorage.getItem(RECOVERY_PENDING_KEY)).toBeNull());
 });
 
 it('back does not close it (only Later does)', async () => {
