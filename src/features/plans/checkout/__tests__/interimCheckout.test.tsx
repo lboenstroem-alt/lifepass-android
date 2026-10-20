@@ -1,6 +1,6 @@
 /**
- * The checkout behind Continue, on the interim rail (./purchase.ts) until
- * PLANS-2's payment sheet: the refusals PLANS-1's features answer, in iOS's
+ * The checkout behind Continue, on the interim rail (../interimCheckout.ts)
+ * until PLANS-2's payment sheet: the refusals PLANS-1's features answer, in iOS's
  * words (PlansCatalogPassesTests `testAPassOffSaleIsSaidInWordsAndItsCardGoes`
  * and its Icelandic twin, `testTheProblemReadsAsItsOwnSentence`;
  * PlansCheckoutTests `testAnUnverifiedMemberIsSentToKenniNotShownAnError` and
@@ -13,17 +13,18 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import * as WebBrowser from 'expo-web-browser';
 import { api, Reply } from '@test/server';
 
-import { ProblemError, problemMessage } from '../../../api';
-import { expectSentToMatchContract, stubApiClientPerTest } from '../../../api/testing';
-import { DialogHost, dismissAllDialogs } from '../../../components/ui/Dialog';
-import { setCurrentLanguage, translate } from '../../../i18n';
-import { setAnalyticsObserver } from '../../../lib/analytics';
-import { freshPaymentsPerTest, signIn } from '../../../payments/__tests__/paymentsHarness';
-import * as legacyPayments from '../../../supabase/services/payments';
-import { currentPlanCatalog, loadPlanCatalog, resetPlanCatalog } from '../catalogStore';
-import { planForSlug, visitorPasses } from '../plans';
-import { attemptPlanCheckout, usePlanCheckout, type PlanCheckout, type PlanCheckoutEvents } from '../purchase';
-import { catalogue, CATALOGUE_WITHOUT_POOL, pass } from './fixtures';
+import { ProblemError, problemMessage } from '../../../../api';
+import { expectSentToMatchContract, stubApiClientPerTest } from '../../../../api/testing';
+import { DialogHost, dismissAllDialogs } from '../../../../components/ui/Dialog';
+import { setCurrentLanguage, translate } from '../../../../i18n';
+import { setAnalyticsObserver } from '../../../../lib/analytics';
+import { freshPaymentsPerTest, signIn } from '../../../../payments/__tests__/paymentsHarness';
+import * as legacyPayments from '../../../../supabase/services/payments';
+import { currentPlanCatalog, loadPlanCatalog, resetPlanCatalog } from '../../catalogStore';
+import { planForSlug, visitorPasses } from '../../plans';
+import { catalogue, CATALOGUE_WITHOUT_POOL, pass } from '../../__tests__/fixtures';
+import { usePlanCheckout, type PlanCheckout, type PlanCheckoutEvents } from '..';
+import { attemptPlanCheckout } from '../interimCheckout';
 
 jest.mock('expo-web-browser', () => ({ openAuthSessionAsync: jest.fn() }));
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });

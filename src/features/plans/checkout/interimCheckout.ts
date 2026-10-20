@@ -1,20 +1,12 @@
 /**
- * The seam between the Plans screen and the checkout.
+ * The interim checkout behind the Plans screen's Continue, until PLANS-2's
+ * payment sheet replaces it (./index.ts; the seam is ./contract.ts).
  *
- * The screen (PLANS-1) owns everything up to "buy this plan": the cards, the
- * eID gate, and parking the plan across the Kenni sheet. The checkout owns
- * what follows: iOS's payment sheet (the card-on-file mandate, the save-card
- * switch for a pass, the partner discount code), the hosted Kling page, its
- * return and verification, the welcome, and the purchase refusals with their
- * next steps. That is PLANS-2's (src/features/plans/checkout), which replaces
- * `usePlanCheckout` below with its own, keeping this signature (ownership of
- * this file passes to PLANS-2 when PLANS-1 merges, plan 3.0 rule 2).
- *
- * UNTIL THEN the interim checkout below runs the purchase on the first
- * build's rail (src/supabase/services/payments `startCheckout`, which F8 kept
- * for this screen): create the session, open the hosted page, verify on
- * return, iOS's "Payment issue" when nothing could confirm it. It says what
- * PLANS-1's features need it to say, in iOS's words:
+ * It runs the purchase on the first build's rail
+ * (src/supabase/services/payments `startCheckout`, which F8 kept for this
+ * screen): create the session, open the hosted page, verify on return, iOS's
+ * "Payment issue" when nothing could confirm it. It says what PLANS-1's
+ * features need it to say, in iOS's words:
  *
  * - `kennitala_verification_required` (the local verified flag can be stale)
  *   hands the SUBMITTED plan back to the screen, which opens the Kenni sheet
@@ -26,54 +18,29 @@
  *   English or an HTTP status;
  * - a purchase confirmed is iOS's welcome, whose button closes Plans.
  *
+ * `busy` covers the whole attempt (the session, the hosted page, the
+ * verification), and the screen cannot be closed while it is busy, so the
+ * member cannot leave Plans with the page still to open over whatever is
+ * underneath.
+ *
  * What it does NOT have yet (PLANS-2): the mandate sheet and save-card switch
  * (the server's default, keep the card, applies), the discount code box
  * (the code handed in is carried across Kenni but not sent), the "Confirming
  * your payment" overlay and the "check again" chip, and the refusals' next
  * step buttons.
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { errorMessage, isCancellation, isProblem, refusalMessage } from '../../api';
-import { showDialog } from '../../components/ui';
-import { currentLanguage, t } from '../../i18n';
-import { track } from '../../lib/analytics';
-import { useAppStore } from '../../stores/appStore';
-import { startCheckout } from '../../supabase/services/payments';
+import { errorMessage, isCancellation, isProblem, refusalMessage } from '../../../api';
+import { showDialog } from '../../../components/ui';
+import { currentLanguage, t } from '../../../i18n';
+import { track } from '../../../lib/analytics';
+import { useAppStore } from '../../../stores/appStore';
+import { startCheckout } from '../../../supabase/services/payments';
 
-import { loadPlanCatalog } from './catalogStore';
-import { displayName, isSubscription, type Plan } from './plans';
-
-/** What the checkout tells the Plans screen. */
-export interface PlanCheckoutEvents {
-  /**
-   * The server refused the checkout until the member verifies with Kenni
-   * (403/409 `kennitala_verification_required`): `plan` is the plan that was
-   * SUBMITTED (the selection may have moved since), `discountCode` the code
-   * typed for it. The screen parks both and opens the Kenni sheet.
-   */
-  readonly onKennitalaRequired: (plan: Plan, discountCode: string) => void;
-  /** The purchase is confirmed and the member took the welcome's button: close Plans. */
-  readonly onFinished: () => void;
-}
-
-/** What the Plans screen reads from the checkout. */
-export interface PlanCheckout {
-  /** A checkout is being created: Continue is held (iOS `isLoading`). */
-  readonly busy: boolean;
-  /** The return is being confirmed: the Continue cluster gives way to the overlay (iOS `isVerifying`). */
-  readonly verifying: boolean;
-  /** Drawn above the Kenni chip, e.g. "Completed your purchase? Tap to check" (iOS `verificationPending`). */
-  readonly chip: ReactNode;
-  /** Whatever else the checkout draws over the screen (its sheet, its overlay). */
-  readonly element: ReactNode;
-  /**
-   * Buy `plan`, whose eID gate is already clear. `discountCode` is the code
-   * typed before Kenni interrupted the purchase ('' for none), for the
-   * payment sheet to put back in its box.
-   */
-  readonly begin: (plan: Plan, discountCode: string) => void;
-}
+import { loadPlanCatalog } from '../catalogStore';
+import { displayName, isSubscription, type Plan } from '../plans';
+import type { PlanCheckout, PlanCheckoutEvents } from './contract';
 
 /** How one interim checkout attempt ended. */
 export type CheckoutAttempt =

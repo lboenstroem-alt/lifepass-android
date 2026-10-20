@@ -33,6 +33,8 @@ export default function SegmentToggle({ value, onChange }: SegmentToggleProps) {
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             testID={`plans.segment.${segment.value}`}
+            // 36 tall as on iOS; the slop makes the target Android's 48.
+            hitSlop={SEGMENT_SLOP}
             onPress={() => {
               if (!active) onChange(segment.value);
             }}
@@ -47,6 +49,8 @@ export default function SegmentToggle({ value, onChange }: SegmentToggleProps) {
     </View>
   );
 }
+
+const SEGMENT_SLOP = { top: 6, bottom: 6 } as const;
 
 const styles = StyleSheet.create({
   track: {

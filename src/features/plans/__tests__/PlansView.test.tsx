@@ -5,10 +5,18 @@
  * a catalogue load, the terms line, the info sheet, and the eID gate: the
  * note and the Step 1 chip only for a loaded, unverified profile; Continue on
  * a membership parks the plan and opens Kenni, resuming once verified;
- * "See visitor passes"; the server's refusal resuming the SUBMITTED plan.
+ * "See visitor passes"; the server's refusal parking the SUBMITTED plan and
+ * resuming it only on a verification made in the sheet; and Plans held open
+ * while a checkout is in flight.
+ *
+ * Plans runs as the root modal over another screen in a real native stack,
+ * so back and closing go through React Navigation as in the app.
  */
+import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
+import { DeviceEventEmitter, View } from 'react-native';
 
 import { decodeProfile } from '../../../api/profile';
 import { stubApiClientPerTest } from '../../../api/testing';
@@ -17,7 +25,7 @@ import { DialogHost, dismissAllDialogs } from '../../../components/ui/Dialog';
 import { restoreTestFontScale, setTestFontScale } from '../../../hooks/testing';
 import { setCurrentLanguage, translate, type Lang } from '../../../i18n';
 import { setAnalyticsObserver } from '../../../lib/analytics';
-import type { RootModalProps } from '../../../navigation/types';
+import type { RootModalProps, RootRoutes } from '../../../navigation/types';
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
 import { MEMBER_A, profileJSON } from '../../../stores/__tests__/storeHarness';
 import * as legacyPayments from '../../../supabase/services/payments';
@@ -39,7 +47,21 @@ stubApiClientPerTest();
 const openKenni = jest.mocked(openKenniSheet);
 const en = (key: string, params?: Record<string, string | number>) => translate(key, 'en', params);
 
-const navigation = { goBack: jest.fn(), isFocused: jest.fn(() => true) };
+const Stack = createNativeStackNavigator<RootRoutes>();
+const navigationRef = createNavigationContainerRef<RootRoutes>();
+const currentRoute = () => navigationRef.getCurrentRoute()?.name;
+
+/** What Plans was opened over. */
+function Underneath() {
+  return <View testID="underneath" />;
+}
+
+/** The member presses the system back button (or makes the back gesture). */
+async function pressBack(): Promise<void> {
+  await act(async () => {
+    DeviceEventEmitter.emit('hardwareBackPress');
+  });
+}
 
 let startCheckout: jest.SpyInstance<
   ReturnType<typeof legacyPayments.startCheckout>,
@@ -54,7 +76,6 @@ beforeEach(() => {
   setCurrentLanguage('en');
   dismissAllDialogs();
   openKenni.mockReset();
-  navigation.goBack.mockReset();
   startCheckout = jest.spyOn(legacyPayments, 'startCheckout').mockResolvedValue('canceled');
 });
 
@@ -82,10 +103,17 @@ const serveCatalogue = (json: object | null) =>
   api.on('GET', '/catalog/plans', json ? Reply.ok(json) : Reply.problem(503, 'internal_error'));
 
 async function renderPlans(params?: RootModalProps<'Plans'>['route']['params']) {
-  const props = { navigation, route: { key: 'Plans-1', name: 'Plans', params } } as unknown as RootModalProps<'Plans'>;
   await render(
     <>
-      <PlansView {...props} />
+      <NavigationContainer
+        ref={navigationRef}
+        initialState={{ index: 1, routes: [{ name: 'Main' }, { name: 'Plans', params }] }}
+      >
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Main" component={Underneath} />
+          <Stack.Screen name="Plans" component={PlansView} options={{ presentation: 'modal' }} />
+        </Stack.Navigator>
+      </NavigationContainer>
       <DialogHost />
     </>,
   );
@@ -191,10 +219,17 @@ describe('the screen', () => {
 
   it('keeps the selected pass when the catalogue arrives and reorders the list', async () => {
     signIn({ verified: true });
-    api.on('GET', '/catalog/plans', Reply.delayed(30, Reply.ok(catalogue({ packs: [pass('pass-local', 28_900, 12, 90)] }))));
+    // The catalogue answers only once the member has picked a card.
+    let answer: () => void = () => undefined;
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    api.on('GET', '/catalog/plans', async () => {
+      await answered;
+      return Reply.ok(catalogue({ packs: [pass('pass-local', 28_900, 12, 90)] }));
+    });
     await renderPlans({ segment: 'passes' });
     await fireEvent.press(card('pass-day-studio'));
     expect(cardIds()[4]).toBe('pass-day-studio');
+    await act(async () => answer());
     await waitFor(() => expect(cardIds()).toEqual(['pass-local', 'pass-day-gym', 'pass-day-studio']));
     expect(card('pass-day-studio')).toBeSelected();
     expect(continueText()).toBe('Continue with Studio Day Pass');
@@ -223,12 +258,39 @@ describe('the screen', () => {
     expect(within(card('pass-day-gym')).getByText('Rækt dagspassi')).toBeOnTheScreen();
   });
 
-  it('the back chevron closes Plans', async () => {
+  it('the back chevron closes Plans, and so does hardware back', async () => {
     signIn({ verified: true });
     serveCatalogue(null);
     await renderPlans();
+    expect(currentRoute()).toBe('Plans');
     await fireEvent.press(screen.getByRole('button', { name: en('common.back') }));
-    expect(navigation.goBack).toHaveBeenCalledTimes(1);
+    expect(currentRoute()).toBe('Main');
+
+    await act(async () => navigationRef.navigate('Plans', undefined));
+    expect(currentRoute()).toBe('Plans');
+    await pressBack();
+    expect(currentRoute()).toBe('Main');
+  });
+
+  it('stays open while the checkout is in flight: back and the chevron wait for its answer', async () => {
+    signIn({ verified: true });
+    serveCatalogue(CATALOGUE_WITHOUT_POOL);
+    let finish: (outcome: legacyPayments.CheckoutOutcome) => void = () => undefined;
+    startCheckout.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    await renderPlans();
+    await fireEvent.press(continueButton());
+    expect(continueButton()).toBeDisabled();
+
+    await pressBack();
+    expect(currentRoute()).toBe('Plans');
+    await fireEvent.press(screen.getByRole('button', { name: en('common.back') }));
+    expect(currentRoute()).toBe('Plans');
+
+    // The checkout answered (the member backed out of the payment page): Plans can close again.
+    await act(async () => finish('canceled'));
+    expect(continueButton()).toBeEnabled();
+    await pressBack();
+    expect(currentRoute()).toBe('Main');
   });
 });
 
@@ -391,25 +453,82 @@ describe('the eID gate', () => {
     expect(startCheckout).not.toHaveBeenCalled();
   });
 
-  it('the server’s refusal opens Kenni with the SUBMITTED plan, not a selection that moved since', async () => {
-    // The local flag says verified, the server disagrees (it can be stale).
-    signIn({ verified: true });
-    serveCatalogue(CATALOGUE_WITHOUT_POOL);
-    let refuse: (error: unknown) => void = () => undefined;
-    startCheckout.mockImplementationOnce(() => new Promise((_resolve, reject) => (refuse = reject)));
-    await renderPlans();
-    await fireEvent.press(continueButton());
-    expect(continueButton()).toBeDisabled();
-    // The member moves the selection while the checkout is being created.
-    await fireEvent.press(card('plan-base'));
-    const { ProblemError } = jest.requireActual('../../../api');
-    await act(async () =>
-      refuse(new ProblemError({ type: 'https://lifepass.is/problems/kennitala_verification_required', title: 'x', status: 403 }, 403)),
-    );
-    expect(openKenni).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText(en('plans.payment_issue'))).toBeNull();
-    await act(async () => kenniOptions().onClose());
-    expect(startCheckout).toHaveBeenLastCalledWith('plan-plus');
+  describe('the server’s refusal (the local flag said verified, and was stale)', () => {
+    const kennitalaRequired = () => {
+      const { ProblemError } = jest.requireActual('../../../api');
+      return new ProblemError(
+        { type: 'https://lifepass.is/problems/kennitala_verification_required', title: 'x', status: 403 },
+        403,
+      );
+    };
+    /** The server's profile says what the server believes; the phone still has `verified: true`. */
+    const serverProfileSays = (verified: boolean) =>
+      api.on('GET', '/profile', Reply.ok(profileJSON({ kennitalaVerified: verified })));
+
+    it('opens Kenni with the SUBMITTED plan, not a selection that moved since, and re-reads the profile', async () => {
+      signIn({ verified: true });
+      serverProfileSays(false);
+      serveCatalogue(CATALOGUE_WITHOUT_POOL);
+      let refuse: (error: unknown) => void = () => undefined;
+      startCheckout.mockImplementationOnce(() => new Promise((_resolve, reject) => (refuse = reject)));
+      await renderPlans();
+      await fireEvent.press(continueButton());
+      expect(continueButton()).toBeDisabled();
+      // The member moves the selection while the checkout is being created.
+      await fireEvent.press(card('plan-base'));
+      const reads = api.sentAll('/profile', 'GET').length;
+      await act(async () => refuse(kennitalaRequired()));
+      expect(openKenni).toHaveBeenCalledTimes(1);
+      expect(kenniOptions().bodyKey).toBe('kenni.body');
+      expect(screen.queryByText(en('plans.payment_issue'))).toBeNull();
+      // The stale flag is corrected: the note and the chip come back.
+      await waitFor(() => expect(api.sentAll('/profile', 'GET').length).toBe(reads + 1));
+      expect(await screen.findByText(en('plans.eid.no_id_hint'))).toBeOnTheScreen();
+      expect(screen.getByTestId('plans.kenni_step')).toBeOnTheScreen();
+
+      // The member verifies in the sheet; it closes, and the SUBMITTED plan resumes.
+      serverProfileSays(true);
+      await act(async () => kenniOptions().onClose());
+      await waitFor(() => expect(startCheckout).toHaveBeenCalledTimes(2));
+      expect(startCheckout).toHaveBeenLastCalledWith('plan-plus');
+    });
+
+    it('closing Kenni without verifying sends nothing again: no refusal, sheet, refusal loop', async () => {
+      signIn({ verified: true });
+      serverProfileSays(false);
+      serveCatalogue(CATALOGUE_WITHOUT_POOL);
+      startCheckout.mockRejectedValue(kennitalaRequired());
+      await renderPlans();
+      await fireEvent.press(continueButton());
+      await waitFor(() => expect(openKenni).toHaveBeenCalledTimes(1));
+      await act(async () => kenniOptions().onClose());
+      await act(async () => undefined);
+      expect(startCheckout).toHaveBeenCalledTimes(1);
+      expect(openKenni).toHaveBeenCalledTimes(1);
+      // The plan is still selected; the member can try again with a tap.
+      expect(card('plan-plus')).toBeSelected();
+      expect(continueButton()).toBeEnabled();
+    });
+
+    it('a profile that keeps saying verified never resumes on its own', async () => {
+      // The server's profile and its checkout disagree: only a tap sends another checkout.
+      signIn({ verified: true });
+      serveCatalogue(CATALOGUE_WITHOUT_POOL);
+      startCheckout.mockRejectedValue(kennitalaRequired());
+      await renderPlans();
+      await fireEvent.press(continueButton());
+      await waitFor(() => expect(openKenni).toHaveBeenCalledTimes(1));
+      const reads = api.sentAll('/profile', 'GET').length;
+      await act(async () => kenniOptions().onClose());
+      await waitFor(() => expect(api.sentAll('/profile', 'GET').length).toBeGreaterThan(reads));
+      await act(async () => undefined);
+      expect(startCheckout).toHaveBeenCalledTimes(1);
+      expect(openKenni).toHaveBeenCalledTimes(1);
+
+      await fireEvent.press(continueButton());
+      await waitFor(() => expect(openKenni).toHaveBeenCalledTimes(2));
+      expect(startCheckout).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('a pass off sale at checkout is the payment alert, and its card goes', async () => {
@@ -437,6 +556,6 @@ describe('the eID gate', () => {
     await fireEvent.press(continueButton());
     expect(await screen.findByText(en('plans.welcome_title'))).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: en('plans.welcome_cta') }));
-    expect(navigation.goBack).toHaveBeenCalledTimes(1);
+    expect(currentRoute()).toBe('Main');
   });
 });

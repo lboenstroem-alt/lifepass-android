@@ -22,9 +22,15 @@
  * already said "buy this plan"). Closing it unverified never resumes. "See
  * visitor passes" in the sheet clears what was parked and shows the passes.
  * A server refusal (`kennitala_verification_required`, the local flag can be
- * stale) parks the SUBMITTED plan, not the live selection.
+ * stale) parks the SUBMITTED plan, not the live selection, and re-reads the
+ * profile; that plan resumes only on a verification made IN the sheet, never
+ * on the stale flag (which would send the refused checkout again, unasked).
  *
- * THE CHECKOUT after the gate is ./purchase.ts (PLANS-2's payment sheet).
+ * While the checkout is busy Plans cannot be closed (iOS keeps its payment
+ * sheet up with `interactiveDismissDisabled`): back and the chevron wait, so
+ * the hosted page never opens over a screen that has gone.
+ *
+ * THE CHECKOUT after the gate is ./checkout (PLANS-2's payment sheet).
  */
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -37,6 +43,7 @@ import { hiddenFromAccessibility } from '../../components/ui/a11y';
 import { openKenniSheet } from '../kenni';
 import { useT } from '../../i18n';
 import { track } from '../../lib/analytics';
+import { useBusyGuard } from '../../navigation/guards';
 import type { RootModalProps } from '../../navigation/types';
 import { selectIsKennitalaVerified, useAppStore } from '../../stores/appStore';
 import { colors } from '../../theme';
@@ -47,8 +54,9 @@ import PlanCard from './PlanCard';
 import PlanInfoSheet from './PlanInfoSheet';
 import { continueName, isSubscription, type Plan } from './plans';
 import { finePrintTermsKey } from './pricing';
-import { usePlanCheckout } from './purchase';
+import { usePlanCheckout } from './checkout';
 import SegmentToggle from './SegmentToggle';
+import { withOpacity } from './tint';
 import {
   displayedPlans,
   initialSegment,
@@ -66,10 +74,10 @@ const CTA_BOTTOM = 36;
 /** iOS `Spacer(minLength: 100)` at the end of the scroll. */
 const MIN_BOTTOM_SPACE = 100;
 
-/** iOS lpInk (#F8F6F1) at 30 %: the top of the hero's fade. */
-const HERO_FADE_TOP = 'rgba(248,246,241,0.3)';
-/** iOS lpInk2 at 70 %: the back button's disc over the photo. */
-const BACK_DISC = 'rgba(242,239,232,0.7)';
+/** iOS `Color.lpInk.opacity(0.3)`: the top of the hero's fade. */
+const HERO_FADE_TOP = withOpacity(colors.ink, 0.3);
+/** iOS `Color.lpInk2.opacity(0.7)`: the back button's disc over the photo. */
+const BACK_DISC = withOpacity(colors.ink2, 0.7);
 
 interface Selection {
   readonly segment: PlansSegmentValue;
@@ -81,6 +89,12 @@ interface Selection {
 interface Parked {
   readonly plan: Plan;
   readonly code: string;
+  /**
+   * Set when the server's refusal parked it (the local flag said verified and
+   * was wrong): the profile read started at the refusal, resolving to whether
+   * the flag STILL said verified after it. Null when the local gate parked it.
+   */
+  readonly refusal: Promise<boolean> | null;
 }
 
 function initialSelection(segment?: PlansSegmentValue, slug?: string): Selection {
@@ -144,8 +158,8 @@ export default function PlansView({ navigation, route }: RootModalProps<'Plans'>
   const purchaseRef = useRef<(plan: Plan, code: string) => void>(() => undefined);
 
   const openKenni = useCallback(
-    (plan: Plan, code: string) => {
-      parked.current = { plan, code };
+    (plan: Plan, code: string, refusal: Promise<boolean> | null = null) => {
+      parked.current = { plan, code, refusal };
       openKenniSheet({
         bodyKey: 'kenni.body',
         // Without Icelandic eID there is no membership, but a visitor pass is
@@ -167,13 +181,24 @@ export default function PlansView({ navigation, route }: RootModalProps<'Plans'>
 
   const checkout = usePlanCheckout({
     // The server's refusal: the SUBMITTED plan is parked, not the selection.
+    // The flag that let it through is stale, so the profile is read again at
+    // once: the note and the chip come back, and the sheet's close can tell a
+    // verification made in it from the flag that was already wrong.
     onKennitalaRequired: (plan, code) => {
-      if (mounted.current) openKenni(plan, code);
+      if (!mounted.current) return;
+      const refusal = useAppStore
+        .getState()
+        .loadProfile()
+        .then(() => selectIsKennitalaVerified(useAppStore.getState()));
+      openKenni(plan, code, refusal);
     },
     onFinished: () => {
       if (mounted.current && navigation.isFocused()) navigation.goBack();
     },
   });
+  // No closing Plans while a checkout is created or settled: its answer (the
+  // hosted page, the welcome, a refusal) is shown on this screen.
+  useBusyGuard(checkout.busy);
 
   const handlePurchase = useCallback(
     (plan: Plan, code: string) => {
@@ -322,6 +347,8 @@ export default function PlansView({ navigation, route }: RootModalProps<'Plans'>
               onPress={() => openKenni(selected, '')}
               accessibilityRole="button"
               testID="plans.kenni_step"
+              // iOS's 36-tall chip; the slop makes the target Android's 48.
+              hitSlop={{ top: 6, bottom: 6 }}
               style={styles.chip}
             >
               <Ionicons name="shield-checkmark-outline" size={12} color={colors.paper} />
@@ -363,6 +390,14 @@ export default function PlansView({ navigation, route }: RootModalProps<'Plans'>
  * verified. The sheet re-reads the profile when a verification succeeds; if
  * that read has not landed yet, one more read settles it, so a purchase
  * resumes only after a REAL verification and never on a stale flag.
+ *
+ * A plan the server's refusal parked was refused while the flag said
+ * verified, so the flag alone proves nothing. It resumes only when the read
+ * taken at the refusal said unverified and a read taken after the sheet
+ * closed says verified: the member verified in the sheet. Otherwise it stays
+ * selected and the next checkout waits for a tap on Continue (on iOS the
+ * resume opens the payment sheet, which waits for one too). A flag the server
+ * keeps contradicting can never loop refusal, sheet, refusal on its own.
  */
 async function resumeIfVerified(
   pending: Parked,
@@ -370,7 +405,11 @@ async function resumeIfVerified(
   purchase: { readonly current: (plan: Plan, code: string) => void },
 ): Promise<void> {
   const verifiedNow = () => selectIsKennitalaVerified(useAppStore.getState());
-  if (!verifiedNow()) {
+  if (pending.refusal) {
+    const stillSaidVerified = await pending.refusal;
+    await useAppStore.getState().loadProfile();
+    if (stillSaidVerified || !verifiedNow()) return;
+  } else if (!verifiedNow()) {
     await useAppStore.getState().loadProfile();
     if (!verifiedNow()) return;
   }

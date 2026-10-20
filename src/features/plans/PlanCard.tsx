@@ -23,6 +23,7 @@ import { colors } from '../../theme';
 import type { PlanCatalog } from './catalog';
 import { displayName, isSubscription, subtitle, type Plan } from './plans';
 import { cardFeatureLines, priceLabel } from './pricing';
+import { withOpacity } from './tint';
 
 export interface PlanCardProps {
   readonly plan: Plan;
@@ -32,7 +33,7 @@ export interface PlanCardProps {
 }
 
 /** iOS `.lpRust.opacity(0.4)`: the popular card's border when it is not the selected one. */
-const POPULAR_BORDER = 'rgba(71,133,194,0.4)';
+const POPULAR_BORDER = withOpacity(colors.rust, 0.4);
 
 export default function PlanCard({ plan, catalog, selected, onPress }: PlanCardProps) {
   const { t, language } = useT();
