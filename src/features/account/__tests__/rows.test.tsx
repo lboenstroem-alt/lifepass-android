@@ -54,6 +54,31 @@ it('a disabled row says so and does not press', async () => {
   expect(onPress).not.toHaveBeenCalled();
 });
 
+/** Whether this view, or any view it sits in, is drawn below full opacity. */
+function dimmed(element: { props: { style?: unknown }; parent: unknown } | null): boolean {
+  for (let node = element; node; node = node.parent as typeof element) {
+    const opacity = (StyleSheet.flatten(node.props.style as never) as { opacity?: number } | undefined)?.opacity;
+    if (typeof opacity === 'number' && opacity < 1) return true;
+  }
+  return false;
+}
+
+it('a dimmed row keeps the hairline above it at full strength (iOS dims the row, not the divider)', async () => {
+  await render(
+    <AccountCard>
+      <AccountRowButton title="Language" isEnabled={false} onPress={jest.fn()} />
+      <AccountRowButton title="Help" opacity={0.55} onPress={jest.fn()} />
+      <AccountRowLabel title="Body and goals" subtitle="Not for under 18s" showsChevron={false} opacity={0.55} />
+    </AccountCard>,
+  );
+  const dividers = screen.getAllByTestId('account.divider', { includeHiddenElements: true });
+  expect(dividers).toHaveLength(3);
+  for (const divider of dividers) expect(dimmed(divider as never)).toBe(false);
+  expect(dimmed(screen.getByRole('button', { name: 'Language' }) as never)).toBe(true);
+  expect(dimmed(screen.getByRole('button', { name: 'Help' }) as never)).toBe(true);
+  expect(dimmed(screen.getByLabelText('Body and goals, Not for under 18s') as never)).toBe(true);
+});
+
 it('a label row is text, not a button', async () => {
   await render(<AccountRowLabel title="Identity" subtitle="Verified" showsChevron={false} opacity={0.55} />);
   expect(screen.queryByRole('button')).toBeNull();

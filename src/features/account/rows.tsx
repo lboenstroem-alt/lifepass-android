@@ -19,9 +19,18 @@
  * cancellation is scheduled), and a divider written next to it would then
  * hang at the end of the card or double up. So every row draws the hairline
  * ABOVE itself, and `AccountCard` hides the first one: its content sits one
- * hairline higher, under the card's clipped top edge. A slot only renders
- * `AccountRowButton`s (or `AccountRowLabel`s); where it renders nothing, no
- * line is left behind.
+ * hairline higher, under the card's clipped top edge.
+ *
+ * THE SLOT CONTRACT. A slot row in an Account card draws through
+ * `AccountRowButton` / `AccountRowLabel` (hairline above, none of its own),
+ * so where it renders nothing no line is left behind. Two slots were built
+ * before this was written down and draw their own way; AccountScreen draws
+ * the line for them, and its header says where (the identity row, the
+ * deletion row).
+ *
+ * The hairline sits OUTSIDE a dimmed row: iOS applies `.opacity(0.45)` (a
+ * disabled row) and `.opacity(0.55)` (the minor's Body and goals) to the row,
+ * and the `divider` beside it stays at full strength.
  */
 import { Ionicons } from '@expo/vector-icons';
 import type { ReactNode } from 'react';
@@ -32,7 +41,14 @@ import { colors, hairline, radius } from '../../theme';
 
 /** The hairline between two rows of the same card (inset 16, as iOS pads it). */
 export function AccountRowDivider() {
-  return <View style={styles.divider} importantForAccessibility="no" accessibilityElementsHidden />;
+  return (
+    <View
+      style={styles.divider}
+      importantForAccessibility="no"
+      accessibilityElementsHidden
+      testID="account.divider"
+    />
+  );
 }
 
 export interface AccountRowLabelProps {
@@ -90,9 +106,15 @@ function RowContent({ title, subtitle, destructive = false, dim = false, showsCh
 export function AccountRowLabel(props: AccountRowLabelProps) {
   const { title, subtitle, opacity, testID } = props;
   return (
-    <View testID={testID} style={opacity !== undefined && { opacity }}>
+    <View>
       <AccountRowDivider />
-      <View accessible accessibilityLabel={accountRowLabel(title, subtitle)} accessibilityRole="text">
+      <View
+        testID={testID}
+        accessible
+        accessibilityLabel={accountRowLabel(title, subtitle)}
+        accessibilityRole="text"
+        style={opacity !== undefined && { opacity }}
+      >
         <RowContent {...props} />
       </View>
     </View>
@@ -110,20 +132,23 @@ export interface AccountRowButtonProps extends AccountRowLabelProps {
 export function AccountRowButton(props: AccountRowButtonProps) {
   const { title, subtitle, onPress, isEnabled = true, accessibilityHint, testID, opacity } = props;
   return (
-    <View style={[!isEnabled && styles.disabled, opacity !== undefined && { opacity }]}>
+    <View>
       <AccountRowDivider />
-      <Pressable
-        testID={testID}
-        onPress={onPress}
-        disabled={!isEnabled}
-        accessibilityRole="button"
-        accessibilityLabel={accountRowLabel(title, subtitle)}
-        accessibilityHint={accessibilityHint}
-        accessibilityState={{ disabled: !isEnabled }}
-        style={({ pressed }) => pressed && styles.pressed}
-      >
-        <RowContent {...props} />
-      </Pressable>
+      {/* The dimming is the row's, never the hairline's (iOS dims the row view only). */}
+      <View style={[!isEnabled && styles.disabled, opacity !== undefined && { opacity }]}>
+        <Pressable
+          testID={testID}
+          onPress={onPress}
+          disabled={!isEnabled}
+          accessibilityRole="button"
+          accessibilityLabel={accountRowLabel(title, subtitle)}
+          accessibilityHint={accessibilityHint}
+          accessibilityState={{ disabled: !isEnabled }}
+          style={({ pressed }) => pressed && styles.pressed}
+        >
+          <RowContent {...props} />
+        </Pressable>
+      </View>
     </View>
   );
 }
