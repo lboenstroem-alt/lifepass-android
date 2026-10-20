@@ -10,9 +10,12 @@
 // with the default body and no "See visitor passes".
 //
 // ON CLOSE, verified or not, the profile is re-read (iOS `onDismiss`), and
-// the co-pay banner re-reads the company-plan context through
-// `onKenniSheetClosed`: the Kenni completion is where invitations are
-// claimed, so an invite may just have turned into a pending activation.
+// the sheet announces its close to `onKenniSheetClosed`, which is where the
+// company-plan context is re-read (iOS AccountView's `onDismiss` reads both):
+// the Kenni completion is where invitations are claimed, so an invite may
+// just have turned into a pending activation. The context is ACCT-3's
+// (`reloadCopayContext`), so ACCT-3 subscribes to the event (contract
+// request) rather than this row reaching into its store.
 //
 // THE DIVIDER. iOS draws the hairline under this row only when the row
 // itself is drawn, so the slot draws it too. Pass `divider={false}` for a

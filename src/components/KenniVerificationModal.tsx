@@ -9,6 +9,17 @@
 // Delete it once PLANS-1 has replaced the plans screen and the shell tests
 // mock the feature's sheet (QA-1 removes leftovers).
 //
+// TODO(AUTH-3 contract requests, tracked for QA-1's no-shim check):
+//   1. F4: src/navigation/__tests__/tabsShell.test.tsx and rootModals.test.tsx
+//      mock '../../features/kenni/KenniSheet' instead of this path; then
+//      KenniNudgeHost imports ./KenniSheet directly.
+//   2. PLANS-1: TopUpScreen (or its replacement) calls `openKenniSheet({
+//      bodyKey: 'kenni.body', onSeePasses, onClose })` instead of mounting
+//      this, so one host shows every Kenni sheet.
+//   Then delete this file.
+// Until then a sheet mounted here still announces its close to
+// `onKenniSheetClosed` (the sheet does that itself).
+//
 // `onVerified` keeps its first-build meaning, "the member is verified and the
 // sheet is done", but now runs once the sheet has LEFT the screen, so the
 // hosted checkout the plans screen opens next never collides with it. Every

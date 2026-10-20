@@ -2,18 +2,31 @@
  * The Account identity row (iOS AccountView's kennitala row): nothing until
  * the profile has loaded, an informational row once verified, and a row that
  * opens the Kenni sheet (default body, no visitor passes) while not; closing
- * the sheet re-reads the profile.
+ * the sheet re-reads the profile and announces the close, which is where the
+ * company-plan context is re-read (iOS AccountView reads both on dismiss).
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { decodeProfile } from '../../../../api/profile';
+import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
 import { setCurrentLanguage, translate, type Lang } from '../../../../i18n';
 import { resetAppStoreForTests, useAppStore } from '../../../../stores/appStore';
-import { closeKenniSheetRequest, useKenniSheetRequest } from '../../../kenni';
+import {
+  closeKenniSheetRequest,
+  isKenniSheetRequested,
+  KenniNudgeHost,
+  onKenniSheetClosed,
+  useKenniSheetRequest,
+  type KenniSheetOutcome,
+} from '../../../kenni';
 import IdentityRow from '../IdentityRow';
 
+jest.mock('@gorhom/bottom-sheet', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('../../../../components/ui/testing/bottomSheetMock').bottomSheetModule,
+);
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 
 stubApiClientPerTest();
@@ -36,6 +49,7 @@ function RequestProbe() {
 }
 
 beforeEach(() => {
+  bottomSheetMock.reset();
   resetAppStoreForTests();
   request = null;
 });
@@ -97,4 +111,27 @@ it('speaks Icelandic, and leaves the hairline out when told', async () => {
   expect(screen.getByRole('button', { name: label('is', 'account.identity_needed') })).toBeOnTheScreen();
   expect(screen.getByText(translate('account.identity', 'is'))).toBeOnTheScreen();
   expect(screen.queryByTestId('account.identity.divider', { includeHiddenElements: true })).toBeNull();
+});
+
+it("the sheet's close is announced, so the company-plan context is re-read whoever opened it", async () => {
+  signIn(false);
+  const heard: KenniSheetOutcome[] = [];
+  const stop = onKenniSheetClosed((outcome) => heard.push(outcome));
+  await render(
+    <>
+      <IdentityRow />
+      <KenniNudgeHost />
+    </>,
+  );
+  await fireEvent.press(screen.getByRole('button', { name: label('en', 'account.identity_needed') }));
+  expect(screen.getByRole('header', { name: translate('kenni.title', 'en') })).toBeOnTheScreen();
+  expect(screen.getByText(translate('kenni.body', 'en'))).toBeOnTheScreen();
+  expect(screen.queryByText(translate('kenni.see_passes', 'en'))).toBeNull();
+
+  const reads = api.sentAll('/profile').length;
+  await fireEvent.press(screen.getByRole('button', { name: translate('common.cancel', 'en') }));
+  await waitFor(() => expect(heard).toEqual([{ verified: false }]));
+  await waitFor(() => expect(api.sentAll('/profile').length).toBe(reads + 1));
+  expect(isKenniSheetRequested()).toBe(false);
+  stop();
 });
