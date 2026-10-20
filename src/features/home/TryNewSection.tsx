@@ -16,21 +16,38 @@
 //     up over the Coach;
 //   - Home closes it on a tap anywhere outside the field and when the page is
 //     dragged (HomeScreen), and Android's back key closes it too, which
-//     covers iOS's Done key above the keyboard.
+//     covers iOS's Done key above the keyboard;
+//   - Home keeps the field above the keyboard (./useKeyboardLift.ts), which
+//     measures the field's row through this section's handle.
 import { Ionicons } from '@expo/vector-icons';
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
-import { Image, Keyboard, Pressable, ScrollView, StyleSheet, TextInput, View, type GestureResponderEvent } from 'react-native';
+import {
+  Image,
+  Keyboard,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  useWindowDimensions,
+  View,
+  type GestureResponderEvent,
+} from 'react-native';
 
 import { LPText } from '../../components/ui';
 import { useT } from '../../i18n';
 import { colors, fonts, hairline } from '../../theme';
 import { askFieldChange, HOME_ASK_CHIPS, HOME_COACH_CATEGORIES } from './coachPrompts';
+import type { KeyboardLiftField } from './useKeyboardLift';
 
 /** iOS `Color.lpAurora.opacity(x)`. */
 const aurora = (opacity: number) => `rgba(71,133,194,${opacity})`;
 
-/** Lets Home tell a tap inside the ask field from one outside it. */
-export interface TryNewSectionHandle {
+/** The ask field's line height at the default text size; the field grows to three of them. */
+const ASK_LINE_HEIGHT = 20;
+const ASK_MAX_LINES = 3;
+
+/** Lets Home tell a tap inside the ask field from one outside it, and keep the field above the keyboard. */
+export interface TryNewSectionHandle extends KeyboardLiftField {
   /** True while the ask field has the keyboard. */
   isInputFocused(): boolean;
   /** True when the touch that is starting began inside the field's row (the field or its send button). */
@@ -43,8 +60,10 @@ type Props = {
 
 const TryNewSection = forwardRef<TryNewSectionHandle, Props>(function TryNewSection({ onPrompt }, ref) {
   const { t } = useT();
+  const { fontScale } = useWindowDimensions();
   const [text, setText] = useState('');
   const input = useRef<TextInput>(null);
+  const row = useRef<View>(null);
   const touchInInput = useRef(false);
 
   useImperativeHandle(
@@ -55,6 +74,9 @@ const TryNewSection = forwardRef<TryNewSectionHandle, Props>(function TryNewSect
         const inside = touchInInput.current;
         touchInInput.current = false;
         return inside;
+      },
+      measureInputRow: (callback) => {
+        row.current?.measureInWindow((_x, y, _width, height) => callback(y, height));
       },
     }),
     [],
@@ -120,6 +142,7 @@ const TryNewSection = forwardRef<TryNewSectionHandle, Props>(function TryNewSect
 
       <View style={styles.askCard}>
         <View
+          ref={row}
           style={styles.inputRow}
           testID="home.coachInput.row"
           // Seen before Home's own touch handler (touches bubble up): a tap
@@ -142,7 +165,10 @@ const TryNewSection = forwardRef<TryNewSectionHandle, Props>(function TryNewSect
             cursorColor={colors.rust}
             selectionColor={colors.rust3}
             accessibilityLabel={t('home.ask_placeholder')}
-            style={styles.input}
+            // Three lines at every text size: the line grows with the font
+            // scale, so the cap does too (iOS `.lineLimit(1...3)` follows
+            // Dynamic Type).
+            style={[styles.input, { maxHeight: ASK_MAX_LINES * ASK_LINE_HEIGHT * fontScale }]}
             testID="home.coachInput"
           />
           {hasText ? (
@@ -219,10 +245,10 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 15,
     color: colors.paper,
-    lineHeight: 20,
+    lineHeight: ASK_LINE_HEIGHT,
     padding: 0,
-    // Grows to three lines (iOS `.lineLimit(1...3)`), then scrolls.
-    maxHeight: 3 * 20,
+    // Grows to three lines (iOS `.lineLimit(1...3)`), then scrolls; the
+    // height cap is set where the field is drawn, scaled with the text.
     textAlignVertical: 'top',
   },
   chips: { gap: 8, paddingVertical: 2 },
