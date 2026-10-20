@@ -17,8 +17,12 @@
  *  2. The page opens on `/auth/v1/authorize` (Google also gets
  *     `prompt=select_account`, so a phone with two Google accounts can pick).
  *  3. The page comes back on `lifepass://auth/callback/social?attempt=..&code=..`.
- *     Closing the tab, Android back, or "Cancel" on the provider's page is
- *     SILENT, as on iOS; anything else that goes wrong is `auth.social_failed`.
+ *     Closing the tab or Android back is SILENT, as closing iOS's web sheet
+ *     is; so is "Cancel" on Apple's page, the twin of iOS's native Apple
+ *     sheet's Cancel. Anything else is `auth.social_failed`, including
+ *     "Cancel" on Google's own consent page: iOS gets that back as an error
+ *     in the callback link and shows the failure too (`isCancellation` only
+ *     knows the sheets' own cancels).
  *  4. The code is exchanged for the member's tokens, OUTSIDE the app's
  *     Supabase client, so no part of the app knows a session exists yet.
  *  5. The metadata the account is missing (./socialMetadata) is written with
@@ -36,22 +40,27 @@
  *  link signs in that way), so the session is handed over last.
  *
  * WHY ITS OWN RETURN LINK. On iOS the web-auth session catches its own
- * callback; it never reaches `.onOpenURL`. On Android every `lifepass://`
- * link also reaches the app's deep-link router, which hands
- * `lifepass://auth/callback...` to the email-link handler (AUTH-1's
- * `handleAuthCallback`). The social page therefore returns on a path of its
- * own, `/social`, still under the `lifepass://auth/callback**` entry of
- * Supabase's redirect allow-list (docs/01, "Redirect URLs"), and carries only
- * a one-time code: the email-link handler must leave such a link to
- * `completeSocialReturn` (contract request to AUTH-1). The attempt id in it
- * binds the code to the verifier this phone saved, so a stray or forged link
- * is ignored without a request.
+ * callback; it never reaches `.onOpenURL`, so the email-link handler never
+ * sees it. On Android every `lifepass://` link also reaches the app's
+ * deep-link router (src/app/deepLinks.ts), even while the page is open. The
+ * social page therefore returns on a path of its own, `/social`, still under
+ * the `lifepass://auth/callback**` entry of Supabase's redirect allow-list
+ * (docs/01, "Redirect URLs"), and the router hands that path to
+ * `completeSocialReturn`, never to the email-link handler (whose failure
+ * banner, "We couldn't confirm your email", would otherwise follow every
+ * Google or Apple sign-in). The attempt id in the link binds its one-time
+ * code to the verifier this phone saved, so a stray or forged link is
+ * ignored without a request.
  *
  * PROCESS DEATH. If Android drops the app while the tab is open, the return
- * link starts it afresh. The sign-in screen, which is what a signed-out start
- * shows, calls `resumeSocialSignIn()`, which finishes the attempt from the
- * saved verifier. The verifier is removed at the first use, so the same link
- * replayed from Recents does nothing.
+ * link starts it afresh, on whatever a signed-out start shows (the onboarding
+ * splash). The router reads that launch link at the start and hands it to
+ * `completeSocialReturn`, which finishes the attempt from the saved verifier
+ * there and then; the member lands in the app signed in without visiting Log
+ * in. A failure no screen was waiting for is kept (`unreportedFailure`) for
+ * the next Log in or Sign up screen to show. The verifier is removed at the
+ * first use, so the same link replayed from Recents does nothing. The
+ * buttons' own `resumeSocialSignIn()` stays as a fallback.
  */
 import type { Session } from '@supabase/supabase-js';
 import * as Crypto from 'expo-crypto';
@@ -97,8 +106,13 @@ export const SOCIAL_ATTEMPT_MAX_AGE_MS = 10 * 60 * 1000;
 /** Where the attempt in flight is kept (Keystore-encrypted, like the session itself). */
 export const SOCIAL_PENDING_KEY = 'auth.socialPending';
 
-/** The provider errors that mean "the member said no" (Google's Cancel, Apple's Cancel). */
-const CANCELLED_ERRORS: ReadonlySet<string> = new Set(['access_denied', 'user_cancelled_authorize']);
+/**
+ * The errors Apple's page returns when the member presses its Cancel: the
+ * twin of iOS's native Apple sheet's Cancel (`ASAuthorizationError.canceled`),
+ * which iOS keeps silent. Google has none: iOS shows `auth.social_failed`
+ * for a Cancel on Google's consent page (file comment, step 3).
+ */
+const APPLE_CANCEL_ERRORS: ReadonlySet<string> = new Set(['user_cancelled_authorize', 'access_denied']);
 
 // ---------------------------------------------------------------------------
 // Timing (tests run without waits)
@@ -133,9 +147,23 @@ function sleep(ms: number): Promise<void> {
 interface SocialSignInState {
   /** A sign-in is running: the buttons are disabled and dimmed (iOS `isLoading`). */
   readonly busy: boolean;
+  /**
+   * A sign-in that no button was waiting for failed: one the router finished
+   * from a return link (after a process death, say). The next Log in or Sign
+   * up screen in front takes it (`takeUnreportedSocialFailure`) and shows
+   * `auth.social_failed` once.
+   */
+  readonly unreportedFailure: boolean;
 }
 
-export const useSocialSignInStore = create<SocialSignInState>(() => ({ busy: false }));
+export const useSocialSignInStore = create<SocialSignInState>(() => ({ busy: false, unreportedFailure: false }));
+
+/** Takes the failure no button has shown yet: true once, then false until the next one. */
+export function takeUnreportedSocialFailure(): boolean {
+  if (!useSocialSignInStore.getState().unreportedFailure) return false;
+  useSocialSignInStore.setState({ unreportedFailure: false });
+  return true;
+}
 
 /**
  * Whether a Google or Apple sign-in is running, for the email form beside
@@ -200,8 +228,14 @@ function readParams(part: string, into: Map<string, string>): void {
 /** What a return link says. */
 export type SocialReturn =
   | { readonly kind: 'code'; readonly attempt: string | null; readonly code: string }
-  | { readonly kind: 'cancelled'; readonly attempt: string | null }
-  | { readonly kind: 'error'; readonly attempt: string | null; readonly error: string };
+  | {
+      readonly kind: 'error';
+      readonly attempt: string | null;
+      /** `error`, else `error_code`, as sent. */
+      readonly error: string;
+      /** Both of them, lower case, for telling a Cancel apart (`isProviderCancel`). */
+      readonly codes: readonly string[];
+    };
 
 /**
  * Reads a return link: the attempt it belongs to, and either the one-time
@@ -221,13 +255,23 @@ export function parseSocialReturn(url: string | null | undefined): SocialReturn 
   const attempt = params.get('attempt') || null;
   const error = params.get('error') || params.get('error_code') || '';
   if (error) {
-    const codes = [params.get('error'), params.get('error_code')].map((value) => (value ?? '').toLowerCase());
-    if (codes.some((code) => CANCELLED_ERRORS.has(code))) return { kind: 'cancelled', attempt };
-    return { kind: 'error', attempt, error };
+    const codes = [params.get('error'), params.get('error_code')]
+      .filter((value): value is string => !!value)
+      .map((value) => value.toLowerCase());
+    return { kind: 'error', attempt, error, codes };
   }
   const code = params.get('code');
   if (code) return { kind: 'code', attempt, code };
-  return { kind: 'error', attempt, error: 'no_code' };
+  return { kind: 'error', attempt, error: 'no_code', codes: ['no_code'] };
+}
+
+/**
+ * Whether an error return is the member pressing Cancel on the provider's
+ * page, which says nothing: only Apple's (see `APPLE_CANCEL_ERRORS`).
+ */
+export function isProviderCancel(provider: SocialProvider, parsed: SocialReturn): boolean {
+  if (parsed.kind !== 'error' || provider !== 'apple') return false;
+  return parsed.codes.some((code) => APPLE_CANCEL_ERRORS.has(code));
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +418,17 @@ async function handOverSession(tokens: ProviderTokens): Promise<Session> {
   return data.session;
 }
 
+/**
+ * A member is already signed in on this phone. iOS cannot get here: one
+ * `isLoading` per screen keeps the email sign-in and a provider one from
+ * both running. Here the email form's own sign-in could finish while the
+ * provider's page is open (until the screens pass their busy state both
+ * ways), and a second account must never be swapped in under the first.
+ */
+function someoneSignedIn(): boolean {
+  return useAppStore.getState().isAuthenticated;
+}
+
 /** Steps 4 to 6 for a return link of `pending`. Never throws. */
 async function finishAttempt(url: string, pending: PendingSocialAttempt): Promise<SocialSignInOutcome> {
   // A code is good once, and so is its verifier: whatever happens next, this
@@ -381,8 +436,9 @@ async function finishAttempt(url: string, pending: PendingSocialAttempt): Promis
   await clearPending();
   const parsed = parseSocialReturn(url);
   if (!parsed || parsed.attempt !== pending.attempt) return 'failed';
-  if (parsed.kind === 'cancelled') return 'cancelled';
-  if (parsed.kind === 'error') return 'failed';
+  if (parsed.kind === 'error') return isProviderCancel(pending.provider, parsed) ? 'cancelled' : 'failed';
+  // Signed in another way meanwhile: this attempt is dropped, silently.
+  if (someoneSignedIn()) return 'cancelled';
   let tokens: ProviderTokens;
   try {
     tokens = await exchangeCode(parsed.code, pending.verifier);
@@ -392,6 +448,7 @@ async function finishAttempt(url: string, pending: PendingSocialAttempt): Promis
   // A write that failed twice still signs in: the profile is then created
   // without what was missing, which is what iOS accepts too.
   await completeMetadata(tokens);
+  if (someoneSignedIn()) return 'cancelled';
   let session: Session;
   try {
     session = await handOverSession(tokens);
@@ -511,19 +568,25 @@ export async function signInWithSocialProvider(provider: SocialProvider): Promis
   }
 }
 
-/** Completions of saved attempts in this process, by attempt id (each runs once). */
+/**
+ * Completions of saved attempts running now, by attempt id: the same link
+ * arriving twice at once (the router's launch link and a screen's resume) is
+ * finished once. A settled one is removed; its verifier is gone by then, so
+ * a later call for the same link is ignored.
+ */
 const completions = new Map<string, Promise<SocialSignInOutcome>>();
 
 /**
  * A social return link that reached the app some other way than the open
- * page: through the deep-link router (CONTRACT for AUTH-1's
- * `handleAuthCallback`: hand any `isSocialReturnUrl` link here and do nothing
- * else with it), or as the link that started the app after Android dropped
- * the process behind the page (`resumeSocialSignIn`).
+ * page: through the deep-link router (src/app/deepLinks.ts hands every
+ * `isSocialReturnUrl` link here and nowhere else), including the link that
+ * started the app after Android dropped the process behind the page.
  *
  * - A page open in this process takes its own return, and this does nothing.
  * - Otherwise the attempt is finished from the saved verifier, when the link
- *   belongs to it and it is not older than `SOCIAL_ATTEMPT_MAX_AGE_MS`.
+ *   belongs to it and it is not older than `SOCIAL_ATTEMPT_MAX_AGE_MS`. No
+ *   button is waiting for it, so a failure is kept for the next sign-in
+ *   screen (`unreportedFailure`), reported once.
  * - Anything else (no saved attempt, another attempt's link, a replay) is
  *   ignored without a request.
  * Never throws.
@@ -549,15 +612,23 @@ export function completeSocialReturn(url: string): Promise<SocialSignInOutcome> 
     } finally {
       useSocialSignInStore.setState({ busy: false });
     }
-  })().catch((): SocialSignInOutcome => 'failed');
+  })()
+    .catch((): SocialSignInOutcome => 'failed')
+    .then((outcome) => {
+      if (completions.get(attempt) === completion) completions.delete(attempt);
+      if (outcome === 'failed') useSocialSignInStore.setState({ unreportedFailure: true });
+      return outcome;
+    });
   completions.set(attempt, completion);
   return completion;
 }
 
 /**
- * The sign-in screens call this when they appear: if the app was started by
- * the social page's return link (Android dropped the process behind the
- * page), the sign-in it was in the middle of finishes now. Never throws.
+ * The fallback for the router's launch-link path: the sign-in screens call
+ * this when they appear, and if the app was started by the social page's
+ * return link and that attempt is still waiting, it finishes now (a failure
+ * reaches the screen through `unreportedFailure`, as the router's does).
+ * Never throws.
  */
 export async function resumeSocialSignIn(): Promise<SocialSignInOutcome> {
   let url: string | null = null;
@@ -584,5 +655,5 @@ export function resetSocialSignInForTests(): void {
   completions.clear();
   resumedLaunchUrl = null;
   timing = SOCIAL_TIMING_DEFAULTS;
-  useSocialSignInStore.setState({ busy: false });
+  useSocialSignInStore.setState({ busy: false, unreportedFailure: false });
 }

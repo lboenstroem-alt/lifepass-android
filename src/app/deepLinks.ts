@@ -15,7 +15,13 @@
  *   sign-out forgets it.
  * - AUTH LINKS (email confirmation, password reset, D23):
  *   `https://www.lifepass.is/app/auth-callback` and `lifepass://auth/callback`
- *   go to AUTH-1's `handleAuthCallback`.
+ *   go to AUTH-1's `handleAuthCallback`. The Google / Apple page's return,
+ *   `lifepass://auth/callback/social?...`, goes to AUTH-2's
+ *   `completeSocialReturn` instead, and never to the email-link handler: on
+ *   iOS the web-auth session catches that return itself, so the email
+ *   handler's "couldn't confirm your email" banner never follows a provider
+ *   sign-in, and a launch by it (a process death behind the page) finishes
+ *   the sign-in here, at the start, whatever screen shows.
  * - PAYMENT AND CARD-SETUP RETURNS (`lifepass://payment-success|canceled`,
  *   `lifepass://card-setup-success|canceled`) go to whoever registered for
  *   them (F8's in-flight recovery: `registerReturnHandler`). A hosted page
@@ -35,6 +41,7 @@ import { Linking } from 'react-native';
 
 import { parseWalkInQr, isVenueUuid } from '../checkin/walkInQrParser';
 import { handleAuthCallback } from '../features/auth/authCallback';
+import { completeSocialReturn, isSocialReturnUrl } from '../features/auth/social';
 import { useIntentStore } from '../stores/intentStore';
 import { registerSignOutCleaner } from './signOut';
 
@@ -204,7 +211,8 @@ export function handleDeepLink(url: string | null | undefined): DeepLink {
       useIntentStore.getState().parkScanVenue(link.venueId);
       break;
     case 'auth':
-      void handleAuthCallback(link.url);
+      if (isSocialReturnUrl(link.url)) void completeSocialReturn(link.url);
+      else void handleAuthCallback(link.url);
       break;
     case 'return': {
       useIntentStore.getState().cancelExploreLaunchPresentation();

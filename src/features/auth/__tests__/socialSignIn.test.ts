@@ -21,8 +21,11 @@ import {
   sessionJSON,
   settle,
 } from '../../../stores/__tests__/storeHarness';
+import { handleDeepLink, resetDeepLinksForTests, startDeepLinks } from '../../../app/deepLinks';
+import { handleAuthCallback } from '../authCallback';
 import {
   completeSocialReturn,
+  isProviderCancel,
   isSocialReturnUrl,
   loadPendingSocialAttempt,
   parseSocialReturn,
@@ -36,11 +39,14 @@ import {
   SOCIAL_RETURN_URL,
   SOCIAL_TIMING_DEFAULTS,
   socialAuthorizeUrl,
+  takeUnreportedSocialFailure,
   useSocialSignInStore,
 } from '../social';
 import { codeChallenge } from '../socialPkce';
 
 jest.mock('expo-web-browser', () => ({ openAuthSessionAsync: jest.fn() }));
+// The email-link handler (AUTH-1): a social return must never reach it.
+jest.mock('../authCallback', () => ({ handleAuthCallback: jest.fn(async () => undefined) }));
 
 stubApiClientPerTest();
 freshStorePerTest();
@@ -59,6 +65,8 @@ let order: string[] = [];
 
 beforeEach(() => {
   resetSocialSignInForTests();
+  resetDeepLinksForTests();
+  jest.mocked(handleAuthCallback).mockClear();
   setSocialTimingForTests({ metadataRetryDelayMs: 0, lateReturnGraceMs: 0 });
   order = [];
   urlHandlers = [];
@@ -325,10 +333,10 @@ describe('a cancel is silent', () => {
   });
 
   it.each([
-    'error=access_denied&error_description=The+user+denied',
     'error=user_cancelled_authorize',
+    'error=access_denied&error_description=The+user+denied',
     'error=invalid_request&error_code=access_denied',
-  ])('the member said no on the provider’s page (%s)', async (suffix) => {
+  ])('the member pressed Cancel on Apple’s page, the twin of iOS’s native Apple sheet (%s)', async (suffix) => {
     pageReturns(suffix);
     await expect(signInWithSocialProvider('apple')).resolves.toBe('cancelled');
     expect(authHost.requests).toHaveLength(0);
@@ -336,6 +344,13 @@ describe('a cancel is silent', () => {
 });
 
 describe('anything else fails (auth.social_failed)', () => {
+  it('Cancel on Google’s own consent page: iOS gets it as an error in the link and says it failed', async () => {
+    pageReturns('error=access_denied&error_description=The+user+denied+the+request');
+    await expect(signInWithSocialProvider('google')).resolves.toBe('failed');
+    expect(authHost.requests).toHaveLength(0);
+    expect(await loadPendingSocialAttempt()).toBeNull();
+  });
+
   it('the provider or the server sent an error', async () => {
     pageReturns('error=server_error&error_description=Unable+to+exchange+external+code');
     await expect(signInWithSocialProvider('google')).resolves.toBe('failed');
@@ -503,6 +518,31 @@ describe('the return link reaching the app another way', () => {
     // Log in again after a sign-out, in the same process: the launch link is the same, and old.
     await expect(resumeSocialSignIn()).resolves.toBe('ignored');
     expect(authHost.sentAll('/auth/v1/token')).toHaveLength(1);
+    // The failure waits for one screen to show it, once.
+    expect(takeUnreportedSocialFailure()).toBe(true);
+    expect(takeUnreportedSocialFailure()).toBe(false);
+  });
+
+  it('a settled attempt is not handed to later callers: the router finished it, a screen’s resume gets nothing', async () => {
+    await saveAttempt({ attempt: 'attempt-1', startedAt: Date.now() });
+    authHost.on('POST', '/auth/v1/token', Reply.json(400, { code: 400, error_code: 'flow_state_expired', msg: 'x' }));
+    const link = 'lifepass://auth/callback/social?attempt=attempt-1&code=auth-code-1';
+    jest.mocked(Linking.getInitialURL).mockResolvedValue(link);
+    await expect(completeSocialReturn(link)).resolves.toBe('failed');
+    expect(useSocialSignInStore.getState().unreportedFailure).toBe(true);
+    expect(takeUnreportedSocialFailure()).toBe(true);
+
+    await expect(resumeSocialSignIn()).resolves.toBe('ignored');
+    await expect(resumeSocialSignIn()).resolves.toBe('ignored');
+    await expect(completeSocialReturn(link)).resolves.toBe('ignored');
+    expect(useSocialSignInStore.getState().unreportedFailure).toBe(false);
+    expect(authHost.sentAll('/auth/v1/token')).toHaveLength(1);
+  });
+
+  it('a page sign-in that fails tells its own button, not the next screen', async () => {
+    pageReturns('error=server_error');
+    await expect(signInWithSocialProvider('google')).resolves.toBe('failed');
+    expect(useSocialSignInStore.getState().unreportedFailure).toBe(false);
   });
 
   it('a start that was not the page’s return does nothing', async () => {
@@ -512,6 +552,100 @@ describe('the return link reaching the app another way', () => {
     await expect(resumeSocialSignIn()).resolves.toBe('ignored');
     jest.mocked(Linking.getInitialURL).mockRejectedValue(new Error('no activity'));
     await expect(resumeSocialSignIn()).resolves.toBe('ignored');
+  });
+});
+
+describe('through the deep-link router (src/app/deepLinks.ts)', () => {
+  const LINK = 'lifepass://auth/callback/social?attempt=attempt-1&code=auth-code-1';
+
+  it('a return with a code finishes the sign-in and never reaches the email-link handler', async () => {
+    await store().bootstrap();
+    serveAuthServer();
+    serveMember();
+    await saveAttempt({ attempt: 'attempt-1', startedAt: Date.now() });
+    expect(handleDeepLink(LINK).kind).toBe('auth');
+    await waitUntil(() => store().isAuthenticated);
+    expect(handleAuthCallback).not.toHaveBeenCalled();
+    expect(store().deepLinkError).toBeNull();
+    expect(authHost.sentAll('/auth/v1/token')).toHaveLength(1);
+    expect(order.indexOf('metadata')).toBeLessThan(order.indexOf('profile'));
+  });
+
+  it('a provider error or Cancel return sets no banner and makes no request', async () => {
+    for (const [provider, query] of [
+      ['apple', 'error=user_cancelled_authorize'],
+      ['google', 'error=access_denied&error_description=The+user+denied'],
+    ] as const) {
+      await saveAttempt({ attempt: 'attempt-1', startedAt: Date.now(), provider });
+      handleDeepLink(`lifepass://auth/callback/social?attempt=attempt-1&${query}`);
+      await waitUntil(async () => (await loadPendingSocialAttempt()) === null);
+      await settle(2);
+    }
+    expect(handleAuthCallback).not.toHaveBeenCalled();
+    expect(store().deepLinkError).toBeNull();
+    expect(authHost.requests).toHaveLength(0);
+    // Apple's Cancel says nothing; Google's failure waits for the sign-in screen.
+    expect(takeUnreportedSocialFailure()).toBe(true);
+    expect(takeUnreportedSocialFailure()).toBe(false);
+  });
+
+  it('a stray social link does nothing at all', async () => {
+    handleDeepLink('lifepass://auth/callback/social?attempt=nobody&code=stolen');
+    await settle(5);
+    expect(handleAuthCallback).not.toHaveBeenCalled();
+    expect(store().deepLinkError).toBeNull();
+    expect(authHost.requests).toHaveLength(0);
+  });
+
+  it('an email link still goes to the email-link handler', () => {
+    handleDeepLink('lifepass://auth/callback?code=email-code');
+    handleDeepLink('lifepass://auth/callback#access_token=a&refresh_token=b');
+    expect(handleAuthCallback).toHaveBeenCalledTimes(2);
+  });
+
+  it('a start by the return link (process death behind the page) finishes the sign-in at once, no screen needed', async () => {
+    await store().bootstrap();
+    serveAuthServer();
+    serveMember();
+    await saveAttempt({ attempt: 'attempt-1', startedAt: Date.now() });
+    jest.mocked(Linking.getInitialURL).mockResolvedValue(LINK);
+    const stop = startDeepLinks();
+    await waitUntil(() => store().isAuthenticated);
+    stop();
+    expect(store().userId).toBe(MEMBER_A);
+    expect(handleAuthCallback).not.toHaveBeenCalled();
+    expect(store().deepLinkError).toBeNull();
+    expect(await loadPendingSocialAttempt()).toBeNull();
+    // A sign-in screen's fallback finds nothing left to do.
+    await expect(resumeSocialSignIn()).resolves.toBe('ignored');
+    expect(authHost.sentAll('/auth/v1/token')).toHaveLength(1);
+  });
+});
+
+describe('a member signed in another way meanwhile', () => {
+  it('while the page was open (the email form finished): the return is dropped, silently, before the exchange', async () => {
+    openAuthSession.mockImplementation(async (url: string) => {
+      useAppStore.setState({ isAuthenticated: true, userId: 'member-by-email' });
+      return { type: 'success', url: `${redirectOf(url)}&code=auth-code-1` };
+    });
+    await expect(signInWithSocialProvider('google')).resolves.toBe('cancelled');
+    expect(authHost.requests).toHaveLength(0);
+    expect(store().userId).toBe('member-by-email');
+  });
+
+  it('while the metadata was written: the session is never handed over', async () => {
+    serveAuthServer();
+    serveMember();
+    pageReturns();
+    authHost.on('PUT', '/auth/v1/user', () => {
+      order.push('metadata');
+      useAppStore.setState({ isAuthenticated: true, userId: 'member-by-email' });
+      return Reply.json(200, {});
+    });
+    await expect(signInWithSocialProvider('google')).resolves.toBe('cancelled');
+    expect(order).toEqual(['token:pkce', 'metadata']);
+    expect(store().userId).toBe('member-by-email');
+    expect(useSocialSignInStore.getState().unreportedFailure).toBe(false);
   });
 });
 
@@ -536,33 +670,62 @@ describe('the return link', () => {
     }
   });
 
-  it('reads the code, a cancel or an error, from the query or the fragment', () => {
+  it('reads the code or an error, from the query or the fragment', () => {
     expect(parseSocialReturn('lifepass://auth/callback/social?attempt=a1&code=c1')).toEqual({
       kind: 'code',
       attempt: 'a1',
       code: 'c1',
     });
     expect(parseSocialReturn('lifepass://auth/callback/social?attempt=a1#error=access_denied')).toEqual({
-      kind: 'cancelled',
+      kind: 'error',
       attempt: 'a1',
+      error: 'access_denied',
+      codes: ['access_denied'],
     });
     expect(
       parseSocialReturn('lifepass://auth/callback/social?attempt=a1&error=server_error&error_description=x+y'),
-    ).toEqual({ kind: 'error', attempt: 'a1', error: 'server_error' });
+    ).toEqual({ kind: 'error', attempt: 'a1', error: 'server_error', codes: ['server_error'] });
+    expect(
+      parseSocialReturn('lifepass://auth/callback/social?attempt=a1&error=Invalid_Request&error_code=ACCESS_DENIED'),
+    ).toEqual({ kind: 'error', attempt: 'a1', error: 'Invalid_Request', codes: ['invalid_request', 'access_denied'] });
     expect(parseSocialReturn('lifepass://auth/callback/social?attempt=a%2F1')).toEqual({
       kind: 'error',
       attempt: 'a/1',
       error: 'no_code',
+      codes: ['no_code'],
     });
     expect(parseSocialReturn('lifepass://auth/callback?code=c')).toBeNull();
   });
+
+  it('a Cancel is silent on Apple’s page only', () => {
+    const said = (query: string) => parseSocialReturn(`lifepass://auth/callback/social?attempt=a1&${query}`)!;
+    expect(isProviderCancel('apple', said('error=user_cancelled_authorize'))).toBe(true);
+    expect(isProviderCancel('apple', said('error=access_denied'))).toBe(true);
+    expect(isProviderCancel('apple', said('error=server_error'))).toBe(false);
+    expect(isProviderCancel('apple', said('code=c1'))).toBe(false);
+    expect(isProviderCancel('google', said('error=access_denied'))).toBe(false);
+    expect(isProviderCancel('google', said('error=user_cancelled_authorize'))).toBe(false);
+  });
 });
 
-async function saveAttempt(values: { attempt: string; startedAt: number }): Promise<void> {
+async function saveAttempt(values: {
+  attempt: string;
+  startedAt: number;
+  provider?: 'google' | 'apple';
+}): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const SecureStore = require('expo-secure-store') as typeof import('expo-secure-store');
   await SecureStore.setItemAsync(
     SOCIAL_PENDING_KEY,
-    JSON.stringify({ ...values, provider: 'google', verifier: 'verifier-'.padEnd(43, 'x') }),
+    JSON.stringify({ provider: 'google', ...values, verifier: 'verifier-'.padEnd(43, 'x') }),
   );
+}
+
+/** Lets the stub servers and the store work until `done` holds (or fails the test after a while). */
+async function waitUntil(done: () => boolean | Promise<boolean>): Promise<void> {
+  for (let i = 0; i < 200; i += 1) {
+    if (await done()) return;
+    await settle(1);
+  }
+  throw new Error('waitUntil: never happened');
 }
