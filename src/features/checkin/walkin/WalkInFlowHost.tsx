@@ -12,12 +12,17 @@
  * the whole app wherever it sits.
  *
  * ONE FLOW, ONE HOST ON SCREEN. The flow is one per app: the Scan tab and a
- * scanner pushed from a venue page share it. Each mounted host counts itself
- * in, and only the newest draws, so a pushed scanner over the tab's never
- * shows a sheet twice; when it goes, the tab's host takes over whatever is
- * still in hand (a proof that arrived after back, say).
+ * scanner pushed from a venue page share it, and tab stacks stay mounted, so
+ * several hosts can be mounted at once. Only one draws: the one whose screen
+ * was focused last (a host mounted on a screen in focus counts as focused
+ * then). So the "Processing…" veil and a refusal's step (My bookings, Book a
+ * time) land on the scanner the member is looking at, never on a hidden tab,
+ * as each iOS `CheckInView` draws its own flow. When that host goes, the one
+ * focused before it takes over whatever is still in hand (a proof that
+ * arrived after back, say). Outside a navigator a host counts as focused.
  */
-import { useEffect, useState } from 'react';
+import { NavigationContext } from '@react-navigation/native';
+import { useContext, useEffect, useState } from 'react';
 import { create } from 'zustand';
 
 import { registerWalkInHooks } from './register';
@@ -30,22 +35,35 @@ import ProcessingOverlay from './ui/ProcessingOverlay';
 import SuccessCover from './ui/SuccessCover';
 import WalkInDialogs from './ui/WalkInDialogs';
 
-/** The mounted hosts, oldest first. */
+/** The mounted hosts, the one focused longest ago first: the last one draws. */
 const useHosts = create<{ stack: readonly number[] }>(() => ({ stack: [] }));
 let nextHostId = 1;
 
-/** True for the newest mounted host. */
+function without(stack: readonly number[], id: number): number[] {
+  return stack.filter((host) => host !== id);
+}
+
+/** True for the host whose screen was focused last (see the file comment). */
 function useIsDrawingHost(): boolean {
   const [id] = useState(() => nextHostId++);
+  // The screen's own navigation: a hook that throws outside a navigator
+  // (useIsFocused) would take the host down with it.
+  const navigation = useContext(NavigationContext);
   useEffect(() => {
     registerWalkInHooks();
-    useHosts.setState((state) => ({ stack: [...state.stack, id] }));
+    const focused = navigation ? navigation.isFocused() : true;
+    // A screen mounted out of sight (a preloaded tab) waits at the bottom.
+    useHosts.setState((state) => ({ stack: focused ? [...without(state.stack, id), id] : [id, ...without(state.stack, id)] }));
     const unmount = noteHostMounted();
+    const unsubscribe = navigation?.addListener('focus', () => {
+      useHosts.setState((state) => ({ stack: [...without(state.stack, id), id] }));
+    });
     return () => {
-      useHosts.setState((state) => ({ stack: state.stack.filter((host) => host !== id) }));
+      unsubscribe?.();
+      useHosts.setState((state) => ({ stack: without(state.stack, id) }));
       unmount();
     };
-  }, [id]);
+  }, [id, navigation]);
   return useHosts((state) => state.stack[state.stack.length - 1] === id);
 }
 

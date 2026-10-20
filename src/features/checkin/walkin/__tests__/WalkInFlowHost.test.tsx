@@ -5,9 +5,11 @@
  * kit's Dialog, and CHECKIN-1's proof is stood in for by a view that prints
  * what it was handed.
  */
-import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
+import type { ReactElement } from 'react';
 import { BackHandler, Text, View } from 'react-native';
 import { api, Reply } from '@test/server';
 
@@ -113,6 +115,42 @@ async function press(testID: string) {
 
 function proof(): Record<string, unknown> {
   return JSON.parse(String(screen.getByTestId('proof').props.children)) as Record<string, unknown>;
+}
+
+/**
+ * Hardware back as Android delivers it: the newest listener first, until one
+ * says it handled it (the kit Sheet's own consumes back while it cannot be
+ * dismissed).
+ */
+function spyHardwareBack() {
+  const listeners: (() => boolean | null | undefined)[] = [];
+  const spy = jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_event, handler) => {
+    listeners.push(handler);
+    return {
+      remove: () => {
+        const index = listeners.indexOf(handler);
+        if (index >= 0) listeners.splice(index, 1);
+      },
+    };
+  });
+  return {
+    async press() {
+      await settle(); // the step's own listener is added a turn after it shows
+      await act(async () => {
+        for (const listener of [...listeners].reverse()) if (listener()) break;
+      });
+      await settle();
+    },
+    restore: () => spy.mockRestore(),
+  };
+}
+
+/** The sheet on screen refuses the backdrop and the pan, as iOS's `interactiveDismissDisabled`. */
+function expectNotDismissibleByHand() {
+  const modal = bottomSheetMock.latest();
+  expect(modal?.enablePanDownToClose).toBe(false);
+  const backdrop = modal?.backdropComponent?.({}) as ReactElement<{ pressBehavior?: string }> | undefined;
+  expect(backdrop?.props.pressBehavior).toBe('none');
 }
 
 it('a free camera read checks in and shows the proof; Done clears it', async () => {
@@ -261,12 +299,8 @@ describe('the guest sheet', () => {
     expect(screen.getByTestId('walkin.guests.whosePrice')).toHaveTextContent(translate('checkin.guests.own_free', 'en'));
   });
 
-  it('hardware back ends the attempt with nothing sent', async () => {
-    const listeners: (() => boolean | null | undefined)[] = [];
-    jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_event, handler) => {
-      listeners.push(handler);
-      return { remove: () => listeners.splice(listeners.indexOf(handler), 1) };
-    });
+  it('a tap outside or a pan down never closes it (iOS); back ends the attempt with nothing sent', async () => {
+    const back = spyHardwareBack();
     api.on('GET', '/check-ins/walk-in/preview', Reply.ok(previewJSON({
       charge: { kind: 'surcharge', amountIsk: 1500 },
       guestBands: [{ band: 'adult', unitIsk: 2650 }],
@@ -274,12 +308,30 @@ describe('the guest sheet', () => {
     await renderScan();
     await start();
     expect(walkInStore.getState().showGuestPicker).toBe(true);
-    await act(async () => {
-      listeners.at(-1)?.();
-    });
+    expectNotDismissibleByHand();
+
+    await back.press();
     expect(walkInStore.getState().showGuestPicker).toBe(false);
     expect(posts('/check-ins/walk-in')).toHaveLength(0);
     expect(screen.getByTestId('idle').props.children).toBe('true');
+    back.restore();
+  });
+});
+
+describe('the own-visit step and back', () => {
+  it('a tap outside or a pan down never closes it (iOS); back ends the attempt with nothing sent', async () => {
+    const back = spyHardwareBack();
+    api.on('GET', '/check-ins/walk-in/preview', Reply.ok(previewJSON({ guestBands: [{ band: 'adult', unitIsk: 2650 }] })));
+    await renderScan();
+    await start();
+    expect(walkInStore.getState().showOwnVisitConfirm).toBe(true);
+    expectNotDismissibleByHand();
+
+    await back.press();
+    expect(walkInStore.getState().showOwnVisitConfirm).toBe(false);
+    expect(posts('/check-ins/walk-in')).toHaveLength(0);
+    expect(screen.getByTestId('idle').props.children).toBe('true');
+    back.restore();
   });
 });
 
@@ -391,7 +443,7 @@ function TwoHosts() {
   );
 }
 
-it('only the newest host draws the flow', async () => {
+it('of two hosts on one screen in focus, only the newest draws the flow', async () => {
   api.on('GET', '/check-ins/walk-in/preview', Reply.ok(previewJSON({ charge: { kind: 'surcharge', amountIsk: 1500 } })));
   await render(
     <NavigationContainer>
@@ -402,4 +454,51 @@ it('only the newest host draws the flow', async () => {
   );
   await start();
   expect(screen.getAllByText(translate('consent.title', 'en'))).toHaveLength(1);
+});
+
+const Tabs = createBottomTabNavigator();
+
+function ScanTab() {
+  return (
+    <View testID="tab.scan" style={{ flex: 1 }}>
+      <WalkInFlowHost />
+    </View>
+  );
+}
+
+function VenueTab() {
+  return (
+    <View testID="tab.venue" style={{ flex: 1 }}>
+      <WalkInFlowHost />
+    </View>
+  );
+}
+
+it('the host on the screen in focus draws the flow, not the newest one mounted', async () => {
+  const navigation = createNavigationContainerRef<{ ScanTab: undefined; VenueTab: undefined }>();
+  await render(
+    <NavigationContainer ref={navigation}>
+      <Tabs.Navigator>
+        <Tabs.Screen name="ScanTab" component={ScanTab} />
+        <Tabs.Screen name="VenueTab" component={VenueTab} />
+      </Tabs.Navigator>
+    </NavigationContainer>,
+  );
+  const drawsIn = (tab: string) =>
+    within(screen.getByTestId(tab, { includeHiddenElements: true })).queryByTestId('walkin.processing', {
+      includeHiddenElements: true,
+    });
+
+  // The other tab is visited (its host mounts, the newest), then the member
+  // comes back to Scan, which stays mounted, and scans there.
+  await act(async () => navigation.navigate('VenueTab'));
+  await act(async () => navigation.navigate('ScanTab'));
+  await act(async () => walkInStore.setState({ isProcessing: true }));
+  expect(drawsIn('tab.scan')).not.toBeNull();
+  expect(drawsIn('tab.venue')).toBeNull();
+
+  // Back to the other tab: its host takes over what is in hand.
+  await act(async () => navigation.navigate('VenueTab'));
+  expect(drawsIn('tab.venue')).not.toBeNull();
+  expect(drawsIn('tab.scan')).toBeNull();
 });

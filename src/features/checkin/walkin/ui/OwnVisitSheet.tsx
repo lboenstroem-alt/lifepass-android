@@ -12,9 +12,10 @@
  * The words scroll and the buttons stay pinned (the footer), so at the large
  * text sizes, or in Icelandic on a small phone, "Check in" is never the part
  * that falls off; at the accessibility sizes it opens at full height. The
- * close button sends nothing and ends the attempt; on Android, back (and a
- * pan down) does the same. For an attempt that came by link, the link's note
- * is here and this tap is the confirmation.
+ * close button sends nothing and ends the attempt; on Android, back does the
+ * same (./useBackEndsStep). A tap outside or a pan down does nothing, as iOS
+ * (`interactiveDismissDisabled`). For an attempt that came by link, the
+ * link's note is here and this tap is the confirmation.
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useRef } from 'react';
@@ -29,6 +30,7 @@ import type { WalkInCoverage } from '../../../../api/walkInPreview';
 import { useWalkIn, walkInActions } from '../useWalkIn';
 
 import { LinkButton, SolidButton } from './buttons';
+import { useBackEndsStep } from './useBackEndsStep';
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -55,10 +57,13 @@ export default function OwnVisitSheet() {
   const titleRef = useRef<Text>(null);
   const line = coverageLine(coverage, language) ?? t('checkin.cover.free');
   const decline = () => walkInActions().declineOwnVisit();
+  useBackEndsStep(visible, decline);
 
   return (
     <Sheet
       visible={visible}
+      // Never by a tap outside or a pan down (iOS); back is useBackEndsStep's.
+      dismissible={false}
       onClose={decline}
       fullHeight={isAccessibilitySize}
       initialFocusRef={titleRef}

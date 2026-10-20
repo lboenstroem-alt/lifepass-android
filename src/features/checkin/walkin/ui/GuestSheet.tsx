@@ -12,8 +12,10 @@
  * member's head.
  *
  * Continue (with guests) or Just me, and a secondary Just me that clears
- * them; each acts once. iOS cannot dismiss this sheet by hand; on Android
- * back (and a pan down) ends the attempt, nothing having been sent.
+ * them; each acts once. As on iOS (`interactiveDismissDisabled`), a tap
+ * outside or a pan down does not close it, so a stray touch on the camera
+ * above never ends the attempt; Android's back does, nothing having been
+ * sent (./useBackEndsStep).
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useRef } from 'react';
@@ -27,6 +29,7 @@ import { guestCountTotal, guestTotalIsk, MAX_GUESTS } from '../store';
 import { useWalkIn, walkInActions } from '../useWalkIn';
 
 import { LinkButton, SolidButton } from './buttons';
+import { useBackEndsStep } from './useBackEndsStep';
 
 /** "Child (6–15)": always the venue's own range from the offer. */
 export function guestBandLabel(offer: GuestBandOffer, t: (key: string) => string): string {
@@ -52,9 +55,13 @@ export default function GuestSheet() {
     }
   }
 
+  useBackEndsStep(visible, () => walkInActions().cancelGuests());
+
   return (
     <Sheet
       visible={visible}
+      // Never by a tap outside or a pan down (iOS); back is useBackEndsStep's.
+      dismissible={false}
       onClose={() => walkInActions().cancelGuests()}
       initialFocusRef={titleRef}
       testID="walkin.guests"

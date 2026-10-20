@@ -16,6 +16,7 @@
  *   steps go through the refusal-step presenter. Never the server's words.
  */
 import { Linking } from 'react-native';
+import { useShallow } from 'zustand/react/shallow';
 
 import { ctaLabelKey, REFUSAL_WEB_PROFILE_URL, type RefusalCta } from '../../../../api';
 import { Dialog, type DialogButton } from '../../../../components/ui';
@@ -24,7 +25,7 @@ import { useT } from '../../../../i18n';
 import { presentsRefusalStep, useRefusalStep } from '../../../../navigation/refusalSteps';
 import { payOutcomeMessage, payOutcomeTitle } from '../../../../payments';
 import { walkInConsentButtonLabel, walkInConsentMessage, walkInConsentTitle } from '../consentCopy';
-import { consentContext, type WalkInState } from '../store';
+import { guestCountTotal, guestTotalIsk, type WalkInState } from '../store';
 import { useWalkIn, walkInActions } from '../useWalkIn';
 
 type Showing = 'consent' | 'link' | 'payOutcome' | 'noCard' | 'error' | null;
@@ -62,10 +63,31 @@ export function scanOffersRefusalStep(cta: RefusalCta, venueId: string | null, v
 
 const NOOP = () => undefined;
 
+/**
+ * Only what the alerts read, compared field by field: a guest stepper tap or
+ * a processing flip re-renders nothing here unless an alert's words change.
+ */
+function dialogFields(s: WalkInState) {
+  return {
+    offer: s.pendingOffer,
+    chargeReason: s.pendingChargeReason,
+    reoffered: s.offerWasReoffered,
+    guestCountTotal: guestCountTotal(s),
+    guestTotalIsk: guestTotalIsk(s),
+    venueName: s.preview?.venue.name ?? null,
+    coveredBy: s.preview?.coveredBy ?? null,
+    payOutcome: s.payOutcome,
+    error: s.error,
+    errorCTA: s.errorCTA,
+    refusalVenueId: s.refusalVenueId,
+    refusalVenueSlug: s.refusalVenueSlug,
+  };
+}
+
 export default function WalkInDialogs() {
   const { t, language } = useT();
   const showing = useWalkIn(currentDialog);
-  const state = useWalkIn((s) => s);
+  const state = useWalkIn(useShallow(dialogFields));
   const refusalStep = useRefusalStep({
     venueSlug: state.refusalVenueSlug,
     local: (cta) => {
@@ -86,7 +108,14 @@ export default function WalkInDialogs() {
   let buttons: DialogButton[] = [];
   switch (showing) {
     case 'consent': {
-      const context = consentContext(state);
+      const context = {
+        offer: state.offer,
+        chargeReason: state.chargeReason,
+        reoffered: state.reoffered,
+        guestCountTotal: state.guestCountTotal,
+        guestTotalIsk: state.guestTotalIsk,
+        venueName: state.venueName,
+      };
       title = walkInConsentTitle(context, language);
       message = walkInConsentMessage(context, language);
       buttons = [
@@ -96,10 +125,10 @@ export default function WalkInDialogs() {
       break;
     }
     case 'link': {
-      const venueName = state.preview?.venue.name;
+      const { venueName } = state;
       title = venueName ? t('checkin.link.confirm_title', { venue: venueName }) : t('checkin.link.confirm_title_plain');
       const note = t('checkin.link.confirm_body');
-      const line = coverageLine(state.preview?.coveredBy, language);
+      const line = coverageLine(state.coveredBy, language);
       message = line ? `${line}\n\n${note}` : note;
       buttons = [
         { label: t('checkin.link.confirm_cta'), onPress: () => void walkInActions().confirmLinkedWalkIn(), testID: 'walkin.link.confirm' },
