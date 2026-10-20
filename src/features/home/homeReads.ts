@@ -5,14 +5,24 @@
 // appear and again in its pull to refresh (`loadOutsideMarkers` in `.task`
 // and `.refreshable`). On Android the Outside card (ATTR-1) reads its own
 // picks, and its props are fixed by the slot, so Home cannot hand it the
-// sights or call it. Home bumps this count instead, at every focus and at the
-// start of every pull to refresh, and a card that wants Home's rhythm re-reads
-// when it changes:
+// sights or call it. Home signals here instead, at every focus and at the
+// start of every pull to refresh.
 //
-//   const reads = useHomeReads();
-//   useEffect(() => { void reload(); }, [reads]);
+// HOW A CARD FOLLOWS IT (published through ./index.ts, the only door other
+// features may use):
+//
+//   useOnHomeRead(() => { void reload(); });
+//
+// The callback runs once per Home read, starting with the first focus, and
+// never on mount by itself. That is the one-load-per-read rhythm iOS has: a
+// card mounted inside Home subscribes in its own effect, which React runs
+// before Home's focus effect in the same commit, so the first signal already
+// finds it listening. (Re-reading on a change of `useHomeReads()` instead
+// would load twice on first mount: once for the count the card mounted with,
+// once more when Home's first focus bumps it.)
 //
 // It says nothing about the member, so there is nothing to clear at sign-out.
+import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
 
 interface HomeReadsState {
@@ -30,6 +40,23 @@ export function signalHomeReads(): void {
 /** The number of Home reads so far; changes each time Home reads again. */
 export function useHomeReads(): number {
   return useHomeReadsStore((state) => state.count);
+}
+
+/**
+ * Runs `onRead` at every Home read from now on (each focus of Home and each
+ * pull to refresh), never at mount by itself. The latest `onRead` is the one
+ * called, so it may close over fresh props and state.
+ */
+export function useOnHomeRead(onRead: () => void): void {
+  const latest = useRef(onRead);
+  latest.current = onRead;
+  useEffect(
+    () =>
+      useHomeReadsStore.subscribe((state, previous) => {
+        if (state.count !== previous.count) latest.current();
+      }),
+    [],
+  );
 }
 
 /** The count now, outside React. */
