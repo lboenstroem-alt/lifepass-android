@@ -439,6 +439,16 @@ describe('refusals', () => {
     expect(store.getState().error).toBe(translate('error.server', 'en'));
     expect(store.getState().errorCTA).toBeNull();
     expect(store.getState().error).not.toContain('504');
+
+    // The key went with the attempt: the next scan cannot collide with this
+    // one through the server's idempotency.
+    store.getState().dismissError();
+    api.on('POST', '/check-ins/walk-in', Reply.ok(checkInJSON(), 201));
+    await store.getState().startWalkIn(SKY_LAGOON_ID);
+    expect(walkIns()).toHaveLength(2);
+    expect(keyOf(walkIns()[1])).toBeTruthy();
+    expect(keyOf(walkIns()[1])).not.toBe(keyOf(walkIns()[0]));
+    expect(store.getState().showSuccess).toBe(true);
   });
 
   it("the server's own words never reach the member", async () => {

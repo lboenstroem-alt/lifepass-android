@@ -35,11 +35,17 @@
  *
  * ANDROID ADDITIONS, none of which changes what iOS sends:
  * - Every member action acts once: a second tap while the first is under way
- *   (`isProcessing`) does nothing (iOS relies on the sheet's dismissal for
- *   most of them; the own-visit and guest steps guard exactly as iOS does).
- * - The guest sheet, the attendance sheet and the activity picker answer
- *   hardware back: nothing has been sent at those steps, so back ends the
- *   attempt, as the own-visit step's close button does.
+ *   (`isProcessing`) does nothing, the declines and closes included (iOS
+ *   relies on the sheet's or alert's dismissal for most of them; the
+ *   own-visit and guest steps guard exactly as iOS does).
+ * - The flow is one per app and outlives the Scan screen and the session, so
+ *   every wait is fenced (see `Run`): an answer for an attempt that is no
+ *   longer in hand (sign-out, or a new scan or link) writes nothing.
+ * - The guest sheet, the own-visit step, the attendance sheet and the
+ *   activity picker answer hardware back: nothing has been sent at those
+ *   steps, so back ends the attempt, as the own-visit step's close button
+ *   does. (A tap outside or a pan down closes only the two iOS lets the
+ *   member swipe away: the attendance sheet and the picker.)
  * - The hosted page is F8's `payOnHostedPage` (a Custom Tab, saved before it
  *   opens, so a payment survives Android closing the app behind it); it
  *   settles the page itself (five answers after Done, one after the cancel
@@ -67,6 +73,7 @@ import {
   keyDisposition,
   leaveAttempt,
   payOnHostedPage,
+  readInflight,
   settlePaymentSession,
   type AttemptRef,
   type BookingPayOutcome,
@@ -286,7 +293,12 @@ function bandRank(band: string): number {
 }
 
 /** What the consent copy reads (./consentCopy). */
-export function consentContext(state: WalkInState): ConsentContext {
+export function consentContext(
+  state: Pick<
+    WalkInState,
+    'pendingOffer' | 'pendingChargeReason' | 'offerWasReoffered' | 'guestBandOffers' | 'guestCounts' | 'preview'
+  >,
+): ConsentContext {
   return {
     offer: state.pendingOffer,
     chargeReason: state.pendingChargeReason,
@@ -333,6 +345,8 @@ export interface WalkInDeps {
   leaveAttempt(attempt: AttemptRef): Promise<void>;
   /** A confirm by key when no attempt is held (Check again after a recovery took it). */
   settle(key: string): Promise<PaySettlement>;
+  /** What an attempt F8 handed over was for (its saved record), or null. */
+  attemptContext(attempt: AttemptRef): Promise<WalkInAttemptContext | null>;
   /** The signed-in member (the hosted page's record is theirs). */
   memberId(): string | null;
   /** iOS `appState.refreshCredits()`: the plan and the profile, after a check-in. */
@@ -371,6 +385,10 @@ export const defaultWalkInDeps: WalkInDeps = {
   checkAgain: (attempt, isScreenAlive) => checkPaymentAgain(attempt, isScreenAlive),
   leaveAttempt: (attempt) => leaveAttempt(attempt),
   settle: (key) => settlePaymentSession({ key, leg: 'done' }),
+  attemptContext: async (ref) => {
+    const saved = (await readInflight(ref.memberId)).find((record) => record.attemptId === ref.attemptId);
+    return saved?.rail === 'walk_in' ? saved.walkIn : null;
+  },
   memberId: () => {
     const { userId, profile } = useAppStore.getState();
     return userId ?? profile?.id ?? null;
@@ -391,6 +409,13 @@ function sleep(ms: number): Promise<void> {
 // ---------------------------------------------------------------------------
 // The store
 
+/** A payment still settling, held for Check again, with what it paid for. */
+interface HeldPayment {
+  readonly ref: AttemptRef;
+  /** The venue, activity and party of THAT payment (null when it could not be read back). */
+  readonly context: WalkInAttemptContext | null;
+}
+
 /** What one attempt holds that no screen renders (iOS `private`). */
 interface Attempt {
   /** One key per attempt, minted at the first POST (see the file comment). */
@@ -405,8 +430,10 @@ interface Attempt {
   pendingGuestActivityId: string | null;
   /** One silent re-preview per attempt when the picked activity went invalid. */
   activityInvalidRefetched: boolean;
-  /** A payment still settling, held for Check again. */
-  heldAttempt: AttemptRef | null;
+  /** What this attempt's own hosted page was for, saved as it opened. */
+  pageContext: WalkInAttemptContext | null;
+  /** A payment still settling (this attempt's, or an earlier one F8 handed over). */
+  held: HeldPayment | null;
 }
 
 function freshAttempt(): Attempt {
@@ -419,8 +446,26 @@ function freshAttempt(): Attempt {
     pendingGuestVenueId: null,
     pendingGuestActivityId: null,
     activityInvalidRefetched: false,
-    heldAttempt: null,
+    pageContext: null,
+    held: null,
   };
+}
+
+/**
+ * One run of the flow: the attempt an action began in, and the session.
+ *
+ * THE FENCE. iOS's view model is `@State` of the Scan view, so an answer that
+ * lands after sign-out writes to an object nobody sees any more. This store
+ * is one per app and outlives the screen and the session, so every action
+ * remembers the attempt it began in and, after each wait, goes on only while
+ * that attempt is still the one in hand. Sign-out (`reset`) and a new scan or
+ * link (`startWalkIn`) each begin a new one, so a late answer can never draw
+ * one member's proof for the next, send a walk-in after sign-out, or write
+ * into another attempt.
+ */
+interface Run {
+  readonly attempt: Attempt;
+  readonly session: number;
 }
 
 /** Each store's dependencies, so a test can swap them on the app's own store. */
@@ -435,9 +480,27 @@ export function configureWalkInDeps(store: StoreApi<WalkInStore>, overrides: Par
   if (deps) Object.assign(deps, overrides);
 }
 
+const NOTHING_HELD: HostedPayResult = Object.freeze({ kind: 'busy' });
+
 export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi<WalkInStore> {
   const deps: WalkInDeps = { ...defaultWalkInDeps, ...overrides };
   let attempt = freshAttempt();
+  /** Bumped at sign-out: the member an action began for is gone. */
+  let session = 0;
+
+  function currentRun(): Run {
+    return { attempt, session };
+  }
+
+  /** `run`'s attempt is still the one in hand (see `Run`). */
+  function live(run: Run): boolean {
+    return run.attempt === attempt && run.session === session;
+  }
+
+  /** A payment F8 handed a run that has ended: let it go, its record stays for the recovery. */
+  function letGo(result: HostedPayResult): void {
+    if (result.kind !== 'busy' && result.attempt) void deps.leaveAttempt(result.attempt).catch(() => undefined);
+  }
 
   const store = createStore<WalkInStore>()((set, get) => {
     // -- Refusals ----------------------------------------------------------
@@ -467,25 +530,37 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
 
     // -- The proof -----------------------------------------------------------
 
-    /**
-     * The proof after the hosted page (or an earlier session that already
-     * checked this in): the preview's venue, now, no name (a payment session
-     * carries none, and no name is honest where the wrong one is not), the
-     * party the member paid for, no balance. The picked activity only after
-     * this attempt's own page: iOS names none for an earlier session's
-     * payment (`booking_payment_already_completed`).
-     */
-    function showPaidProof(withActivity: boolean): void {
+    /** What the attempt in hand is for, as F8 saves it before a hosted page opens. */
+    function walkInContext(a: Attempt, venueId: string): WalkInAttemptContext {
       const state = get();
-      const activityId = attempt.pendingActivityId;
+      const activityId = a.pendingActivityId;
+      return {
+        venueId,
+        venueName: state.preview?.venue.name ?? null,
+        venueSlug: state.preview?.venue.slug ?? null,
+        activityId,
+        activityName: state.pickerActivities.find((activity) => activity.id === activityId)?.name ?? null,
+        party: confirmedParty(state),
+      };
+    }
+
+    /**
+     * The proof of a payment on the pay rail, drawn from what THAT payment
+     * was for (`context`), never from whatever the screen holds by the time
+     * it settles: the venue, now, no name (a payment session carries none,
+     * and no name is honest where the wrong one is not), the party that was
+     * paid for, no balance. The activity only for a page this attempt opened:
+     * iOS names none for an earlier session's payment
+     * (`booking_payment_already_completed`).
+     */
+    function showPaidProof(context: WalkInAttemptContext | null, withActivity: boolean): void {
+      const state = get();
       set({
-        successVenueName: state.preview?.venue.name ?? null,
-        successActivityName: withActivity
-          ? (state.pickerActivities.find((activity) => activity.id === activityId)?.name ?? null)
-          : null,
+        successVenueName: context?.venueName ?? state.preview?.venue.name ?? null,
+        successActivityName: withActivity ? (context?.activityName ?? null) : null,
         successTimestamp: deps.now(),
         successMemberShortName: null,
-        successParty: confirmedParty(state),
+        successParty: context ? (context.party ?? null) : confirmedParty(state),
         successCoverage: null,
         showSuccess: true,
       });
@@ -493,46 +568,58 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
 
     // -- Confirm -------------------------------------------------------------
 
-    async function confirm(venueId: string, activityId: string | null, acceptCharge = false): Promise<void> {
-      const key = attempt.walkInKey ?? deps.newKey();
-      attempt.walkInKey = key;
-      attempt.pendingVenueId = venueId;
-      attempt.pendingActivityId = activityId;
+    async function confirm(run: Run, venueId: string, activityId: string | null, acceptCharge = false): Promise<void> {
+      const a = run.attempt;
+      const key = a.walkInKey ?? deps.newKey();
+      a.walkInKey = key;
+      a.pendingVenueId = venueId;
+      a.pendingActivityId = activityId;
+      const state = get();
+      let result: WalkInResult;
       try {
-        const state = get();
-        const result = await deps.confirm(
+        result = await deps.confirm(
           {
             venueId,
             activityId,
             acceptCharge,
             acceptedChargeAmountIsk: acceptCharge ? (state.pendingOffer?.amountIsk ?? null) : null,
-            bookingAction: attempt.pendingBookingAction,
+            bookingAction: a.pendingBookingAction,
             guestAgeBands: guestAgeBandsPayload(state.guestCounts),
           },
           key,
         );
-        track('walk_in_check_in', { venue_id: venueId });
-        set({
-          successVenueName: result.venue?.name ?? get().preview?.venue.name ?? null,
-          successActivityName: result.activity?.name ?? null,
-          successTimestamp: result.checkedInAt ?? deps.now(),
-          successMemberShortName: result.memberShortName,
-          successParty: result.party,
-          successCoverage: result.coveredBy,
-          showSuccess: true,
-          scannedVenueId: null,
-          preview: null,
-          pendingOffer: null,
-        });
-        attempt.walkInKey = null;
-        await deps.refreshCredits().catch(() => undefined);
       } catch (error) {
-        await confirmFailed(error, venueId);
+        if (!live(run)) return;
+        await confirmFailed(run, error, venueId);
+        if (live(run)) set({ isProcessing: false });
+        return;
       }
-      set({ isProcessing: false });
+      if (!live(run)) {
+        // Checked in, for an attempt that is no longer in hand. Its proof is
+        // nobody's to see now; the same member's balance still moved.
+        if (run.session === session) void deps.refreshCredits().catch(() => undefined);
+        return;
+      }
+      track('walk_in_check_in', { venue_id: venueId });
+      set({
+        successVenueName: result.venue?.name ?? get().preview?.venue.name ?? null,
+        successActivityName: result.activity?.name ?? null,
+        successTimestamp: result.checkedInAt ?? deps.now(),
+        successMemberShortName: result.memberShortName,
+        successParty: result.party,
+        successCoverage: result.coveredBy,
+        showSuccess: true,
+        scannedVenueId: null,
+        preview: null,
+        pendingOffer: null,
+      });
+      a.walkInKey = null;
+      await deps.refreshCredits().catch(() => undefined);
+      if (live(run)) set({ isProcessing: false });
     }
 
-    async function confirmFailed(error: unknown, venueId: string): Promise<void> {
+    async function confirmFailed(run: Run, error: unknown, venueId: string): Promise<void> {
+      const a = run.attempt;
       if (error instanceof ProblemError && error.offer) {
         // 402 charge_consent_required: the server's price is authoritative.
         // Re-consent under the SAME key, saying so when the price moved; a
@@ -552,54 +639,58 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         // No saved card: pay on the hosted page, which also saves one. The
         // key, venue and activity are kept: the session reuses the key.
         set({ isProcessing: false });
-        await startWalkInPayment();
+        await startWalkInPayment(run);
         return;
       }
-      if (isProblem(error, 'walk_in_activity_invalid') && !attempt.activityInvalidRefetched) {
+      if (isProblem(error, 'walk_in_activity_invalid') && !a.activityInvalidRefetched) {
         // The picked activity went away mid-flow: re-preview once and offer
         // the picker again; a second failure reads as the error below.
-        attempt.activityInvalidRefetched = true;
-        attempt.walkInKey = null;
+        a.activityInvalidRefetched = true;
+        a.walkInKey = null;
         try {
           const preview = await deps.preview(venueId);
+          if (!live(run)) return;
           set({ preview, pickerActivities: preview.activities, showActivityPicker: preview.activities.length > 0 });
         } catch {
           // The sentence below.
         }
+        if (!live(run)) return;
         if (!get().showActivityPicker) set({ error: t('checkin.err.activity_invalid'), errorCTA: null });
         return;
       }
       if (isProblem(error, 'attendable_booking_not_found')) {
         // The booked class went away between the preview and the tap. The
         // next scan previews afresh and offers the normal walk-in.
-        attempt.walkInKey = null;
-        attempt.pendingBookingAction = null;
-        attempt.pendingVenueId = null;
-        attempt.pendingActivityId = null;
+        a.walkInKey = null;
+        a.pendingBookingAction = null;
+        a.pendingVenueId = null;
+        a.pendingActivityId = null;
         set({ attendableBooking: null, error: t('checkin.attend.gone'), errorCTA: null });
         return;
       }
       showRefusal(error, venueId, get().pendingChargeReason);
       // Any other failure ends the attempt: a later scan (perhaps of another
       // venue) must not collide with this one through the server's key.
-      attempt.walkInKey = null;
-      attempt.pendingVenueId = null;
-      attempt.pendingActivityId = null;
+      a.walkInKey = null;
+      a.pendingVenueId = null;
+      a.pendingActivityId = null;
     }
 
     // -- Proceed -------------------------------------------------------------
 
     /** After the preview: the guest step, the consent, the link question, or the confirm. */
-    async function proceed(venueId: string, activityId: string | null): Promise<void> {
+    async function proceed(run: Run, venueId: string, activityId: string | null): Promise<void> {
+      if (!live(run)) return;
+      const a = run.attempt;
       const state = get();
       const bands = state.preview?.guestBands ?? null;
-      if (!attempt.guestChoiceMade && bands && bands.length > 0 && attempt.pendingBookingAction !== 'attend') {
+      if (!a.guestChoiceMade && bands && bands.length > 0 && a.pendingBookingAction !== 'attend') {
         // Asked once per attempt, before any money talk; never on the attend
         // path. A free own visit leads with itself and keeps the guest prices
         // behind "Bringing a guest?"; a charged one asks about guests first,
         // so the consent's total covers the party.
-        attempt.pendingGuestVenueId = venueId;
-        attempt.pendingGuestActivityId = activityId;
+        a.pendingGuestVenueId = venueId;
+        a.pendingGuestActivityId = activityId;
         const free = state.preview ? ownVisitIsFree(state.preview) : true;
         set({ guestBandOffers: bands, isProcessing: false, showOwnVisitConfirm: free, showGuestPicker: !free });
         return;
@@ -607,8 +698,8 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
       const ownCharge = state.preview?.charge ?? null;
       const total = (ownCharge?.amountIsk ?? 0) + guestTotalIsk(state);
       if (total > 0) {
-        attempt.pendingVenueId = venueId;
-        attempt.pendingActivityId = activityId;
+        a.pendingVenueId = venueId;
+        a.pendingActivityId = activityId;
         set({
           pendingOffer: {
             kind: ownCharge?.kind ?? 'surcharge',
@@ -622,16 +713,16 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         return;
       }
       if (state.linkedAttempt) {
-        attempt.pendingVenueId = venueId;
-        attempt.pendingActivityId = activityId;
+        a.pendingVenueId = venueId;
+        a.pendingActivityId = activityId;
         set({ isProcessing: false, showLinkConfirm: true });
         return;
       }
-      await confirm(venueId, activityId);
+      await confirm(run, venueId, activityId);
     }
 
     /** Blocked, one activity (re-previewed with it), none (venue level), or the picker. */
-    async function routeByActivities(venueId: string, preview: WalkInPreview): Promise<void> {
+    async function routeByActivities(run: Run, venueId: string, preview: WalkInPreview): Promise<void> {
       if (!preview.allowed) {
         showBlocked(preview);
         set({ isProcessing: false });
@@ -642,13 +733,14 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         // own, or the consent would meet a false "price changed" 402.
         const only = preview.activities[0];
         try {
-          set({ preview: await deps.preview(venueId, only.id) });
+          const own = await deps.preview(venueId, only.id);
+          if (live(run)) set({ preview: own });
         } catch {
           // Best effort: the venue-level preview stands and a 402 re-offers.
         }
-        await proceed(venueId, only.id);
+        await proceed(run, venueId, only.id);
       } else if (preview.activities.length === 0) {
-        await proceed(venueId, null);
+        await proceed(run, venueId, null);
       } else {
         set({ pickerActivities: preview.activities, isProcessing: false, showActivityPicker: true });
       }
@@ -660,11 +752,12 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
      * From `402 no_payment_method_on_file`: the amount-only session under the
      * attempt's key, then the hosted page, settled by F8.
      */
-    async function startWalkInPayment(): Promise<void> {
+    async function startWalkInPayment(run: Run): Promise<void> {
+      const a = run.attempt;
       const state = get();
-      const venueId = attempt.pendingVenueId;
+      const venueId = a.pendingVenueId;
       const amount = state.pendingOffer?.amountIsk;
-      const key = attempt.walkInKey;
+      const key = a.walkInKey;
       if (!venueId || amount === undefined || !key) {
         set({ error: t('checkin.err.unavailable'), errorCTA: null });
         return;
@@ -673,31 +766,34 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
       const bands = guestAgeBandsPayload(state.guestCounts);
       const input: WalkInPaymentSession = {
         kind: 'walk_in',
-        activityId: attempt.pendingActivityId,
+        activityId: a.pendingActivityId,
         venueId,
         acceptedChargeAmountIsk: amount,
         guestAgeBands: bands,
         // The mint-side guard refuses guest bands without an explicit walk-in.
-        bookingAction: bands ? 'walk_in' : attempt.pendingBookingAction,
+        bookingAction: bands ? 'walk_in' : a.pendingBookingAction,
       };
       let creation: PaymentSessionCreation;
       try {
         creation = await deps.createSession(input, key);
       } catch (error) {
+        if (!live(run)) return;
         set({ isProcessing: false });
-        await sessionRefused(error, input, venueId);
+        await sessionRefused(run, error, input, venueId);
         return;
       }
+      if (!live(run)) return;
       set({ isProcessing: false });
       if (creation.kind === 'hasCard') {
         // A card exists after all: check in directly, with consent, same key.
-        await confirm(venueId, attempt.pendingActivityId, true);
+        await confirm(run, venueId, a.pendingActivityId, true);
         return;
       }
-      await payOnPage(creation.url, key, amount, venueId);
+      await payOnPage(run, creation.url, key, amount, venueId);
     }
 
-    async function sessionRefused(error: unknown, input: WalkInPaymentSession, venueId: string): Promise<void> {
+    async function sessionRefused(run: Run, error: unknown, input: WalkInPaymentSession, venueId: string): Promise<void> {
+      const a = run.attempt;
       const refusal = classifySessionCreateError(error, input);
       switch (refusal.kind) {
         case 'reoffer': {
@@ -710,9 +806,10 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
           return;
         }
         case 'alreadyCompleted':
-          // An earlier session already checked this in: the proof, paid.
-          showPaidProof(false);
-          attempt.walkInKey = null;
+          // An earlier session already checked this in: the proof, paid. No
+          // page opened for this attempt, so (as iOS) no activity is named.
+          showPaidProof(walkInContext(a, venueId), false);
+          a.walkInKey = null;
           set({ pendingOffer: null });
           return;
         case 'unresolved':
@@ -721,13 +818,13 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         case 'notRequired':
           // No charge applies now: the free check-in, same key.
           set({ pendingOffer: null });
-          await confirm(venueId, attempt.pendingActivityId);
+          await confirm(run, venueId, a.pendingActivityId);
           return;
         case 'blocked':
           // Walk-ins are off or the drop-in price is unset: a dead end.
-          attempt.walkInKey = null;
-          attempt.pendingVenueId = null;
-          attempt.pendingActivityId = null;
+          a.walkInKey = null;
+          a.pendingVenueId = null;
+          a.pendingActivityId = null;
           set({ error: t('checkin.err.pay_blocked'), errorCTA: null, pendingOffer: null });
           return;
         default:
@@ -735,14 +832,17 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
       }
     }
 
-    async function payOnPage(url: string, key: string, amount: number, venueId: string): Promise<void> {
+    async function payOnPage(run: Run, url: string, key: string, amount: number, venueId: string): Promise<void> {
+      const a = run.attempt;
       const memberId = deps.memberId();
       if (!memberId) {
         set({ error: t('checkin.err.unavailable'), errorCTA: null });
         return;
       }
-      const state = get();
-      const activityId = attempt.pendingActivityId;
+      // What this page pays for, fixed as it opens: the proof after it is
+      // drawn from this, whatever the screen holds by the time it settles.
+      const context = walkInContext(a, venueId);
+      a.pageContext = context;
       set({ payPageOpen: true });
       let result: HostedPayResult;
       try {
@@ -752,52 +852,87 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
           url,
           key,
           amountIsk: amount,
-          walkIn: {
-            venueId,
-            venueName: state.preview?.venue.name ?? null,
-            venueSlug: state.preview?.venue.slug ?? null,
-            activityId,
-            activityName: state.pickerActivities.find((activity) => activity.id === activityId)?.name ?? null,
-            party: confirmedParty(state),
+          walkIn: context,
+          // An attempt that has ended counts as a screen that has gone, so F8
+          // says the outcome itself (to the same member only) or keeps it
+          // for the recovery, instead of handing it to nobody.
+          isScreenAlive: () => live(run) && deps.isScreenAlive(),
+          onConfirming: () => {
+            if (live(run)) set({ payPageOpen: false, isProcessing: true });
           },
-          isScreenAlive: () => deps.isScreenAlive(),
-          onConfirming: () => set({ payPageOpen: false, isProcessing: true }),
         });
       } catch (error) {
-        set({ payPageOpen: false, isProcessing: false });
-        set({ error: confirmRefusal(error).message, errorCTA: null });
+        if (!live(run)) return;
+        set({ payPageOpen: false, isProcessing: false, error: confirmRefusal(error).message, errorCTA: null });
+        return;
+      }
+      if (!live(run)) {
+        letGo(result);
         return;
       }
       set({ payPageOpen: false, isProcessing: false });
-      await applyPayResult(result);
+      if (result.kind === 'busy') {
+        // The member consented and the session exists, but another payment
+        // holds the rails (a booking page settling, or the recovery settling
+        // an earlier one): no page opened. Say so, and end the attempt so
+        // the next scan starts under a new key; "Confirm and pay" must never
+        // look as if it did nothing.
+        a.walkInKey = null;
+        a.pendingVenueId = null;
+        a.pendingActivityId = null;
+        a.pageContext = null;
+        set({ error: t('checkin.err.unavailable'), errorCTA: null, pendingOffer: null });
+        return;
+      }
+      await applyPayResult(run, result, context);
     }
 
-    async function applyPayResult(result: HostedPayResult): Promise<void> {
+    /**
+     * A settled or handed-over payment, for `run`. `own` is what the payment
+     * settled was for (this attempt's page, or the held one's).
+     */
+    async function applyPayResult(run: Run, result: HostedPayResult, own: WalkInAttemptContext | null): Promise<void> {
+      const a = run.attempt;
       switch (result.kind) {
         case 'busy':
-          // Another page is open, or this payment is being settled elsewhere:
-          // nothing happened here.
+          // Nothing held any more and no key to ask by: nothing happened here.
           return;
-        case 'unresolved':
+        case 'unresolved': {
           // An earlier attempt at this venue is still unknown: "Confirming
-          // your payment", with Check again under ITS key.
-          attempt.heldAttempt = result.attempt;
+          // your payment", with Check again under ITS key. Its proof, should
+          // it be paid, is ITS party and activity, read back from its record.
+          const context = await deps.attemptContext(result.attempt).catch(() => null);
+          if (!live(run)) {
+            letGo(result);
+            return;
+          }
+          a.held = { ref: result.attempt, context };
           set({ payOutcome: result.settlement.kind === 'outcome' ? result.settlement.outcome : { kind: 'processing' } });
           return;
+        }
         case 'settled':
-          attempt.heldAttempt = result.attempt;
-          if (result.key === 'retire') attempt.walkInKey = null;
+          a.held = result.attempt ? { ref: result.attempt, context: own } : null;
+          if (result.key === 'retire') a.walkInKey = null;
           // The screen was gone and F8 said it already.
           if (result.presented) return;
-          await applySettlement(result.settlement);
+          // `earlier`: no page opened; this venue's walk-in was paid a moment
+          // ago. Which activity it was for is not known here, so none is
+          // named, as iOS does for an earlier session's payment.
+          await applySettlement(run, result.settlement, own, result.page !== 'earlier');
       }
     }
 
-    async function applySettlement(settlement: PaySettlement): Promise<void> {
+    async function applySettlement(
+      run: Run,
+      settlement: PaySettlement,
+      context: WalkInAttemptContext | null,
+      withActivity: boolean,
+    ): Promise<void> {
+      const a = run.attempt;
       switch (settlement.kind) {
         case 'fulfilled':
-          showPaidProof(true);
-          attempt.walkInKey = null;
+          showPaidProof(context, withActivity);
+          a.walkInKey = null;
           set({ scannedVenueId: null, preview: null, pendingOffer: null });
           await deps.refreshCredits().catch(() => undefined);
           return;
@@ -806,7 +941,7 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
           return;
         case 'sessionNotFound':
           // A genuine early back-out: nothing was charged.
-          attempt.walkInKey = null;
+          a.walkInKey = null;
           return;
         case 'failed':
           // The money is the server's to settle: the words, with no step that
@@ -823,7 +958,14 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
       async startWalkIn(venueId, options = { fromLink: false }) {
         // A brand-new scan is a fresh attempt: never a stale key, or the
         // server's idempotency could answer with another venue's check-in.
-        attempt = { ...freshAttempt(), heldAttempt: attempt.heldAttempt };
+        // Whatever the last attempt still had in flight stops here (the
+        // fence), and a payment it held goes back to the recovery, which
+        // speaks when it settles: Check again on this attempt must never
+        // settle that one under this attempt's preview.
+        const previous = attempt;
+        attempt = freshAttempt();
+        const run = currentRun();
+        if (previous.held) void deps.leaveAttempt(previous.held.ref).catch(() => undefined);
         set({
           scannedVenueId: venueId,
           isProcessing: true,
@@ -839,19 +981,22 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
           guestCounts: {},
           showGuestPicker: false,
           showOwnVisitConfirm: false,
+          payOutcome: null,
         });
         try {
           const preview = await deps.preview(venueId);
+          if (!live(run)) return;
           set({ preview });
           // A booked class here: stop before any walk-in runs, even at a
           // blocked or class-only venue (attendance is not a walk-in).
           if (preview.attendableBooking) {
-            attempt.pendingVenueId = venueId;
+            run.attempt.pendingVenueId = venueId;
             set({ attendableBooking: preview.attendableBooking, isProcessing: false, showAttendChoice: true });
             return;
           }
-          await routeByActivities(venueId, preview);
+          await routeByActivities(run, venueId, preview);
         } catch (error) {
+          if (!live(run)) return;
           // The preview's own refusal (an unknown venue, a throttle) in the
           // member's words; offline reads as offline.
           showRefusal(error, venueId);
@@ -863,14 +1008,16 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         const state = get();
         const venueId = state.scannedVenueId ?? state.preview?.venue.id;
         if (!venueId || state.isProcessing) return;
+        const run = currentRun();
         set({ showActivityPicker: false, isProcessing: true });
         // Re-preview WITH the activity, so the charge disclosed is its own.
         try {
-          set({ preview: await deps.preview(venueId, activity.id) });
+          const own = await deps.preview(venueId, activity.id);
+          if (live(run)) set({ preview: own });
         } catch {
           // Best effort, as above.
         }
-        await proceed(venueId, activity.id);
+        await proceed(run, venueId, activity.id);
       },
 
       cancelActivityPicker() {
@@ -881,11 +1028,12 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         const state = get();
         const venueId = attempt.pendingVenueId ?? state.scannedVenueId ?? state.preview?.venue.id;
         if (!venueId || state.isProcessing) return;
+        const run = currentRun();
         // Free: no consent, no picker (the class's activity rides the
         // booking), no guests.
-        attempt.pendingBookingAction = 'attend';
+        run.attempt.pendingBookingAction = 'attend';
         set({ showAttendChoice: false, isProcessing: true });
-        await confirm(venueId, null);
+        await confirm(run, venueId, null);
       },
 
       async walkInInsteadOfClass() {
@@ -893,12 +1041,14 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         const venueId = attempt.pendingVenueId ?? state.scannedVenueId ?? state.preview?.venue.id;
         const preview = state.preview;
         if (!venueId || !preview || state.isProcessing) return;
+        const run = currentRun();
         // The member declined the class: the normal walk-in, and the booking
         // stays untouched for a later scan.
-        attempt.pendingBookingAction = 'walk_in';
+        run.attempt.pendingBookingAction = 'walk_in';
         set({ showAttendChoice: false, isProcessing: true });
         await sleep(deps.dismissBeatMs);
-        await routeByActivities(venueId, preview);
+        if (!live(run)) return;
+        await routeByActivities(run, venueId, preview);
       },
 
       dismissAttendChoice() {
@@ -910,11 +1060,16 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
       async confirmLinkedWalkIn() {
         const venueId = attempt.pendingVenueId;
         if (!venueId || get().isProcessing) return;
+        const run = currentRun();
         set({ showLinkConfirm: false, linkedAttempt: false, isProcessing: true });
-        await confirm(venueId, attempt.pendingActivityId);
+        await confirm(run, venueId, run.attempt.pendingActivityId);
       },
 
       declineLinkedWalkIn() {
+        // Once: a Cancel tapped after Check in must not end the check-in
+        // under way (iOS disables an alert while it dismisses).
+        const state = get();
+        if (!state.showLinkConfirm || state.isProcessing) return;
         // Nothing was sent, so there is nothing to undo.
         attempt.walkInKey = null;
         attempt.pendingVenueId = null;
@@ -929,23 +1084,31 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         const state = get();
         const venueId = attempt.pendingGuestVenueId;
         if (!state.showOwnVisitConfirm || state.isProcessing || !venueId) return;
-        attempt.pendingGuestVenueId = null;
-        attempt.guestChoiceMade = true;
+        const run = currentRun();
+        run.attempt.pendingGuestVenueId = null;
+        run.attempt.guestChoiceMade = true;
         // The tap is the member's own, so a link does not ask a second time.
         set({ showOwnVisitConfirm: false, linkedAttempt: false, guestCounts: {}, isProcessing: true });
         await sleep(deps.dismissBeatMs);
-        await proceed(venueId, attempt.pendingGuestActivityId);
+        if (!live(run)) return;
+        await proceed(run, venueId, run.attempt.pendingGuestActivityId);
       },
 
       async openGuestsFromOwnVisit() {
         const state = get();
         if (!state.showOwnVisitConfirm || state.isProcessing || !attempt.pendingGuestVenueId) return;
+        const run = currentRun();
         set({ isSwitchingToGuests: true, showOwnVisitConfirm: false, linkedAttempt: false });
         await sleep(deps.dismissBeatMs);
+        if (!live(run)) return;
         set({ isSwitchingToGuests: false, showGuestPicker: true });
       },
 
       declineOwnVisit() {
+        // Once per step, as its two buttons: a close tapped after "Check in,
+        // no charge" must not strip the check-in under way of its activity.
+        const state = get();
+        if (!state.showOwnVisitConfirm || state.isProcessing) return;
         // Nothing was sent; the next scan starts a fresh attempt.
         attempt.walkInKey = null;
         attempt.pendingVenueId = null;
@@ -980,11 +1143,13 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         const state = get();
         const venueId = attempt.pendingGuestVenueId;
         if (!state.showGuestPicker || state.isProcessing || !venueId) return;
-        attempt.pendingGuestVenueId = null;
-        attempt.guestChoiceMade = true;
+        const run = currentRun();
+        run.attempt.pendingGuestVenueId = null;
+        run.attempt.guestChoiceMade = true;
         set({ showGuestPicker: false, isProcessing: true });
         await sleep(deps.dismissBeatMs);
-        await proceed(venueId, attempt.pendingGuestActivityId);
+        if (!live(run)) return;
+        await proceed(run, venueId, run.attempt.pendingGuestActivityId);
       },
 
       async skipGuests() {
@@ -1008,11 +1173,17 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
       async acceptWalkInCharge() {
         const venueId = attempt.pendingVenueId;
         if (!venueId || get().isProcessing) return;
+        const run = currentRun();
         set({ showChargeConsent: false, isProcessing: true });
-        await confirm(venueId, attempt.pendingActivityId, true);
+        await confirm(run, venueId, run.attempt.pendingActivityId, true);
       },
 
       declineWalkInCharge() {
+        // Once: a Cancel tapped after the accept must not drop the key of the
+        // charged POST under way (a 402 for the card would then read as
+        // "unavailable") or call the flow idle while it runs.
+        const state = get();
+        if (!state.showChargeConsent || state.isProcessing) return;
         attempt.walkInKey = null;
         set({
           showChargeConsent: false,
@@ -1025,16 +1196,26 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
 
       async checkPaymentAgain() {
         if (get().isProcessing) return;
-        const held = attempt.heldAttempt;
-        attempt.heldAttempt = null;
-        const key = attempt.walkInKey;
+        const run = currentRun();
+        const a = run.attempt;
+        const held = a.held;
+        a.held = null;
+        const key = a.walkInKey;
         set({ payOutcome: null, isProcessing: true });
         let result: HostedPayResult;
+        let context = held ? held.context : a.pageContext;
         try {
-          result = held ? await deps.checkAgain(held, () => deps.isScreenAlive()) : { kind: 'busy' };
+          result = held ? await deps.checkAgain(held.ref, () => live(run) && deps.isScreenAlive()) : NOTHING_HELD;
+          if (!live(run)) {
+            letGo(result);
+            return;
+          }
           if (result.kind === 'busy' && key) {
-            // No attempt held here any more (the recovery took it): ask by key.
+            // No attempt held here any more (the recovery took it): ask by
+            // this attempt's own key, for this attempt's own page.
+            context = a.pageContext;
             const settlement = await deps.settle(key);
+            if (!live(run)) return;
             result = {
               kind: 'settled',
               page: 'returned',
@@ -1046,18 +1227,19 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
             };
           }
         } catch (error) {
+          if (!live(run)) return;
           set({ isProcessing: false, error: confirmRefusal(error).message, errorCTA: null });
           return;
         }
         set({ isProcessing: false });
-        await applyPayResult(result);
+        await applyPayResult(run, result, context);
       },
 
       dismissPayOutcome() {
-        const held = attempt.heldAttempt;
-        attempt.heldAttempt = null;
+        const held = attempt.held;
+        attempt.held = null;
         // Its record stays: a later return to the app checks again quietly.
-        if (held) void deps.leaveAttempt(held).catch(() => undefined);
+        if (held) void deps.leaveAttempt(held.ref).catch(() => undefined);
         set({ payOutcome: null });
       },
 
@@ -1107,7 +1289,12 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
       },
 
       reset() {
+        // Sign-out: a new session, so nothing still in flight lands (the
+        // fence). F8 wipes the payment records itself; a hold is let go.
+        const previous = attempt;
         attempt = freshAttempt();
+        session += 1;
+        if (previous.held) void deps.leaveAttempt(previous.held.ref).catch(() => undefined);
         set({ ...INITIAL_WALK_IN_STATE });
       },
     };
@@ -1122,6 +1309,6 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
 /**
  * The walk-in in hand. One per app, as the flow is one per member at a door:
  * the Scan tab and a scanner pushed from a venue page share it, and only the
- * newest mounted host draws it (./WalkInFlowHost).
+ * host on the screen in focus draws it (./WalkInFlowHost).
  */
 export const walkInStore: StoreApi<WalkInStore> = createWalkInStore();

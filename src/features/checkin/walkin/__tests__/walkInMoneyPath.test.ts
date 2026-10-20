@@ -18,7 +18,8 @@ import * as WebBrowser from 'expo-web-browser';
 import { api, Reply } from '@test/server';
 
 import { iskPrefix, translate } from '../../../../i18n';
-import { confirmedParty } from '../store';
+import { consentGuestAmountIsk, consentOwnAmountIsk } from '../consentCopy';
+import { confirmedParty, consentContext } from '../store';
 
 import {
   bodyOf,
@@ -159,6 +160,9 @@ describe('guests on the pay-and-save-card rail', () => {
     await store.getState().confirmGuestSelection();
     expect(store.getState().showChargeConsent).toBe(true);
     expect(store.getState().pendingOffer?.amountIsk).toBe(2700);
+    const consent = consentContext(store.getState());
+    expect(consentGuestAmountIsk(consent)).toBe(2700); // the whole charge is the guests'
+    expect(consentOwnAmountIsk(consent)).toBe(0);
 
     await store.getState().acceptWalkInCharge();
 
