@@ -10,10 +10,12 @@
 // The order changes on its own only when the visit does (the first fix
 // arrives, the member moves a kilometre, a new visit starts): then the cards
 // glide to their places instead of jumping, unless Remove animations is on.
-// A filter or a search is not animated.
+// A filter or a search is not animated, and nothing is while Explore is off
+// screen: the animation is set up app-wide for the next layout, which would
+// otherwise be another tab's (iOS animates only this list's stack).
 //
 // Venues without a position are listed too (only the map needs one).
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { FlatList, LayoutAnimation, StyleSheet, View } from 'react-native';
 
 import { Kicker } from '../../components/ui';
@@ -37,7 +39,7 @@ export interface VenueListProps {
   /** The browse session the order follows (its origin drives the sort label). */
   readonly session: BrowseSessionStore;
   readonly onOpenVenue: (venue: Venue) => void;
-  /** Explore is on screen (the banner's video plays). */
+  /** Explore is on screen (the banner's video plays, a new order glides). */
   readonly visible: boolean;
   /** The tab bar's height, kept clear below the last card. */
   readonly bottomInset: number;
@@ -46,13 +48,16 @@ export interface VenueListProps {
 export default function VenueList({ venues, session, onOpenVenue, visible, bottomInset }: VenueListProps) {
   const { t } = useT();
   const origin = useBrowseSession((state) => state.origin, session);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
 
   // Glide only when the VISIT changes the order (a new fix or a new visit),
-  // never for a filter or a search, which change the venues, not the session.
+  // never for a filter or a search, which change the venues, not the session,
+  // and only while the list is on screen.
   useEffect(
     () =>
       session.subscribe((state, previous) => {
-        if (state.revision === previous.revision || reduceMotionNow()) return;
+        if (!visibleRef.current || state.revision === previous.revision || reduceMotionNow()) return;
         LayoutAnimation.configureNext(LayoutAnimation.create(REORDER_MS, 'easeInEaseOut', 'opacity'));
       }),
     [session],
