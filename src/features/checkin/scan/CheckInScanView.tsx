@@ -19,7 +19,14 @@
  * veil covers the camera and not the bar, as iOS's does, and its sheets and
  * covers draw over the whole app wherever it sits. Two scanners can be
  * mounted (the Scan tab and one pushed on a venue's stack); the flow is one
- * store and only the newest host draws, so each scanner simply mounts one.
+ * store and only the newest mounted host draws. Newest by MOUNT is not the
+ * one on screen: a scanner pushed from a venue stays mounted on its tab when
+ * the member taps over to the Scan tab, and its veil would then fall on the
+ * hidden tab while the visible camera sat locked with nothing explaining why.
+ * iOS gives every scanner its own overlay, so the one in front always shows
+ * its walk-in. Here each scanner mounts its host afresh whenever it comes
+ * back on screen (`useFocusGeneration`), which makes the scanner in front
+ * the newest host, and so the one that draws.
  */
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import type { BarcodeScanningResult } from 'expo-camera';
@@ -53,6 +60,22 @@ export function reserveTopFor(mealEntryHeight: number): number {
   return mealEntryHeight > 0 ? MEAL_ENTRY_TOP + mealEntryHeight + RESERVE_GAP : RESERVE_GAP;
 }
 
+/**
+ * Counts the times this screen has come back into focus. Used as the walk-in
+ * host's key, so the host mounts again (and becomes the newest) each time the
+ * scanner returns to the front; the first appearance is the first mount and
+ * needs no second one.
+ */
+export function useFocusGeneration(isFocused: boolean): number {
+  const [seen, setSeen] = useState({ isFocused, generation: 0 });
+  if (seen.isFocused === isFocused) return seen.generation;
+  // React's "adjust state while rendering" form: no effect, no extra frame
+  // with the old host still drawing.
+  const next = { isFocused, generation: isFocused ? seen.generation + 1 : seen.generation };
+  setSeen(next);
+  return next.generation;
+}
+
 export interface CheckInScanViewProps {
   /** Pushed from a venue's page (iOS `showsBackButton`). */
   readonly pushed: boolean;
@@ -63,6 +86,7 @@ export default function CheckInScanView({ pushed }: CheckInScanViewProps) {
   const navigation = useAppNavigation();
   const flow = useWalkInFlow();
   const camera = useScanCamera({ pushed });
+  const hostGeneration = useFocusGeneration(camera.isFocused);
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
 
   const gate = useRef(new QrGate()).current;
@@ -233,7 +257,7 @@ export default function CheckInScanView({ pushed }: CheckInScanViewProps) {
           </View>
         ) : null}
 
-        <WalkInFlowHost />
+        <WalkInFlowHost key={hostGeneration} />
       </View>
 
       <Dialog

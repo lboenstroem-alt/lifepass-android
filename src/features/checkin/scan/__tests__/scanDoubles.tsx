@@ -5,6 +5,7 @@
  * Required from `jest.mock` factories, so it loads nothing of the app.
  */
 import type { PermissionResponse } from 'expo-camera';
+import { useEffect, useState } from 'react';
 import { View, type ViewProps } from 'react-native';
 import { create } from 'zustand';
 
@@ -77,9 +78,27 @@ function useWalkInFlow() {
   };
 }
 
+/**
+ * The mounted walk-in hosts, oldest first. CHECKIN-2's host lets only the
+ * newest mounted one draw (WalkInFlowHost.tsx `useIsDrawingHost`); the double
+ * keeps the same rule, so a test can see which scanner's region draws.
+ */
+const hostDouble = create<{ stack: readonly number[] }>(() => ({ stack: [] }));
+let nextHostId = 1;
+
+function WalkInFlowHostDouble() {
+  const [id] = useState(() => nextHostId++);
+  useEffect(() => {
+    hostDouble.setState((state) => ({ stack: [...state.stack, id] }));
+    return () => hostDouble.setState((state) => ({ stack: state.stack.filter((host) => host !== id) }));
+  }, [id]);
+  const drawing = hostDouble((state) => state.stack[state.stack.length - 1] === id);
+  return <View testID="walkin.host">{drawing ? <View testID="walkin.host.drawing" /> : null}</View>;
+}
+
 export const walkInModule = {
   useWalkInFlow,
-  WalkInFlowHost: () => <View testID="walkin.host" />,
+  WalkInFlowHost: WalkInFlowHostDouble,
 };
 
 export const mealEntryModule = {

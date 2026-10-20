@@ -39,6 +39,27 @@ export function reticleCentreY(height: number, reserveTop: number, reserveBottom
   return Math.max(reserveTop + side / 2, (reserveTop + regionBottom) / 2);
 }
 
+/**
+ * Where the hint's centre sits under the reticle (iOS positions it at
+ * `centreY + side / 2 + 24 + 20`): one line or two, the centre stays here, so
+ * a longer Icelandic hint grows both ways rather than only down.
+ */
+export const HINT_CENTRE_BELOW_RETICLE = 24 + 20;
+
+/** The hint's centre, from the top of the viewfinder. */
+export function hintCentreY(centreY: number, side: number = RETICLE_SIDE): number {
+  return centreY + side / 2 + HINT_CENTRE_BELOW_RETICLE;
+}
+
+/**
+ * The band the hint is centred in: from the reticle's bottom edge to as far
+ * again below the centre, so the text's middle lands on `hintCentreY` without
+ * waiting for a measured height (a frame drawn in the wrong place first).
+ */
+const HINT_BAND = 2 * HINT_CENTRE_BELOW_RETICLE;
+// A hint taller than the band (three lines at the largest text) overflows it
+// evenly above and below, its centre still in place: the band never clips.
+
 export interface ScanViewfinderProps {
   /** The viewfinder's own height (measured by the caller). */
   readonly height: number;
@@ -111,7 +132,8 @@ export default function ScanViewfinder({
           pointerEvents="none"
           importantForAccessibility="no-hide-descendants"
           accessibilityElementsHidden
-          style={[styles.hint, { top: centreY + RETICLE_SIDE / 2 + 24, left: (width - 280) / 2 }]}
+          style={[styles.hint, { top: hintCentreY(centreY) - HINT_BAND / 2, left: (width - 280) / 2 }]}
+          testID="scan.hint"
         >
           <LPText size={15} weight="semibold" color="#FFFFFF" align="center" style={styles.hintText}>
             {hint}
@@ -151,7 +173,14 @@ const styles = StyleSheet.create({
   topScrim: { position: 'absolute', top: 0, left: 0, right: 0, height: 140 },
   bottomScrim: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 160 },
   reticle: { position: 'absolute' },
-  hint: { position: 'absolute', width: 280, alignItems: 'center' },
+  hint: {
+    position: 'absolute',
+    width: 280,
+    height: HINT_BAND,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+  },
   hintText: { textShadowColor: 'rgba(0,0,0,0.4)', textShadowRadius: 4, textShadowOffset: { width: 0, height: 1 } },
   centre: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   rescan: {

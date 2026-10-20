@@ -2,20 +2,23 @@
  * The camera-first Scan tab on screen (iOS CheckInView, CheckInScanTests'
  * screen half and the plan's CHECKIN-1 acceptance): the camera states, the
  * QR rules through a real render, the rescan capsule, pushed mode, the person
- * button, where the walk-in host sits, the dark tab bar, and check-in links.
+ * button, where the walk-in host sits and which one draws, the meal page over
+ * the tab, the dark tab bar, and check-in links.
  */
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { NavigationContainer, type NavigationContainerRef, type ParamListBase } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
+import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react-native';
 import { createRef, useEffect, type ReactNode } from 'react';
-import { AccessibilityInfo, AppState, Linking, Pressable, Text, type AppStateStatus } from 'react-native';
+import { AccessibilityInfo, AppState, Linking, Pressable, StyleSheet, Text, type AppStateStatus } from 'react-native';
 
 import { setAnalyticsObserver, type AnalyticsParams } from '../../../../lib/analytics';
 import { haptics } from '../../../../lib/haptics';
 import { resetIntentStoreForTests, useIntentStore } from '../../../../stores/intentStore';
-import CheckInScanView, { FOREIGN_CHIP_MS } from '../CheckInScanView';
+import CheckInScanView, { FOREIGN_CHIP_MS, useFocusGeneration } from '../CheckInScanView';
 import { resetForeignReportForTests } from '../qrRead';
+import { RETICLE_SIDE } from '../Reticle';
+import { hintCentreY } from '../ScanViewfinder';
 import { PAUSED_AFTER_MS } from '../useScanCamera';
 import {
   cameraDouble,
@@ -40,6 +43,7 @@ const VENUE_URL = `https://lifepass.is/scan?v=${VENUE}`;
 const FOREIGN_URL = 'https://example.com/menu?table=7';
 const STAFF_CODE = `{"type":"booking_checkin","id":"${VENUE}"}`;
 
+const Root = createNativeStackNavigator();
 const Tabs = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
@@ -61,6 +65,10 @@ function ProfileStandIn() {
 }
 function HomeStandIn() {
   return <Text>Home screen</Text>;
+}
+/** The meal page: a root full-screen modal over the tabs (MEAL-2's `MealCapture`). */
+function MealPageStandIn() {
+  return <Text>Meal page</Text>;
 }
 
 function ScanStack() {
@@ -102,10 +110,17 @@ async function renderApp(initialTab: 'Scan' | 'Home' = 'Scan', onShellMount?: ()
   await render(
     <NavigationContainer ref={navigationRef}>
       <ShellProbe onMount={onShellMount}>
-        <Tabs.Navigator initialRouteName={initialTab} screenOptions={{ headerShown: false }} tabBar={() => null}>
-          <Tabs.Screen name="Home" component={HomeStack} />
-          <Tabs.Screen name="Scan" component={ScanStack} />
-        </Tabs.Navigator>
+        <Root.Navigator screenOptions={{ headerShown: false }}>
+          <Root.Screen name="Tabs">
+            {() => (
+              <Tabs.Navigator initialRouteName={initialTab} screenOptions={{ headerShown: false }} tabBar={() => null}>
+                <Tabs.Screen name="Home" component={HomeStack} />
+                <Tabs.Screen name="Scan" component={ScanStack} />
+              </Tabs.Navigator>
+            )}
+          </Root.Screen>
+          <Root.Screen name="MealCapture" component={MealPageStandIn} options={{ presentation: 'fullScreenModal' }} />
+        </Root.Navigator>
       </ShellProbe>
     </NavigationContainer>,
   );
@@ -168,6 +183,17 @@ describe('the camera', () => {
     expect(screen.getByRole('image', { name: 'Point at the LifePass code at the venue' })).toBeOnTheScreen();
     expect(useIntentStore.getState().scanCameraLive).toBe(true);
     expect(events).toContainEqual(['scan_tab_viewed', { camera: 'authorized', mode: 'tab' }]);
+  });
+
+  it("centres the hint 44 dp under the reticle, where iOS centres it", async () => {
+    await renderApp();
+    await layOut();
+    const reticle = StyleSheet.flatten(screen.getByTestId('scan.reticle').props.style);
+    // The reticle's canvas is the side plus 4 dp of stroke room each way.
+    const centreY = (reticle.top as number) + (RETICLE_SIDE + 8) / 2;
+    const hint = StyleSheet.flatten(screen.getByTestId('scan.hint', { includeHiddenElements: true }).props.style);
+    expect((hint.top as number) + (hint.height as number) / 2).toBe(hintCentreY(centreY));
+    expect(hint.justifyContent).toBe('center');
   });
 
   it('is released when the member leaves the tab, and the bar goes back to paper', async () => {
@@ -350,6 +376,84 @@ describe('the bar and the meal entry', () => {
     const region = screen.getByTestId('scan.region');
     expect(within(region).getByTestId('walkin.host')).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+  });
+});
+
+describe('the meal page over the tab (testNoCheckInStartsWhileTheMealPageIsOpen)', () => {
+  it('releases the camera, starts nothing and locks nothing under the page; the same code reads once it has gone', async () => {
+    await renderApp();
+    await layOut();
+    const inFlight = screen.getByTestId('scan.camera').props.onBarcodeScanned as (r: { data: string; type: string }) => void;
+
+    await act(async () => navigationRef.current?.navigate('MealCapture'));
+    expect(screen.getByText('Meal page')).toBeOnTheScreen();
+    expect(screen.queryByTestId('scan.camera', { includeHiddenElements: true })).toBeNull();
+    expect(useIntentStore.getState().scanCameraLive).toBe(false);
+
+    // A frame CameraX had in hand as the page opened: no walk-in under the page.
+    await act(async () => inFlight({ data: VENUE_URL, type: 'qr' }));
+    expect(flowDouble.getState().starts).toEqual([]);
+
+    // The page closes: the camera is back, unlocked, and the same code reads.
+    await act(async () => navigationRef.current?.goBack());
+    await layOut();
+    expect(screen.getByTestId('scan.camera').props.onBarcodeScanned).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Scan another code' })).toBeNull();
+    await frame(VENUE_URL);
+    expect(flowDouble.getState().starts).toEqual([[VENUE, { fromLink: false }]]);
+    expect(screen.getByTestId('scan.camera').props.onBarcodeScanned).toBeUndefined();
+  });
+});
+
+describe('the walk-in host that draws', () => {
+  const hidden = { includeHiddenElements: true } as const;
+
+  function drawsIn(testID: 'scan.tab' | 'scan.pushed'): boolean {
+    const scanner = screen.getByTestId(testID, hidden);
+    return within(within(scanner).getByTestId('scan.region', hidden)).queryByTestId('walkin.host.drawing', hidden) !== null;
+  }
+
+  it("is the scanner in front, not the one mounted last: the Scan tab's after a venue's scanner on Home", async () => {
+    await renderApp();
+    await layOut();
+    expect(drawsIn('scan.tab')).toBe(true);
+
+    // A venue's scanner on Home's stack: mounted after the tab's, and in front.
+    await act(async () => navigationRef.current?.navigate('Home', { screen: 'VenueDetail' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Scan QR' }));
+    expect(drawsIn('scan.pushed')).toBe(true);
+    expect(drawsIn('scan.tab')).toBe(false);
+
+    // Over to the Scan tab: the venue's scanner stays mounted on Home's tab,
+    // and the tab's own host draws the walk-in a code there starts.
+    await act(async () => navigationRef.current?.navigate('Scan'));
+    expect(drawsIn('scan.tab')).toBe(true);
+    expect(drawsIn('scan.pushed')).toBe(false);
+    await layOut();
+    await frame(VENUE_URL);
+    expect(flowDouble.getState().starts).toEqual([[VENUE, { fromLink: false }]]);
+    expect(drawsIn('scan.tab')).toBe(true);
+
+    // Back to Home: the venue's scanner is in front again, and draws.
+    await act(async () => navigationRef.current?.navigate('Home'));
+    expect(drawsIn('scan.pushed')).toBe(true);
+    expect(drawsIn('scan.tab')).toBe(false);
+  });
+
+  it('counts each return to the front, and nothing for the first appearance or a blur', async () => {
+    const hook = await renderHook(({ focused }: { focused: boolean }) => useFocusGeneration(focused), {
+      initialProps: { focused: true },
+    });
+    expect(hook.result.current).toBe(0);
+    await hook.rerender({ focused: false });
+    expect(hook.result.current).toBe(0);
+    await hook.rerender({ focused: true });
+    expect(hook.result.current).toBe(1);
+    await hook.rerender({ focused: true });
+    expect(hook.result.current).toBe(1);
+    await hook.rerender({ focused: false });
+    await hook.rerender({ focused: true });
+    expect(hook.result.current).toBe(2);
   });
 });
 

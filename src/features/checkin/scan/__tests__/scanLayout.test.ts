@@ -5,7 +5,7 @@
  */
 import { reserveTopFor } from '../CheckInScanView';
 import { reticlePath, RETICLE_SIDE } from '../Reticle';
-import { HINT_ROOM, reticleCentreY } from '../ScanViewfinder';
+import { HINT_CENTRE_BELOW_RETICLE, HINT_ROOM, hintCentreY, reticleCentreY } from '../ScanViewfinder';
 import { cameraAnalyticsValue, cameraAuthorization, isForeground, wantsCamera } from '../useScanCamera';
 import { DENIED, DENIED_ASK_AGAIN, GRANTED, UNDETERMINED } from './scanDoubles';
 
@@ -68,6 +68,11 @@ describe('the reticle', () => {
 
   it('never rises above half a reticle under the reserve on a short screen', () => {
     expect(reticleCentreY(300, 104, 76)).toBe(104 + RETICLE_SIDE / 2);
+  });
+
+  it("puts the hint's centre 44 dp under the reticle, as iOS positions it", () => {
+    expect(HINT_CENTRE_BELOW_RETICLE).toBe(24 + 20);
+    expect(hintCentreY(300)).toBe(300 + RETICLE_SIDE / 2 + 44);
   });
 
   it('is four brackets drawn as one path with rounded corners', () => {
