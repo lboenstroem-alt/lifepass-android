@@ -16,11 +16,16 @@
 // whenever it appears (also coming back from a pushed page). Android keeps the
 // screen mounted, so at every focus it reads the venues, the weather, the
 // bookings and the profile again (the spinner only shows while there are no
-// venues at all), and at the start of every new tab visit the featured venue
-// rolls again (./useHomeVisit.ts). A pull to refresh reads the venues (the
-// hero holds still), then the bookings and the profile. Both tell the cards
-// other packages draw here to read again too (the Outside card's sights,
-// ./homeReads.ts).
+// venues at all). The featured venue rolls again for every new tab visit
+// (./useHomeVisit.ts), at the moment Home is left, so a visit never opens on
+// the last one's hero; a page pushed on Home or a modal over the tabs keeps
+// it. A pull to refresh reads the venues (the hero holds still), then the
+// bookings and the profile. Both tell the cards other packages draw here to
+// read again too (the Outside card's sights, ./homeReads.ts).
+//
+// THE KEYBOARD. The page keeps the Coach ask field above the keyboard
+// (./useKeyboardLift.ts: the app is edge to edge, so the window never
+// shrinks for it), and puts the keyboard away on a drag or a tap elsewhere.
 //
 // WHERE TAPS GO. Profile (the avatar, the person button, "View") is pushed on
 // Home's own stack; so are a venue and Account (the referral card). The Coach,
@@ -29,7 +34,7 @@
 // the tab, as iOS sets `pendingCoachPrompt` and `selectedTab`.
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { Keyboard, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -48,6 +53,7 @@ import {
   useLocationStore,
 } from '../../stores/locationStore';
 import { useOrderedVenues, useVenueList, venuesStore } from '../../stores/venuesStore';
+import type { Coordinate } from '../../lib/geo';
 import { colors } from '../../theme';
 import type { Venue } from '../../types/venue';
 import { firstNameOf, greetingKey } from './greeting';
@@ -60,6 +66,7 @@ import { pickHero, resolveHero } from './pickHero';
 import { nearbyShelf, popularExclusions, popularShelf } from './shelves';
 import TryNewSection, { type TryNewSectionHandle } from './TryNewSection';
 import { useHomeVisit } from './useHomeVisit';
+import { useKeyboardLift } from './useKeyboardLift';
 import { useProfileMovedHint } from './useProfileMovedHint';
 import { useUpcomingBookings } from './useUpcomingBookings';
 
@@ -68,8 +75,19 @@ const BOTTOM_ROOM = 120;
 /** What iOS's 120 pt leaves free above its own bar (about 83 pt with the home indicator). */
 const ROOM_ABOVE_BAR = 37;
 
+/** iOS HomeView's gutter around the Today row (`.padding(.horizontal, 20).padding(.top, 20)`). */
+const TODAY_ROW_GUTTER = 20;
+
 /** Where Profile was opened from on Home (iOS `profile_opened.entry`). */
 type HomeProfileEntry = 'home_avatar' | 'home_upcoming';
+
+/** The featured venue and what it was picked from. */
+interface HeroPick {
+  readonly id: string | null;
+  readonly venues: readonly Venue[];
+  readonly fix: Coordinate | null;
+  readonly visit: number;
+}
 
 export default function HomeScreen() {
   const navigation = useAppNavigation();
@@ -96,15 +114,23 @@ export default function HomeScreen() {
 
   // MARK: The featured venue
 
-  const [heroId, setHeroId] = useState<string | null>(null);
-  const seenVisit = useRef(visit);
-  useEffect(() => {
+  // Picked while rendering, the moment the venues, the fix or the visit
+  // change (iOS picks in the same task that loads the venues), so no frame is
+  // ever drawn with a stand-in hero: not the first venue in the list, which
+  // can be a coming-soon one, and not the shelves built around it.
+  const [heroPick, setHeroPick] = useState<HeroPick>(() => ({
+    id: pickHero(venues, { grantedFix, currentId: null }),
+    venues,
+    fix: grantedFix,
+    visit,
+  }));
+  let heroId = heroPick.id;
+  if (heroPick.venues !== venues || heroPick.fix !== grantedFix || heroPick.visit !== visit) {
     // A new tab visit starts without a hero (iOS builds Home afresh); within a
     // visit, a reload or a new fix keeps it unless the fix finds one nearby.
-    const newVisit = seenVisit.current !== visit;
-    seenVisit.current = visit;
-    setHeroId((current) => pickHero(venues, { grantedFix, currentId: newVisit ? null : current }));
-  }, [venues, grantedFix, visit]);
+    heroId = pickHero(venues, { grantedFix, currentId: heroPick.visit !== visit ? null : heroPick.id });
+    setHeroPick({ id: heroId, venues, fix: grantedFix, visit });
+  }
 
   const hero = resolveHero(venues, heroId);
   const heroVenueId = hero?.id ?? null;
@@ -180,7 +206,9 @@ export default function HomeScreen() {
 
   // MARK: The keyboard (2.5.4)
 
+  const page = useRef<ScrollView>(null);
   const tryNew = useRef<TryNewSectionHandle>(null);
+  const keyboard = useKeyboardLift(page, tryNew, insets.bottom);
   // A tap anywhere outside the ask field puts the keyboard away; the card or
   // button under the tap still works (the scroll view lets handled taps
   // through). The field's own row says first when a touch starts inside it.
@@ -200,11 +228,15 @@ export default function HomeScreen() {
 
   return (
     <ScrollView
+      ref={page}
       style={styles.scroll}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
+      onScroll={keyboard.onScroll}
+      scrollEventThrottle={16}
+      onContentSizeChange={keyboard.onContentSizeChange}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -242,9 +274,21 @@ export default function HomeScreen() {
           />
         )}
 
-        {/* Today's plan, one row under the hero. It draws its own spacing and
-            nothing at all when there is no plan, consent or membership. */}
-        <HomeTodayRow upcomingBookingId={upcoming?.id ?? null} onOpenPlan={openPlan} onStart={startWorkout} />
+        {/* Today's plan, one row under the hero, with iOS's spacing around
+            it (20 dp at the sides and above). The row draws no outer spacing
+            of its own and renders nothing at all when there is no plan,
+            consent or membership (iOS HomeTodayRow: an EmptyView). The top
+            20 dp is the gap between the empty first child and the row, so it
+            exists only while the row does: a hidden row leaves no gap.
+            The booking id is the server's own (lowercase) UUID string. iOS
+            hands over `uuidString`, which Swift upper-cases, and compares it
+            with `==` to the plan's raw id, so shipped iOS never matches; the
+            row is meant to skip the class this card already shows, which a
+            plain comparison of the server's ids does. */}
+        <View style={styles.today} testID="home.today">
+          <View />
+          <HomeTodayRow upcomingBookingId={upcoming?.id ?? null} onOpenPlan={openPlan} onStart={startWorkout} />
+        </View>
 
         <View style={styles.tryNew}>
           <TryNewSection ref={tryNew} onPrompt={openCoach} />
@@ -264,6 +308,9 @@ export default function HomeScreen() {
           />
           <View style={{ height: Math.max(BOTTOM_ROOM, tabBarHeight + ROOM_ABOVE_BAR) }} />
         </View>
+        {/* Room for the page to lift the ask field above the keyboard (outside
+            the list, whose gap would otherwise add to it when it is 0). */}
+        <View style={{ height: keyboard.keyboardRoom }} testID="home.keyboardRoom" />
       </View>
     </ScrollView>
   );
@@ -272,6 +319,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: colors.ink },
   content: { flexGrow: 1 },
+  today: { paddingHorizontal: TODAY_ROW_GUTTER, gap: TODAY_ROW_GUTTER },
   tryNew: { paddingTop: 24, paddingBottom: 8 },
   list: { paddingTop: 12, gap: 32 },
 });

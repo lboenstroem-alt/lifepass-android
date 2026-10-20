@@ -15,6 +15,12 @@
 // phone's zone here; the venue clock is the rule everywhere else since the
 // 2.5.0 audit, and the two only differ on a phone set to another zone.)
 //
+// THE TIME is written 24-hour ("09:30") on every phone, as every venue time
+// in the app is (src/i18n/format.ts: "Metric, 24-hour, day first"). iOS
+// writes this one with the phone's short time style, so a phone set to
+// 12-hour (en_US) reads "Tomorrow · 9:30 AM" there; Icelandic and British
+// phones read the same on both. A deliberate difference, like the clock.
+//
 // THE WORDS. "Today" and "Tomorrow" follow the account language
 // (library.today / library.tomorrow). A later day is written "Sat 7 Jun" in
 // English for every account, as iOS writes it: the iOS bundle is English
