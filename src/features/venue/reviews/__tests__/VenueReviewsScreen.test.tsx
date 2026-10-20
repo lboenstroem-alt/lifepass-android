@@ -12,7 +12,7 @@ import { dismissToast, ToastHost } from '../../../../components/ui/Toast';
 import { setCurrentLanguage } from '../../../../i18n';
 import { useAppStore } from '../../../../stores/appStore';
 import { resetVenueReviews, venueReviewsStore } from '../store';
-import VenueReviewsScreen, { isOwnReview } from '../VenueReviewsScreen';
+import VenueReviewsScreen, { FRESH_FOR_MS, isOwnReview } from '../VenueReviewsScreen';
 
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 
@@ -139,6 +139,40 @@ it('uses the venue page’s rows without reading them again', async () => {
   expect(api.sentAll(`/venues/${V}/reviews`, 'GET')).toHaveLength(1);
 });
 
+/** Makes the shared rows look `ms` old (the venue page read them that long ago). */
+function ageRows(ms: number) {
+  const { byVenue } = venueReviewsStore.getState();
+  venueReviewsStore.setState({ byVenue: { ...byVenue, [V]: { ...byVenue[V], readAt: Date.now() - ms } } });
+}
+
+it('rows older than the window open at once and are read again behind them', async () => {
+  api.on('GET', '/venues/:venueId/reviews', answer([row(THEIRS, 5, 'Earlier')]));
+  await act(async () => {
+    await venueReviewsStore.getState().load(V);
+  });
+  ageRows(FRESH_FOR_MS + 1);
+  api.on('GET', '/venues/:venueId/reviews', Reply.delayed(20, answer([row(MINE, 4, 'Newer', ME), row(THEIRS, 5, 'Earlier')])));
+  await renderPage();
+  // No spinner: the old rows stay while the new read is on its way.
+  expect(screen.getByText('Earlier')).toBeOnTheScreen();
+  await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 40)));
+  expect(screen.getByText('Newer')).toBeOnTheScreen();
+  expect(api.sentAll(`/venues/${V}/reviews`, 'GET')).toHaveLength(2);
+});
+
+it('a failed refresh keeps the rows on screen, with no error state', async () => {
+  api.on('GET', '/venues/:venueId/reviews', answer([row(THEIRS, 5, 'Kept')]));
+  await act(async () => {
+    await venueReviewsStore.getState().load(V);
+  });
+  ageRows(FRESH_FOR_MS + 1);
+  api.on('GET', '/venues/:venueId/reviews', Reply.problem(500, 'internal_error'));
+  await renderPage();
+  await act(async () => new Promise<void>((resolve) => setImmediate(resolve)));
+  expect(screen.getByText('Kept')).toBeOnTheScreen();
+  expect(screen.queryByTestId('venue-reviews-error')).toBeNull();
+});
+
 it('a failed read shows the error state, and Try again reads again', async () => {
   api.on('GET', '/venues/:venueId/reviews', Reply.problem(500, 'internal_error'));
   await renderPage();
@@ -195,7 +229,7 @@ describe('isOwnReview', () => {
     rating: 5,
     comment: null,
     authorInitial: 'J',
-    createdAt: null,
+    createdAt: new Date('2026-10-16T12:00:00Z'),
     reviewerProfileId: ME,
   };
   it('knows the member’s review by the server’s ownReviewId or by its author', () => {

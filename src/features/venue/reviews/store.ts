@@ -4,7 +4,9 @@
  * hands the same array to the reviews sheet; after a review is posted it
  * reloads them, and the block and the sheet both show the new list. Here the
  * venue page (VENUE-1) and the reviews page are separate routes, so they meet
- * in this store, keyed by venue id.
+ * in this store, keyed by venue id: the venue page reads its reviews through
+ * `loadVenueReviews` (every load, every return), and the reviews page opens
+ * on those rows without reading again.
  *
  * Only the latest read of a venue lands; a reload keeps the rows on screen
  * until it answers (iOS `reloadReviews` swaps the array when it has one, and
@@ -15,7 +17,7 @@
  */
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
-import { errorMessage } from '../../../api';
+import { errorMessage, TransportError } from '../../../api';
 import { fetchVenueReviews, type VenueReviewsPage } from './api';
 import type { VenueReview } from './model';
 
@@ -30,6 +32,17 @@ export interface VenueReviewsEntry {
   readonly ownReviewId: string | null;
   /** The last read's failure in the language on screen, or null. */
   readonly error: string | null;
+  /** When the rows on screen were read (ms since the epoch), or null before the first read lands. */
+  readonly readAt: number | null;
+}
+
+export interface EnsureLoadedOptions {
+  /**
+   * Rows read longer ago than this are read again, behind the rows already
+   * on screen (the reviews page; see VenueReviewsScreen). Without it, rows
+   * read once are kept for the session.
+   */
+  readonly maxAgeMs?: number;
 }
 
 export interface VenueReviewsStoreState {
@@ -41,8 +54,11 @@ export interface VenueReviewsStoreState {
    * next to its other calls with `Promise.allSettled`).
    */
   load(venueId: string, options?: { readonly force?: boolean }): Promise<readonly VenueReview[]>;
-  /** Reads once if this venue has never been read (or its last read failed). */
-  ensureLoaded(venueId: string): Promise<readonly VenueReview[]>;
+  /**
+   * Reads if this venue has never been read, its last read failed, or (with
+   * `maxAgeMs`) its rows are older than that. Joins a read on its way.
+   */
+  ensureLoaded(venueId: string, options?: EnsureLoadedOptions): Promise<readonly VenueReview[]>;
   reset(): void;
 }
 
@@ -50,6 +66,8 @@ export type VenueReviewsStore = StoreApi<VenueReviewsStoreState>;
 
 export interface VenueReviewsStoreOptions {
   readonly fetch?: (venueId: string) => Promise<VenueReviewsPage>;
+  /** The clock (tests). */
+  readonly now?: () => number;
 }
 
 const key = (id: string) => id.toLowerCase();
@@ -60,10 +78,12 @@ export const EMPTY_REVIEWS_ENTRY: VenueReviewsEntry = Object.freeze({
   loaded: false,
   ownReviewId: null,
   error: null,
+  readAt: null,
 });
 
 export function createVenueReviewsStore(options: VenueReviewsStoreOptions = {}): VenueReviewsStore {
   const fetch = options.fetch ?? ((venueId: string) => fetchVenueReviews(venueId));
+  const now = options.now ?? Date.now;
   let generation = 0;
   const latest: Record<string, number> = {};
   const pending: Partial<Record<string, Promise<readonly VenueReview[]>>> = {};
@@ -81,7 +101,14 @@ export function createVenueReviewsStore(options: VenueReviewsStoreOptions = {}):
       try {
         const page = await fetch(id);
         if (gen === generation && mine === latest[id]) {
-          patch(id, { status: 'loaded', loaded: true, reviews: page.reviews, ownReviewId: page.ownReviewId, error: null });
+          patch(id, {
+            status: 'loaded',
+            loaded: true,
+            reviews: page.reviews,
+            ownReviewId: page.ownReviewId,
+            error: null,
+            readAt: now(),
+          });
         }
         return page.reviews;
       } catch (error) {
@@ -104,12 +131,15 @@ export function createVenueReviewsStore(options: VenueReviewsStoreOptions = {}):
         return promise;
       },
 
-      ensureLoaded(venueId) {
+      ensureLoaded(venueId, ensureOptions) {
         const id = key(venueId);
         const entry = get().byVenue[id];
         const joined = pending[id];
         if (joined) return joined;
-        if (entry && entry.status === 'loaded') return Promise.resolve(entry.reviews);
+        const maxAge = ensureOptions?.maxAgeMs;
+        const fresh =
+          entry?.status === 'loaded' && (maxAge === undefined || (entry.readAt !== null && now() - entry.readAt <= maxAge));
+        if (entry && fresh) return Promise.resolve(entry.reviews);
         return get().load(id);
       },
 
@@ -130,7 +160,45 @@ export function resetVenueReviews(): void {
   venueReviewsStore.getState().reset();
 }
 
-/** For the venue page: the reviews, read next to its other calls (a rejection is its own). */
-export function loadVenueReviews(venueId: string, options?: { readonly force?: boolean }): Promise<readonly VenueReview[]> {
-  return venueReviewsStore.getState().load(venueId, options);
+export interface LoadVenueReviewsOptions {
+  /** Read again even when a read of this venue is on its way (a review was just posted). */
+  readonly force?: boolean;
+  /**
+   * Stops THIS caller waiting: the promise rejects as the API client rejects
+   * an aborted call (`TransportError('cancelled')`, so `isCancellation` holds).
+   * The shared read itself runs on, since the reviews page may be waiting too.
+   */
+  readonly signal?: AbortSignal;
+}
+
+const cancelled = () => new TransportError('cancelled');
+
+/**
+ * For the venue page: `GET /venues/{venueId}/reviews` into the shared store,
+ * read next to its other calls (a rejection is its own), newest first. It is
+ * a drop-in for the page's own reader (same call, rows with the same fields),
+ * so the page's block and the reviews page show one list.
+ */
+export function loadVenueReviews(venueId: string, options: LoadVenueReviewsOptions = {}): Promise<VenueReview[]> {
+  const { signal, force } = options;
+  if (signal?.aborted) return Promise.reject(cancelled());
+  const read = venueReviewsStore
+    .getState()
+    .load(venueId, { force })
+    .then((rows) => [...rows]);
+  if (!signal) return read;
+  return new Promise<VenueReview[]>((resolve, reject) => {
+    const onAbort = () => reject(cancelled());
+    signal.addEventListener('abort', onAbort, { once: true });
+    read.then(
+      (rows) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(rows);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
 }

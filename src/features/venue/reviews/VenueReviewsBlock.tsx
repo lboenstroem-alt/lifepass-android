@@ -16,9 +16,12 @@
  * write sheet shows here too. iOS never draws this block when the reviews
  * could not be read (the whole page fails); Android keeps the venue page on a
  * failed read (VENUE-1, `Promise.allSettled`), so the block says so and
- * offers a retry rather than claiming nobody has reviewed the venue.
+ * offers a retry rather than claiming nobody has reviewed the venue. "See
+ * all" stays in the header then, since the reviews page (with its own retry)
+ * is also where a review is written; a read on its way with no rows yet (the
+ * first read, a retry) shows a small spinner.
  */
-import { StyleSheet, Pressable, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Pressable, View } from 'react-native';
 
 import { Kicker, LPText } from '../../../components/ui';
 import { useT } from '../../../i18n';
@@ -43,7 +46,8 @@ export default function VenueReviewsBlock({ venueId, venueName, onOpenReviews }:
   const failed = !loaded && status === 'failed';
   const empty = reviews.length === 0;
   const kicker = !loaded ? null : empty ? t('venue.review_empty') : t('venue.review_from');
-  const action = !loaded ? null : empty ? t('venue.write_one') : t('common.see_all');
+  // Not read yet: nothing to promise. Unreadable: the reviews page still opens.
+  const action = failed ? t('common.see_all') : !loaded ? null : empty ? t('venue.write_one') : t('common.see_all');
 
   return (
     <View style={styles.block} testID="venue-reviews-block">
@@ -80,7 +84,11 @@ export default function VenueReviewsBlock({ venueId, venueName, onOpenReviews }:
             </LPText>
           </Pressable>
         </View>
-      ) : !loaded ? null : empty ? (
+      ) : !loaded ? (
+        <View style={styles.loading} testID="venue-reviews-block-loading">
+          <ActivityIndicator color={colors.rust} accessibilityLabel={t('venue.reviews')} />
+        </View>
+      ) : empty ? (
         <Pressable
           onPress={open}
           accessibilityRole="button"
@@ -125,5 +133,6 @@ const styles = StyleSheet.create({
     borderColor: colors.line2,
   },
   list: { gap: 10 },
+  loading: { paddingVertical: 16, alignItems: 'center' },
   pressed: { opacity: 0.7 },
 });

@@ -16,11 +16,14 @@
  *     5 to 1), then every card.
  *   - Android adds "Report review" on each card but the member's own (D5).
  *
- * The rows are the venue page's (the shared reviews store), so nothing is
- * read again when the page opens; a review posted from the write sheet
- * reloads them and this page shows it. Opened with no rows yet (a link, or
- * a venue page whose read failed), it reads them itself, with a spinner and
- * a retry.
+ * The rows are the venue page's (the shared reviews store, which the venue
+ * page reads through on every load), so the page opens on them at once, as
+ * iOS hands the sheet the view model's array; a review posted from the write
+ * sheet reloads them and this page shows it. Rows read more than
+ * FRESH_FOR_MS ago are read again behind the rows on screen (a failure keeps
+ * them), so this page never sits on a list older than the venue page's.
+ * Opened with no rows yet (a venue page whose read failed), it reads them
+ * itself, with a spinner and a retry.
  */
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useContext, useMemo } from 'react';
@@ -37,6 +40,13 @@ import { reviewSummary, type VenueReview } from './model';
 import { openReportReview } from './report';
 import { useVenueReviews } from './useVenueReviews';
 
+/**
+ * How old the shared rows may be and still open the page without a read. The
+ * venue page reads them on every load and every return, so rows it just read
+ * are reused; anything older is refreshed quietly.
+ */
+export const FRESH_FOR_MS = 30_000;
+
 /** True when `review` is the member's own: never offered for reporting (the server refuses it). */
 export function isOwnReview(review: VenueReview, ownReviewId: string | null, memberId: string | null): boolean {
   if (ownReviewId && review.id === ownReviewId.toLowerCase()) return true;
@@ -50,7 +60,7 @@ export default function VenueReviewsScreen({ navigation, route }: SharedRoutePro
   // The tab bar floats over the page; outside the tabs (the shared sheet) it is the system bar.
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? insets.bottom;
   const memberId = useAppStore((s) => s.userId);
-  const { reviews, loaded, status, ownReviewId, reload } = useVenueReviews(venueId);
+  const { reviews, loaded, status, ownReviewId, reload } = useVenueReviews(venueId, { maxAgeMs: FRESH_FOR_MS });
   const summary = useMemo(() => reviewSummary(reviews), [reviews]);
 
   const writeReview = () => navigation.navigate('WriteReview', { venueId, venueName });

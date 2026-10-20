@@ -17,8 +17,8 @@ export interface VenueReview {
   readonly rating: number;
   readonly comment: string | null;
   /** The reviewer's first initial: the API's privacy shape, no name or id is shown. */
-  readonly authorInitial: string | null;
-  readonly createdAt: Date | null;
+  readonly authorInitial: string;
+  readonly createdAt: Date;
   /**
    * The reviewer's profile id, when the API sent one. Android only uses it
    * to keep "Report review" off the member's own review.

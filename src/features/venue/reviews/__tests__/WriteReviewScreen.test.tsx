@@ -95,6 +95,29 @@ it('sends the rating, the trimmed comment and today, then reloads the reviews an
   expect(navigation.goBack).toHaveBeenCalledTimes(1);
 });
 
+it('after a review is posted, Submit stays off while the sheet closes (no second POST)', async () => {
+  api.on('POST', '/venues/:venueId/reviews', Reply.ok({ review: {} }, 201));
+  api.on('GET', '/venues/:venueId/reviews', Reply.ok({ rows: [], nextCursor: null, canWriteReview: false }));
+  await renderSheet();
+  await fireEvent.press(screen.getByTestId('write-review-star-4'));
+  await fireEvent.changeText(screen.getByTestId('write-review-comment'), LONG);
+  await fireEvent.press(submit());
+  await settle();
+  expect(navigation.goBack).toHaveBeenCalledTimes(1);
+  // The modal is still animating away: the button keeps "Submitting…" and is off.
+  expect(screen.getByRole('button', { name: 'Submitting…' })).toBeDisabled();
+  await fireEvent.press(submit());
+  await settle();
+  expect(api.sentAll(`/venues/${V}/reviews`, 'POST')).toHaveLength(1);
+});
+
+it('the comment box is five lines tall and never grows (iOS lineLimit(5, reservesSpace: true))', async () => {
+  await renderSheet();
+  const field = screen.getByTestId('write-review-comment');
+  await fireEvent.changeText(field, `${LONG}\n`.repeat(12));
+  expect(field).toHaveStyle({ minHeight: 128, maxHeight: 128 });
+});
+
 it('shows "Submitting…" while it is sent, and ignores a second press', async () => {
   api.on('POST', '/venues/:venueId/reviews', Reply.delayed(40, Reply.ok({ review: {} }, 201)));
   api.on('GET', '/venues/:venueId/reviews', Reply.ok({ rows: [], nextCursor: null, canWriteReview: false }));

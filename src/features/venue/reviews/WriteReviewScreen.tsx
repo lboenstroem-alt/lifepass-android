@@ -91,14 +91,12 @@ export default function WriteReviewScreen({ navigation, route }: RootModalProps<
       }
       return;
     }
-    inFlight.current = false;
     // iOS `onSubmitted` reloads the reviews, then the sheet dismisses. The
-    // reload runs even if the member already closed the sheet.
+    // reload runs even if the member already closed the sheet. The guard and
+    // "Submitting…" stay on while the sheet closes: the review is posted, and
+    // a tap during the close must not send a second one.
     void loadVenueReviews(venueId, { force: true }).catch(() => null);
-    if (mounted.current) {
-      setSubmitting(false);
-      navigation.goBack();
-    }
+    if (mounted.current) navigation.goBack();
   };
 
   return (
@@ -191,7 +189,10 @@ export default function WriteReviewScreen({ navigation, route }: RootModalProps<
 }
 
 // Five lines of 15 pt text, the room iOS reserves (`lineLimit(5, reservesSpace: true)`).
+// The box stays that size and scrolls inside, as iOS does, so a long comment
+// never pushes Submit under the keyboard.
 const INPUT_LINE = 20;
+const INPUT_HEIGHT = INPUT_LINE * 5 + 28;
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.ink },
@@ -203,7 +204,8 @@ const styles = StyleSheet.create({
   input: {
     ...sans(15),
     color: colors.paper,
-    minHeight: INPUT_LINE * 5 + 28,
+    minHeight: INPUT_HEIGHT,
+    maxHeight: INPUT_HEIGHT,
     lineHeight: INPUT_LINE,
     padding: 14,
     backgroundColor: colors.ink2,

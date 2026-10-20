@@ -99,3 +99,39 @@ it('sign-out forgets every venue and drops answers on their way', async () => {
   await loading;
   expect(store.getState().byVenue).toEqual({});
 });
+
+describe('ensureLoaded with maxAgeMs (the reviews page)', () => {
+  it('reuses rows read within the window and reads older ones again, keeping them on screen', async () => {
+    let clock = 1_000_000;
+    const second = deferred<VenueReviewsPage>();
+    const fetch = jest.fn<Promise<VenueReviewsPage>, [string]>(async () => page(review('r1')));
+    const store = createVenueReviewsStore({ fetch, now: () => clock });
+    await store.getState().load(V);
+    expect(store.getState().byVenue[V].readAt).toBe(1_000_000);
+
+    clock += 30_000;
+    await store.getState().ensureLoaded(V, { maxAgeMs: 30_000 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    clock += 1;
+    fetch.mockImplementationOnce(() => second.promise);
+    const refreshing = store.getState().ensureLoaded(V, { maxAgeMs: 30_000 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(store.getState().byVenue[V]).toMatchObject({ status: 'loading', loaded: true });
+    expect(store.getState().byVenue[V].reviews.map((r) => r.id)).toEqual(['r1']);
+    second.resolve(page(review('r2'), review('r1')));
+    await refreshing;
+    expect(store.getState().byVenue[V].reviews.map((r) => r.id)).toEqual(['r2', 'r1']);
+    expect(store.getState().byVenue[V].readAt).toBe(1_030_001);
+  });
+
+  it('without a window, rows read once are kept', async () => {
+    let clock = 0;
+    const fetch = jest.fn(async () => page(review('r1')));
+    const store = createVenueReviewsStore({ fetch, now: () => clock });
+    await store.getState().load(V);
+    clock += 3_600_000;
+    await store.getState().ensureLoaded(V);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});

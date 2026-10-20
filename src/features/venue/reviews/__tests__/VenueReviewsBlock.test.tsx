@@ -97,8 +97,20 @@ it('a failed read offers a retry rather than claiming nobody has reviewed', asyn
   await settle();
   expect(screen.queryByText('Be the first to review')).toBeNull();
   expect(screen.getByText('Something went wrong. Please try again.')).toBeOnTheScreen();
-  api.on('GET', '/venues/:venueId/reviews', answer([row('11111111-0000-4000-8000-000000000001', 5, 'Back', '2026-10-16T12:00:00Z')]));
+  // The reviews page (its own retry, and the write sheet) is still one tap away.
+  await fireEvent.press(screen.getByRole('button', { name: 'See all' }));
+  expect(mockNavigate).toHaveBeenCalledWith('VenueReviews', { venueId: V, venueName: 'Laugar' });
+
+  api.on(
+    'GET',
+    '/venues/:venueId/reviews',
+    Reply.delayed(20, answer([row('11111111-0000-4000-8000-000000000001', 5, 'Back', '2026-10-16T12:00:00Z')])),
+  );
   await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
-  await settle();
+  // While the retry is on its way: a spinner, not an empty block.
+  expect(screen.getByTestId('venue-reviews-block-loading')).toBeOnTheScreen();
+  expect(screen.queryByText('Something went wrong. Please try again.')).toBeNull();
+  await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 40)));
   expect(screen.getByText('Back')).toBeOnTheScreen();
+  expect(screen.queryByTestId('venue-reviews-block-loading')).toBeNull();
 });
