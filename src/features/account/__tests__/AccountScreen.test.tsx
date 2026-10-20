@@ -13,6 +13,7 @@ import { api, Reply } from '@test/server';
 import { stubApiClientPerTest } from '../../../api/testing';
 import { setCurrentLanguage } from '../../../i18n';
 import { useAppStore } from '../../../stores/appStore';
+import { useCompanyContext } from '../companyContext';
 
 import {
   ADVENTURER,
@@ -282,6 +283,41 @@ describe('the company plan fallback (GET /company-plans/context)', () => {
     await renderAccount();
     expect(api.sentAll('/company-plans/context')).toHaveLength(1);
     expect(screen.queryByTestId('account.row.companyPlan')).toBeNull();
+  });
+
+  describe('a failure left from an earlier visit (iOS: each AccountView starts at false)', () => {
+    const NOTHING_PENDING = { pendingInvite: null, pendingActivation: null };
+
+    async function openWithReadHeld(answer: ReturnType<typeof Reply.ok>) {
+      signedInAs(profileJSON());
+      useCompanyContext.setState({ context: null, failed: true });
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      api.on('GET', '/company-plans/context', async () => {
+        await gate;
+        return answer;
+      });
+      await renderAccount();
+      return () => act(async () => release());
+    }
+
+    it('is not shown while this visit’s read is on its way, nor after it answers', async () => {
+      const answer = await openWithReadHeld(Reply.ok(NOTHING_PENDING));
+      expect(screen.queryByTestId('account.row.companyPlan')).toBeNull();
+      await answer();
+      await settle();
+      expect(screen.queryByTestId('account.row.companyPlan')).toBeNull();
+    });
+
+    it('shows once this visit’s own read has failed', async () => {
+      const answer = await openWithReadHeld(Reply.problem(404, 'not_found'));
+      expect(screen.queryByTestId('account.row.companyPlan')).toBeNull();
+      await answer();
+      await settle();
+      expect(screen.getByTestId('account.row.companyPlan')).toBeOnTheScreen();
+    });
   });
 
   it('a plan holder never sees it (iOS shows it only beside View plans)', async () => {

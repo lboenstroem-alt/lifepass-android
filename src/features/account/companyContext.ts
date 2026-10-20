@@ -3,19 +3,29 @@
  * `GET /company-plans/context`: iOS `AccountView.companyContext` and
  * `companyContextFailed`, and `loadCompanyContext()`.
  *
- * One read serves two parts of the screen, as on iOS:
+ * On iOS one `loadCompanyContext()` writes one `companyContext` /
+ * `companyContextFailed` pair, and it serves two parts of the screen:
  * - the company banner (a pending co-pay activation or invitation), ACCT-3's
- *   `slots/CompanyPlanBanner`, which reads `context` from here and calls
- *   `loadCompanyContext()` again after its own Kenni sheet or activation;
+ *   `slots/CompanyPlanBanner`;
  * - the Membership card's fallback row "Have a company plan?", ACCT-1's,
  *   shown only while the read FAILED (any error, a 404 from a server without
  *   the route included), so a member is never left without a way to their
  *   company benefit.
+ * Two stores would let the two disagree (the banner and the fallback row on
+ * screen together, or neither) and send the read twice per appearance.
+ *
+ * THE CONTRACT (for ACCT-3 and the merge). This is the one store. ACCT-3's
+ * `copay/contextSource.ts` re-exports it (`reloadCopayContext` =
+ * `loadCompanyContext`, `resetCopayContext` = `resetCompanyContext`, the
+ * context read from `useCompanyContext`), re-reads through
+ * `loadCompanyContext()` after a Kenni sheet, an activation or a checkout
+ * return, and does not read on appearance itself: the Account screen's
+ * focus effect is the one read per appearance (iOS `.task`). The sign-out
+ * cleaner in ./register.ts is the one that forgets it.
  *
  * A store rather than screen state so the slot and the screen share one read
  * (a slot takes no required props). The newest read wins; an answer for a
- * read that a sign-out overtook is dropped, and the sign-out cleaner in
- * ./register.ts forgets the context.
+ * read that a sign-out overtook is dropped.
  */
 import { create } from 'zustand';
 

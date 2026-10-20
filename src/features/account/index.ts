@@ -4,8 +4,8 @@
  *
  * - the row primitives every Account slot and Body and goals draw with
  *   (./rows.tsx: rows draw their own dividers, the card hides the first);
- * - the company-plan context the screen reads on every appearance, for
- *   ACCT-3's company banner (./companyContext.ts).
+ * - the company-plan context the screen reads on every appearance, the one
+ *   store ACCT-3's company banner reads too (./companyContext.ts says how).
  *
  * The screen itself is a route (`Account`, src/navigation/sharedRoutes).
  */

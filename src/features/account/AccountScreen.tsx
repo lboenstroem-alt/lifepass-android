@@ -38,7 +38,9 @@
  *
  * On every appearance (iOS `.task`), the company context and the referral
  * link are read, best-effort: neither failure is shown, the rows simply stay
- * hidden or fall back.
+ * hidden or fall back. The company context is ONE shared read
+ * (./companyContext.ts): ACCT-3's banner is to read the same store rather
+ * than its own, and this focus effect is the one read per appearance.
  *
  * Log out signs out at once, with no confirmation (iOS has none; decision
  * D4): the app store gives the pending food-off its short try, ends the
@@ -100,6 +102,11 @@ export default function AccountScreen({ navigation }: SharedRouteProps<'Account'
   const usage = useAppStore(selectUsage);
   const passes = useAppStore(selectActivePasses);
   const companyContextFailed = useCompanyContext((s) => s.failed);
+  // iOS `companyContextFailed` is this AccountView's own @State, false until
+  // this screen's read answers. The shared store outlives the screen, so a
+  // failure left from an earlier visit must not show the fallback row before
+  // this visit's first read has answered (it would flash, then vanish).
+  const [contextAnswered, setContextAnswered] = useState(false);
 
   const referral = useReferral();
   const referralRow = referral.row;
@@ -111,6 +118,7 @@ export default function AccountScreen({ navigation }: SharedRouteProps<'Account'
     useCallback(() => {
       void (async () => {
         await loadCompanyContext();
+        setContextAnswered(true);
         await loadReferral();
       })();
     }, [loadReferral]),
@@ -153,7 +161,7 @@ export default function AccountScreen({ navigation }: SharedRouteProps<'Account'
         <AccountSection kicker={t('account.section_member')} testID="account.membership">
           <AccountRowButton title={plan.title} subtitle={plan.subtitle} onPress={openPlans} testID={`account.row.${plan.kind}Plans`} />
           {plan.kind === 'change' ? <MembershipActions /> : null}
-          {plan.kind === 'view' && companyContextFailed ? (
+          {plan.kind === 'view' && contextAnswered && companyContextFailed ? (
             <AccountRowButton
               title={t('account.company_plan')}
               subtitle={t('account.company_plan_sub')}
