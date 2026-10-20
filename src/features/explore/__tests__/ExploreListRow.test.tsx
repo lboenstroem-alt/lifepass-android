@@ -34,10 +34,10 @@ describe('the place line', () => {
     expect(listRowPlace(venue({ walkInsAllowed: true }), t)).toBe('Reykjavík · Walk-in');
   });
 
-  it('names the country when the venue has no city', () => {
+  it('names the country when the venue has no city, in English in both languages as iOS does', () => {
     expect(listRowPlace(venue({ city: null }), t)).toBe('Iceland');
     setCurrentLanguage('is');
-    expect(listRowPlace(venue({ city: null, walkInsAllowed: true }), t)).toBe('Ísland · Walk-in');
+    expect(listRowPlace(venue({ city: null, walkInsAllowed: true }), t)).toBe('Iceland · Walk-in');
   });
 });
 

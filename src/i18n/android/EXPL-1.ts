@@ -8,10 +8,11 @@ import { definePack } from './pack';
 export default definePack({
   en: {
     // A list row's place when the venue has no city. iOS writes the English
-    // word into the row in both languages; Android says it in the member's.
+    // word into the row in both languages (`venue.city ?? "Iceland"`), so
+    // Android does too: the Icelandic value is the same word on purpose.
     'explore.android.city_fallback': 'Iceland',
   },
   is: {
-    'explore.android.city_fallback': 'Ísland',
+    'explore.android.city_fallback': 'Iceland',
   },
 });
