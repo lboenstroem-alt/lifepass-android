@@ -21,7 +21,7 @@
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import type { AttractionTier } from '../../api/attractions';
-import { hiddenFromAccessibility } from '../../components/ui';
+import { hiddenFromAccessibility } from '../../components/ui/a11y';
 import { colors } from '../../theme';
 import { ringDiameter } from './rules';
 

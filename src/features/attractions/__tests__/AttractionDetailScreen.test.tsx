@@ -81,8 +81,10 @@ beforeEach(() => {
 
 afterEach(async () => {
   openURL.mockRestore();
-  setCurrentLanguage('en');
-  await act(async () => dismissAllDialogs());
+  await act(async () => {
+    setCurrentLanguage('en');
+    dismissAllDialogs();
+  });
 });
 
 describe('a top-pick waterfall reached by road', () => {
@@ -222,7 +224,7 @@ describe('how a place is reached', () => {
     await renderCard();
     expect(screen.queryByTestId('attraction.travel.nearest_road')).toBeNull();
 
-    setCurrentLanguage('is');
+    await act(async () => setCurrentLanguage('is'));
     serve({ nearestRoadM: 2440, driveFromReykjavik: null });
     await renderCard({ slug: 'glymur' });
     expect(screen.getByTestId('attraction.travel.nearest_road')).toHaveTextContent('Næsti vegur er í um 2,4 km fjarlægð.');
