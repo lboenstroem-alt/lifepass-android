@@ -19,16 +19,13 @@ import { LPText, Sheet, SheetTextInput } from '../../../components/ui';
 import { useT } from '../../../i18n';
 import { track } from '../../../lib/analytics';
 import { colors, hairline } from '../../../theme';
-import type { MealCaptureModel } from '../capture/captureModel';
 import { useCaptureIfAny } from '../capture/capturePages';
 import { showMealToast } from '../capture/saveFeedback';
-import type { MealItemDraft } from '../types/draft';
 
-import { quickAddItem, quickAddKcal } from './quickAddRules';
+import { quickAddItem, quickAddKcal, savesAtOnce, type QuickAddTarget } from './quickAddRules';
 
-export type QuickAddTarget =
-  | { readonly kind: 'capture'; readonly model: MealCaptureModel }
-  | { readonly kind: 'meal'; readonly onAdd: (item: MealItemDraft) => void };
+export type { QuickAddTarget } from './quickAddRules';
+
 
 export interface QuickAddSheetProps {
   readonly visible: boolean;
@@ -37,11 +34,6 @@ export interface QuickAddSheetProps {
   readonly onClose: () => void;
   /** The in-page toast's distance from the bottom (the meal page's, by its tray). */
   readonly toastOffset?: number;
-}
-
-/** Whether the button saves a meal at once (iOS `savesAtOnce`). */
-export function savesAtOnce(target: QuickAddTarget, trayCount: number): boolean {
-  return target.kind === 'capture' && trayCount === 0 && target.model.origin !== 'editor';
 }
 
 export default function QuickAddSheet(props: QuickAddSheetProps) {

@@ -5,6 +5,7 @@
  * separator.
  */
 import { parseDecimal } from '../../../i18n/format';
+import type { MealCaptureModel } from '../capture/captureModel';
 import type { MealItemDraft } from '../types/draft';
 import { quickAddDraft } from '../types/draftFactory';
 import { trimWhitespace } from '../types/text';
@@ -48,4 +49,14 @@ export function quickAddItem(fields: {
     fat: quickAddMacro(fields.fat),
     servingLabel: fields.servingLabel,
   });
+}
+
+/** Where a Quick add goes: the meal page's tray, or a meal editor (MEAL-4). */
+export type QuickAddTarget =
+  | { readonly kind: 'capture'; readonly model: MealCaptureModel }
+  | { readonly kind: 'meal'; readonly onAdd: (item: MealItemDraft) => void };
+
+/** Whether the button saves a meal at once (iOS `savesAtOnce`). */
+export function savesAtOnce(target: QuickAddTarget, trayCount: number): boolean {
+  return target.kind === 'capture' && trayCount === 0 && target.model.origin !== 'editor';
 }

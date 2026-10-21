@@ -12,7 +12,7 @@
  * meal's date. The toasts are the UI kit's meal kind (4 s, announced to
  * TalkBack), drawn above the tab bar once the page has gone.
  */
-import { showToast, type ToastAction } from '../../../components/ui';
+import { showToast, type ToastAction } from '../../../components/ui/Toast';
 import { currentLanguage, translate } from '../../../i18n';
 import { dayEnergy, integer, shortDay, todayServerDay } from '../../../i18n/format';
 import { useHealthStore } from '../../../health/store';

@@ -10,7 +10,7 @@
  * under. Month and weekday names follow the phone's language, as every
  * Android date dialog does.
  */
-import { DateTimePickerAndroid, type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import type { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 import { colors } from '../../../theme';
 import { addServerDays, dateFromServerDay, serverDay, todayServerDay } from '../../../i18n/format';
@@ -38,8 +38,19 @@ export interface MealDatePickerOptions {
   readonly onPick: (day: string) => void;
 }
 
+/**
+ * The library, loaded on first use: its module looks up the native date
+ * picker the moment it is imported, which every screen that only imports the
+ * meal page (the navigators, and their tests) would otherwise pay for.
+ */
+function datePickerModule(): typeof import('@react-native-community/datetimepicker') {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('@react-native-community/datetimepicker') as typeof import('@react-native-community/datetimepicker');
+}
+
 /** Opens the date dialog on `date`; `onPick` gets the chosen server day (not called on Cancel). */
 export function openMealDatePicker(options: MealDatePickerOptions): void {
+  const { DateTimePickerAndroid } = datePickerModule();
   const range = datePickerRange(options.allowsOlderThan30Days);
   const now = new Date();
   const value = dateFromServerDay(clampDay(options.date, range)) ?? now;
