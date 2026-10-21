@@ -27,9 +27,19 @@
  * LEAVING. A UI-kit sheet is drawn over every page, so a page opened while
  * it is up would open UNDER it. Every way out (a venue, Profile, Explore)
  * closes the sheet first and opens the page once it has gone (`onClosed`),
- * as iOS dismisses before switching tabs. iOS pushes a venue inside the sheet
- * instead; here back from the venue lands on the screen that presented the
- * sheet.
+ * as iOS dismisses before switching tabs.
+ *
+ * BACK TO THE SHEET. iOS pushes a venue INSIDE the sheet, so back from the
+ * venue lands on Saved again (whose onAppear reloads it). Here the venue is
+ * pushed on the presenting screen's stack, so the sheet remembers that trip
+ * and comes back up, reloaded, when that screen is focused again: shown as
+ * `visible || returned`, without asking the presenter. Only the plain way
+ * back counts. The trip is dropped when the member leaves the presenter's tab
+ * or presses that tab (back to its root, which is the chat they asked for,
+ * not the sheet), and a sheet that came back closes if its screen loses
+ * focus, so it never stays up over another page. Profile and Explore are not
+ * trips: Profile's own ways out (Book Now, Find venues) leave for Explore,
+ * which iOS does by closing the sheet.
  *
  * NOT PORTED: iOS's pull to refresh. The kit's sheet scrolls its own content
  * and has no refresh control; the sheet reloads every time it opens, which
@@ -39,6 +49,7 @@
  * and `onClose`, like every kit sheet.
  */
 import { Ionicons } from '@expo/vector-icons';
+import type { EventListenerCallback, EventMapBase } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
@@ -65,25 +76,75 @@ export interface SavedSheetProps {
 /** iOS `lpSignal.opacity(0.12)`, the Premium tag's wash. */
 const SIGNAL_WASH = 'rgba(42,77,111,0.12)';
 
+/**
+ * A venue trip (see BACK TO THE SHEET): `opening` while the sheet slides away
+ * and the venue is pushed, `away` once the presenting screen has lost focus
+ * to it.
+ */
+type VenueTrip = 'none' | 'opening' | 'away';
+
+/** The presenting screen's tab route, for its blur and tabPress (absent outside the tabs). */
+interface TabRouteEvents {
+  addListener(type: 'blur' | 'tabPress', listener: EventListenerCallback<EventMapBase, string>): () => void;
+}
+
 export default function SavedSheet({ visible, onClose }: SavedSheetProps) {
   const { t } = useT();
   const navigation = useAppNavigation();
   const saved = useSavedLoad();
   const [addingVenueId, setAddingVenueId] = useState<string | null>(null);
+  /** The heart in flight, read synchronously so two taps in one frame send one save (iOS MainActor guard). */
+  const adding = useRef<string | null>(null);
   /** What to open once the sheet has gone (see LEAVING). */
   const afterClose = useRef<(() => void) | null>(null);
+  const trip = useRef<VenueTrip>('none');
+  /** Up again after the member came back from a venue (see BACK TO THE SHEET). */
+  const [returned, setReturned] = useState(false);
+  const shown = visible || returned;
 
   const load = saved.load;
   useEffect(() => {
-    if (visible) void load();
-  }, [visible, load]);
+    if (shown) void load();
+  }, [shown, load]);
+
+  // The presenter opened it again itself: any earlier trip is over.
+  useEffect(() => {
+    if (visible) trip.current = 'none';
+  }, [visible]);
+
+  useEffect(() => {
+    const offs = [
+      navigation.addListener('blur', () => {
+        if (trip.current === 'opening') trip.current = 'away';
+        setReturned(false);
+      }),
+      navigation.addListener('focus', () => {
+        if (trip.current !== 'away') return;
+        trip.current = 'none';
+        setReturned(true);
+      }),
+    ];
+    const tab = navigation.getParent() as unknown as TabRouteEvents | undefined;
+    if (tab) {
+      const drop = () => {
+        trip.current = 'none';
+      };
+      offs.push(tab.addListener('blur', drop), tab.addListener('tabPress', drop));
+    }
+    return () => offs.forEach((off) => off());
+  }, [navigation]);
+
+  const close = useCallback(() => {
+    setReturned(false);
+    onClose();
+  }, [onClose]);
 
   const leaveThen = useCallback(
     (open: () => void) => {
       afterClose.current = open;
-      onClose();
+      close();
     },
-    [onClose],
+    [close],
   );
 
   const onClosed = useCallback(() => {
@@ -92,16 +153,22 @@ export default function SavedSheet({ visible, onClose }: SavedSheetProps) {
     open?.();
   }, []);
 
-  const openVenue = (slug: string) => leaveThen(() => openSharedRoute(navigation, 'VenueDetail', { slug }));
+  const openVenue = (slug: string) =>
+    leaveThen(() => {
+      trip.current = 'opening';
+      if (!openSharedRoute(navigation, 'VenueDetail', { slug })) trip.current = 'none';
+    });
 
   const addSuggestion = async (venue: Venue) => {
-    if (addingVenueId !== null) return;
+    if (adding.current !== null) return;
+    adding.current = venue.id;
     setAddingVenueId(venue.id);
     try {
       // Silent on a failure, as iOS: the heart simply stays un-pressed.
       const result = await favouritesStore.getState().add(venue.id, { alert: false });
       if (result !== 'failed' && result !== 'ignored') await load();
     } finally {
+      adding.current = null;
       setAddingVenueId(null);
     }
   };
@@ -109,7 +176,7 @@ export default function SavedSheet({ visible, onClose }: SavedSheetProps) {
   const suggestions = suggestionsFor(saved.allVenues, savedVenueIds(saved));
 
   return (
-    <Sheet visible={visible} onClose={onClose} onClosed={onClosed} fullHeight testID="saved.sheet">
+    <Sheet visible={shown} onClose={close} onClosed={onClosed} fullHeight testID="saved.sheet">
       <TopBar
         title={t('saved.title')}
         subtitle={t('saved.subtitle')}

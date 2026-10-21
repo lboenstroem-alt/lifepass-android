@@ -1,9 +1,12 @@
 /**
  * The Coach's Saved sheet (iOS FavouritesView), presented from a screen in a
  * real stack against the stub server: its copy, the Premium tag, saved
- * classes, the reasons, the suggestion heart with its spinner, and every way
- * out closing the sheet before the page opens.
+ * classes, the reasons, the suggestion heart with its spinner, every way out
+ * closing the sheet before the page opens, and back from a venue bringing it
+ * up again (in a stack, and in tabs where leaving or pressing the tab drops
+ * that trip).
  */
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNavigationContainerRef, NavigationContainer, useRoute } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
@@ -66,18 +69,50 @@ function Coach() {
 const VenueDetail = standIn('VenueDetail');
 const Profile = standIn('Profile');
 
+function CoachStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
+      <Stack.Screen name="Coach" component={Coach} />
+      <Stack.Screen name="VenueDetail" component={VenueDetail} />
+      <Stack.Screen name="Profile" component={Profile} />
+    </Stack.Navigator>
+  );
+}
+
 async function renderSheet() {
-  await render(
+  const view = await render(
     <NavigationContainer ref={navigationRef}>
-      <Stack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
-        <Stack.Screen name="Coach" component={Coach} />
-        <Stack.Screen name="VenueDetail" component={VenueDetail} />
-        <Stack.Screen name="Profile" component={Profile} />
-      </Stack.Navigator>
+      <CoachStack />
     </NavigationContainer>,
   );
   await fireEvent.press(screen.getByText('Open saved'));
   await settle();
+  return view;
+}
+
+const Tab = createBottomTabNavigator();
+const Elsewhere = standIn('Elsewhere');
+
+/** The Coach's stack as one tab of two, as in the app. */
+async function renderSheetInTabs() {
+  await render(
+    <NavigationContainer ref={navigationRef}>
+      <Tab.Navigator screenOptions={{ headerShown: false }}>
+        <Tab.Screen name="CoachTab" component={CoachStack} />
+        <Tab.Screen name="ElsewhereTab" component={Elsewhere} />
+      </Tab.Navigator>
+    </NavigationContainer>,
+  );
+  await fireEvent.press(screen.getByText('Open saved'));
+  await settle();
+}
+
+/** Opens the saved venue from the sheet and lands on its page. */
+async function openSavedVenue() {
+  await fireEvent.press(screen.getByTestId(`saved.venue.${SAVED_A}`));
+  await settle();
+  expect(route()).toBe('VenueDetail');
+  expect(screen.queryByTestId('saved.sheet')).toBeNull();
 }
 
 function answerSaved(venues: unknown[] = [], activities: unknown[] = [], all: unknown[] = []) {
@@ -123,14 +158,16 @@ describe('the Saved sheet', () => {
     expect(screen.queryByTestId('saved.sheet')).toBeNull();
   });
 
-  it('lists saved classes only when there are any, each opening its venue', async () => {
+  it('with no saved classes, has no classes block', async () => {
     answerSaved([favouriteJSON(SAVED_A)]);
     await renderSheet();
+    expect(screen.getByTestId(`saved.venue.${SAVED_A}`)).toBeOnTheScreen();
     expect(screen.queryByTestId('saved.classes')).toBeNull();
+    expect(screen.queryByText('SAVED CLASSES')).toBeNull();
+  });
 
-    await act(async () => navigationRef.goBack());
+  it('lists saved classes, each opening its venue', async () => {
     answerSaved([favouriteJSON(SAVED_A)], [favouriteActivityJSON(CLASS_ID, { venueSlug: 'hot-yoga-studio' })]);
-    favouritesStore.getState().reset();
     await renderSheet();
     expect(screen.getByText('SAVED CLASSES')).toBeOnTheScreen();
     expect(screen.getByText('Hot Yoga')).toBeOnTheScreen();
@@ -220,11 +257,109 @@ describe('the Saved sheet', () => {
     answerSaved([favouriteJSON(SAVED_A)]);
     await renderSheet();
     expect(favouriteReads()).toBe(1);
-    await fireEvent.press(screen.getByTestId(`saved.venue.${SAVED_A}`));
+    // The member swipes it away, then opens it again.
+    await act(async () => bottomSheetMock.latest()?.onDismiss?.());
     await settle();
-    await act(async () => navigationRef.goBack());
+    expect(screen.queryByTestId('saved.sheet')).toBeNull();
     await fireEvent.press(screen.getByText('Open saved'));
     await settle();
+    expect(screen.getByTestId('saved.sheet')).toBeOnTheScreen();
     expect(favouriteReads()).toBe(2);
+  });
+
+  it('one heart at a time: another venue heart while one saves sends nothing', async () => {
+    answerSaved([], [], [venueJSON(PICKS[0], { name: 'Pick' }), venueJSON(PICKS[1], { name: 'Other' })]);
+    let release: () => void = () => undefined;
+    api.on('POST', '/favourites', () => new Promise<StubReply>((resolve) => (release = () => resolve(Reply.ok({ ok: true })))));
+    await renderSheet();
+    const posts = () => api.requests.filter((r) => r.method === 'POST' && r.path === '/favourites');
+
+    await fireEvent.press(screen.getByRole('button', { name: 'Save Pick' }));
+    await settle(2);
+    await fireEvent.press(screen.getByRole('button', { name: 'Save Other' }));
+    await settle(2);
+    expect(posts()).toHaveLength(1);
+
+    await act(async () => release());
+    await settle();
+    expect(screen.getByRole('button', { name: 'Save Other' })).toBeEnabled();
+  });
+});
+
+describe('back from a venue (iOS pushes the venue inside the sheet)', () => {
+  it('brings the sheet up again, read again', async () => {
+    answerSaved([favouriteJSON(SAVED_A)]);
+    await renderSheet();
+    await openSavedVenue();
+    const before = favouriteReads();
+
+    await act(async () => navigationRef.goBack());
+    await settle();
+    expect(route()).toBe('Coach');
+    expect(screen.getByTestId('saved.sheet')).toBeOnTheScreen();
+    expect(favouriteReads()).toBe(before + 1);
+
+    // Closed by the member, it stays closed.
+    await act(async () => bottomSheetMock.latest()?.onDismiss?.());
+    await settle();
+    expect(screen.queryByTestId('saved.sheet')).toBeNull();
+  });
+
+  it('works again from the sheet that came back', async () => {
+    answerSaved([favouriteJSON(SAVED_A)]);
+    await renderSheet();
+    await openSavedVenue();
+    await act(async () => navigationRef.goBack());
+    await settle();
+    await openSavedVenue();
+    await act(async () => navigationRef.goBack());
+    await settle();
+    expect(screen.getByTestId('saved.sheet')).toBeOnTheScreen();
+  });
+
+  it('back from Profile does not bring it up (Profile is not a venue trip)', async () => {
+    await renderSheet();
+    await fireEvent.press(screen.getByRole('button', { name: 'Open profile: bookings and saved' }));
+    await settle();
+    expect(route()).toBe('Profile');
+    await act(async () => navigationRef.goBack());
+    await settle();
+    expect(route()).toBe('Coach');
+    expect(screen.queryByTestId('saved.sheet')).toBeNull();
+  });
+
+  it('in tabs, back from the venue brings it up again', async () => {
+    answerSaved([favouriteJSON(SAVED_A)]);
+    await renderSheetInTabs();
+    await openSavedVenue();
+    await act(async () => navigationRef.goBack());
+    await settle();
+    expect(route()).toBe('Coach');
+    expect(screen.getByTestId('saved.sheet')).toBeOnTheScreen();
+  });
+
+  it('leaving the tab during the trip drops it', async () => {
+    answerSaved([favouriteJSON(SAVED_A)]);
+    await renderSheetInTabs();
+    await openSavedVenue();
+    await act(async () => navigationRef.navigate('ElsewhereTab'));
+    await settle();
+    await act(async () => navigationRef.navigate('CoachTab'));
+    await settle();
+    expect(route()).toBe('VenueDetail');
+    await act(async () => navigationRef.goBack());
+    await settle();
+    expect(route()).toBe('Coach');
+    expect(screen.queryByTestId('saved.sheet')).toBeNull();
+  });
+
+  it('pressing the tab (back to its root, the chat) drops it', async () => {
+    answerSaved([favouriteJSON(SAVED_A)]);
+    await renderSheetInTabs();
+    await openSavedVenue();
+    await fireEvent.press(screen.getByRole('tab', { name: /CoachTab/ }));
+    await settle();
+    expect(route()).toBe('Coach');
+    expect(screen.queryByTestId('saved.sheet')).toBeNull();
   });
 });
