@@ -324,9 +324,9 @@ export default function RunnerSetRow({
     !accessibilityLayout &&
     fitsInRow(fit, inner, controlKeys, {
       gap: WIDE_GAP,
-      // The label, the spacer (no width, but a gap each side, as in SwiftUI's
-      // HStack) and the check.
-      fixed: LABEL_WIDTH + CHECK_SIZE,
+      // The label (at least 48, wider at a larger text size), the spacer (no
+      // width, but a gap each side, as in SwiftUI's HStack) and the check.
+      fixed: Math.max(LABEL_WIDTH, fit.parts.label ?? 0) + CHECK_SIZE,
       fixedCount: 3,
       fallback: !loads,
     });
@@ -341,7 +341,9 @@ export default function RunnerSetRow({
     >
       {wide ? (
         <View style={styles.wideLine} testID={`${testID}.oneLine`}>
-          <View style={styles.labelColumn}>{setLabel}</View>
+          <View style={styles.labelColumn} onLayout={fit.onPartLayout('label')}>
+            {setLabel}
+          </View>
           <View style={styles.spacer} />
           {dose}
           {kg}
@@ -350,7 +352,7 @@ export default function RunnerSetRow({
       ) : (
         <View style={styles.stacked} testID={`${testID}.stacked`}>
           <View style={styles.topLine}>
-            {setLabel}
+            <View onLayout={fit.onPartLayout('label')}>{setLabel}</View>
             <View style={styles.spacer} />
             {checkButton}
           </View>
