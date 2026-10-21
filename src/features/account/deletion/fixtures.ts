@@ -8,9 +8,14 @@
  * - `health=deletion`: Account opens the sheet on the active state, and
  *   "Delete my account" answers with a STUBBED pending result, so a device
  *   check can see the member told the outcome without deleting anything.
- *   It is the one write the fixture fakes, as on iOS.
  * - `health=deletion-pending`: the sheet opens on the pending state, with a
  *   subscription, two bookings and a payment still to settle.
+ *
+ * UNDER EITHER, NO WRITE LEAVES THE PHONE. "Keep my account" answers with a
+ * stubbed active state too. iOS stubs only the request and sends the cancel
+ * for real; Android QA runs against production with a real account
+ * (DECISIONS: no production writes), so the tap a fixture invites must not
+ * reach the server.
  *
  * Both read nothing unless `__DEV__` (`fixtureArg` is null in a release
  * bundle), so production can never see or send a fixture.
@@ -63,4 +68,14 @@ export function deletionFixtureRequestResult(now: Date = new Date()): AccountDel
     alreadyPending: false,
     healthDeleted: null,
   };
+}
+
+/**
+ * What "Keep my account" answers with under either deletion fixture, or null
+ * (a real cancel). The account is back to active, as the server answers.
+ */
+export function deletionFixtureCancelResult(): AccountDeletionState | null {
+  const name = fixtureName();
+  if (name !== 'deletion' && name !== 'deletion-pending') return null;
+  return { accountStatus: 'active', deletionRequestedAt: null, erasureScheduledAt: null, obligations: [] };
 }
