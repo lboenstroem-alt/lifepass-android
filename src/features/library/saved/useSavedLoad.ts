@@ -34,8 +34,6 @@ export interface SavedLoad {
   readonly venues: readonly FavouriteVenue[];
   /** The saved classes. */
   readonly activities: readonly FavouriteActivity[];
-  /** Every venue id that reads as saved (the member's unconfirmed taps included). */
-  readonly savedIds: readonly string[];
   /** `GET /venues`, the suggestions' pool. */
   readonly allVenues: readonly Venue[];
   readonly isLoading: boolean;
@@ -52,7 +50,6 @@ const defaultDeps: SavedLoadDeps = { fetchVenues: () => fetchVenues() };
 export function useSavedLoad(deps: SavedLoadDeps = defaultDeps): SavedLoad {
   const venues = useStore(favouritesStore, (s) => s.venues);
   const activities = useStore(favouritesStore, (s) => s.activities);
-  const savedIds = useStore(favouritesStore, (s) => s.savedIds);
   const [allVenues, setAllVenues] = useState<readonly Venue[]>([]);
   const [isLoading, setLoading] = useState(false);
   const mounted = useRef(true);
@@ -87,7 +84,6 @@ export function useSavedLoad(deps: SavedLoadDeps = defaultDeps): SavedLoad {
   return {
     venues,
     activities,
-    savedIds,
     allVenues,
     isLoading,
     load,

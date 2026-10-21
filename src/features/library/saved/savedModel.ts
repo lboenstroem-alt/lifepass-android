@@ -24,6 +24,16 @@ export const SUGGESTION_LIMIT = 3;
 /** `t`, or a `useT().t`. */
 type Translate = (key: string, params?: Readonly<Record<string, string | number>>) => string;
 
+/**
+ * The venues the suggestions leave out: the saved rows of the last read, as
+ * iOS reads `venuesFavourites` (a just-unsaved venue is not among them). A
+ * venue whose save is still on its way stays a suggestion, its heart
+ * spinning, until the read after the save brings its row.
+ */
+export function savedVenueIds(saved: { readonly venues: readonly { readonly venueId: string }[] }): string[] {
+  return saved.venues.map((venue) => venue.venueId);
+}
+
 /** The first `SUGGESTION_LIMIT` venues not in `savedVenueIds`, in the list's order. */
 export function suggestionsFor(
   allVenues: readonly Venue[],

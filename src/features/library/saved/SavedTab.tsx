@@ -28,7 +28,7 @@ import type { Venue } from '../../../types/venue';
 import { favouritesStore, type FavouriteVenue } from '../../favourites';
 import { colors, hairline } from '../../../theme';
 
-import { suggestionCategory, suggestionsFor } from './savedModel';
+import { savedVenueIds, suggestionCategory, suggestionsFor } from './savedModel';
 import type { SavedLoad } from './useSavedLoad';
 
 export interface SavedTabProps {
@@ -42,7 +42,7 @@ export interface SavedTabProps {
 
 export default function SavedTab({ saved, onOpenVenue, onFindVenues, bottomSpace }: SavedTabProps) {
   const { t } = useT();
-  const suggestions = saved.allVenues.length > 0 ? suggestionsFor(saved.allVenues, saved.savedIds) : [];
+  const suggestions = saved.allVenues.length > 0 ? suggestionsFor(saved.allVenues, savedVenueIds(saved)) : [];
 
   const saveSuggestion = async (venue: Venue) => {
     await favouritesStore.getState().add(venue.id, { alert: false });
