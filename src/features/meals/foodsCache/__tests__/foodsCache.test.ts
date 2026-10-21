@@ -71,6 +71,15 @@ function stored(member: string = MEMBER): { language: string; presets: FoodPrese
 
 const state = () => useMealFoodsCache.getState();
 
+/** Lets queued disk work and promise callbacks run until `ready` holds. */
+async function until(ready: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 20 && !ready(); turn += 1) {
+    await localStore.settled();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  if (!ready()) throw new Error('never ready');
+}
+
 beforeEach(() => {
   resetFoodsCacheMemory();
 });
@@ -171,6 +180,29 @@ describe('refreshing', () => {
     expect(foodsCacheProfileId()).toBeNull();
   });
 
+  it('an older refresh overtaken by another language leaves the spinner to the newer one', async () => {
+    const answers: Record<string, (value: FoodPresets) => void> = {};
+    useApi({
+      presets: (lang) => new Promise<FoodPresets>((resolve) => (answers[lang] = resolve)),
+      myFoods: async () => mine('a'),
+    });
+    const english = openFoodsCache({ profileId: MEMBER, language: 'en' });
+    await until(() => answers.en !== undefined);
+    const icelandic = openFoodsCache({ profileId: MEMBER, language: 'is' });
+    await until(() => answers.is !== undefined);
+
+    answers.en?.(presets('apple'));
+    await english;
+    // The English answer lands nowhere, and the Icelandic read is still on its way.
+    expect(state().presets).toBeNull();
+    expect(state().isRefreshing).toBe(true);
+
+    answers.is?.(presets('epli'));
+    await icelandic;
+    expect(state().presets?.foods.map((item) => item.key)).toEqual(['epli']);
+    expect(state().isRefreshing).toBe(false);
+  });
+
   it('after a save, my foods alone are read again and written', async () => {
     const myFoods = jest.fn().mockResolvedValueOnce(mine('a')).mockResolvedValueOnce(mine('a', 'b'));
     useApi({ presets: async () => presets('skyr'), myFoods });
@@ -188,16 +220,55 @@ describe('a My foods removal', () => {
     useApi({ presets: async () => presets(), myFoods: async () => mine('a', 'b') });
     await openFoodsCache({ profileId: MEMBER, language: 'en' });
     const before = state().mine ?? EMPTY_MY_FOODS;
-    removeMineLocally('a');
+    const removal = removeMineLocally('a');
+    expect(removal?.previous).toEqual(before);
     expect(state().mine?.mine.map((item) => item.key)).toEqual(['b']);
     expect(state().mine?.recents.map((item) => item.key)).toEqual(['b']);
     await localStore.settled();
     expect(stored()?.mine?.mine.map((item) => item.key)).toEqual(['b']);
 
-    restoreMine(before);
+    restoreMine(removal);
     expect(state().mine).toEqual(before);
     await localStore.settled();
     expect(stored()?.mine?.mine.map((item) => item.key)).toEqual(['a', 'b']);
+  });
+
+  it('is nothing to put back when no lists are open', () => {
+    expect(removeMineLocally('a')).toBeNull();
+    restoreMine(null);
+    expect(state().mine).toBeNull();
+  });
+
+  it('is never put back after a wipe or a sign-out: the next member never sees it', async () => {
+    useApi({ presets: async () => presets(), myFoods: async () => mine('a', 'b') });
+    await openFoodsCache({ profileId: MEMBER, language: 'en' });
+    const removal = removeMineLocally('a');
+    resetFoodsCacheMemory();
+    await localStore.deleteProfileFolder(MEMBER);
+
+    // The removal's call fails because the session is gone.
+    restoreMine(removal);
+    expect(state().mine).toBeNull();
+    await localStore.settled();
+    expect(stored()).toBeNull();
+
+    // Nor once the next member has opened their own lists.
+    useApi({ presets: async () => presets(), myFoods: async () => mine('theirs') });
+    await openFoodsCache({ profileId: OTHER, language: 'en' });
+    restoreMine(removal);
+    expect(state().mine?.mine.map((item) => item.key)).toEqual(['theirs']);
+  });
+
+  it('is not put back under another language', async () => {
+    useApi({ presets: async () => presets(), myFoods: async () => mine('bread') });
+    await openFoodsCache({ profileId: MEMBER, language: 'en' });
+    const removal = removeMineLocally('bread');
+    useApi({ presets: async () => presets(), myFoods: async () => mine('braud') });
+    await openFoodsCache({ profileId: MEMBER, language: 'is' });
+    restoreMine(removal);
+    expect(state().mine?.mine.map((item) => item.key)).toEqual(['braud']);
+    await localStore.settled();
+    expect(stored()?.language).toBe('is');
   });
 });
 

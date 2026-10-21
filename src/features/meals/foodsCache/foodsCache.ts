@@ -14,10 +14,11 @@
  *   a stored copy in another language is not shown (its names are in the
  *   old language), and the next refresh writes over it.
  * - It goes with the member's health data: the local wipe deletes the
- *   profile folder, and ../register.ts resets the memory here. A read or a
- *   refresh still in flight for the member who left lands nowhere (the
- *   `epoch` check, which iOS does not have: its refresh assigns before it
- *   compares the profile).
+ *   profile folder, and ../register.ts resets the memory here and deletes
+ *   the folder once more (an answer that landed while the wipe was still
+ *   running may have written the file back). A read or a refresh still in
+ *   flight for the member who left lands nowhere (the `epoch` check, which
+ *   iOS does not have: its refresh assigns before it compares the profile).
  * - A failed refresh keeps what is shown; `presetsFailed`/`mineFailed` are
  *   true only when there is nothing to show at all.
  */
@@ -53,6 +54,13 @@ let profileId: string | null = null;
 let language: string | null = null;
 /** Bumped by every wipe: an answer for the member who left is dropped. */
 let epoch = 0;
+/**
+ * Bumped by every refresh: only the newest one clears `isRefreshing`. An
+ * open for another language or member overtakes the refresh before it
+ * without a wipe, and that older refresh must not end the spinner while the
+ * newer one is still asking (iOS serialises the two on the main actor).
+ */
+let refreshGeneration = 0;
 
 function setState(patch: Partial<MealFoodsCacheState>): void {
   useMealFoodsCache.setState(patch);
@@ -122,6 +130,8 @@ export async function refreshFoodsCache(): Promise<void> {
   const lang = language;
   if (!id || !lang) return;
   const at = epoch;
+  refreshGeneration += 1;
+  const generation = refreshGeneration;
   setState({ isRefreshing: true });
   try {
     try {
@@ -142,7 +152,7 @@ export async function refreshFoodsCache(): Promise<void> {
     }
     persist();
   } finally {
-    if (at === epoch) setState({ isRefreshing: false });
+    if (at === epoch && generation === refreshGeneration) setState({ isRefreshing: false });
   }
 }
 
@@ -167,17 +177,44 @@ export function refreshMineFoods(): void {
     );
 }
 
-/** A My foods removal, applied at once (the server call runs after). */
-export function removeMineLocally(key: string): void {
-  const { mine } = useMealFoodsCache.getState();
-  if (!mine) return;
-  setState({ mine: myFoodsRemoving(mine, key) });
-  persist();
+/**
+ * What a My foods removal changed: the lists before it, and whose they were.
+ * Only `restoreMine` reads it.
+ */
+export interface MineRemoval {
+  readonly epoch: number;
+  readonly profileId: string;
+  readonly language: string;
+  readonly previous: MyFoods;
 }
 
-/** Put the lists back when a removal did not reach the server. */
-export function restoreMine(previous: MyFoods): void {
-  setState({ mine: previous });
+/**
+ * A My foods removal, applied at once (the server call runs after). Returns
+ * what to hand `restoreMine` if the call fails; null when no lists are open.
+ *
+ *   const removal = removeMineLocally(key);
+ *   try { await mealApi().hideFood(...); } catch { restoreMine(removal); }
+ */
+export function removeMineLocally(key: string): MineRemoval | null {
+  const id = profileId;
+  const lang = language;
+  const { mine } = useMealFoodsCache.getState();
+  if (!mine || !id || !lang) return null;
+  setState({ mine: myFoodsRemoving(mine, key) });
+  persist();
+  return { epoch, profileId: id, language: lang, previous: mine };
+}
+
+/**
+ * Put the lists back when a removal did not reach the server: only for the
+ * member, language and session the removal was made in. A removal that
+ * fails because the member signed out meanwhile (no session, a 401) must
+ * not put their food history back on screen for the next member, nor an
+ * old language's list under a new one. (iOS restores unguarded.)
+ */
+export function restoreMine(removal: MineRemoval | null): void {
+  if (!removal || !isCurrent(removal.epoch, removal.profileId, removal.language)) return;
+  setState({ mine: removal.previous });
   persist();
 }
 
