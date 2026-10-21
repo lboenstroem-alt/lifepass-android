@@ -33,7 +33,7 @@ import { RunnerFormat } from '../../../i18n/runnerFormat';
 import { todayServerDay } from '../../../i18n/format';
 import type { SessionActionResponse, SessionView } from '../../../health/models';
 import { RunnerAnalytics } from '../model/analytics';
-import { doneCount, nextOpenSet } from '../model/exercise';
+import { doneCount } from '../model/exercise';
 import {
   activeSeconds,
   adjustRest as adjustRestRule,
@@ -75,7 +75,6 @@ import type {
   RunnerTickOutcome,
   RunnerTimerPhase,
 } from '../model/types';
-import { REST_STEP_SECONDS } from '../model/types';
 import { deleteRunner, persistRunner } from '../persistence/runnerStore';
 import { runnerWipeEpoch } from '../persistence/fence';
 import { RunnerProgressIndex } from '../persistence/progressIndex';
@@ -672,12 +671,3 @@ export class RunnerController {
     if (stamped !== this.state) this.snapshot = { ...this.snapshot, state: stamped };
   }
 }
-
-/** The next open set of the exercise on screen, 1-based, for the Live Activity line and tests. */
-export function nextSetNumber(state: RunnerState): number | null {
-  const current = currentExercise(state);
-  const open = current ? nextOpenSet(current) : null;
-  return open === null ? null : open + 1;
-}
-
-export { REST_STEP_SECONDS };
