@@ -21,8 +21,14 @@ import { resetIntentStoreForTests, useIntentStore } from '../../../../stores/int
 import { runHealthWipeHooks } from '../../../../health/wipe';
 import * as coachApi from '../../chat/coachApi';
 // The register file wires the store to sign-in, sign-out and the health wipe.
-import '../../register';
-import { COACH_SESSIONS_KEY, loadSavedSessions, writeSavedSessions } from '../../persistence/sessions';
+import { claimCoachForMember } from '../../register';
+import {
+  COACH_SESSIONS_KEY,
+  COACH_SESSIONS_OWNER_KEY,
+  loadSavedSessions,
+  writeSavedSessions,
+} from '../../persistence/sessions';
+import { INITIAL_FREE_TIER } from '../../freeTier/freeTier';
 import {
   PARKED_SEND,
   pendingCoachSaves,
@@ -89,6 +95,35 @@ function msg(id: string, role: 'user' | 'assistant', text: string, extra: Partia
   return { id, role, text, ...extra };
 }
 
+/**
+ * Holds every read of the saved chats until `release` (the claim's read of
+ * the owner key goes through), so a test can land a read where it wants.
+ */
+function holdSessionReads() {
+  // The storage mock's getItem is already a jest.fn: swap its body, then put it back.
+  const getItem = jest.mocked(AsyncStorage.getItem);
+  const original = getItem.getMockImplementation()!;
+  const held: (() => void)[] = [];
+  getItem.mockImplementation(async (key: string, ...rest) => {
+    if (key === COACH_SESSIONS_KEY) await new Promise<void>((resolve) => held.push(resolve));
+    return original(key, ...rest);
+  });
+  return {
+    get waiting() {
+      return held.length;
+    },
+    release() {
+      for (const resolve of held.splice(0)) resolve();
+    },
+    restore() {
+      this.release();
+      getItem.mockImplementation(original);
+    },
+  };
+}
+
+const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function venue(n: number, name: string, slug: string) {
   return decodeVenue({ id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`, slug, name, inBundle: true });
 }
@@ -146,6 +181,20 @@ describe('a typed message no flow takes', () => {
     expect(fake('dayPlan').calls).toEqual(['startFrom:hello']);
     expect(fake('venueWizard').calls).toEqual(['startFrom:hello']);
     expect(fake('venueWizard').startOptions).toEqual([TYPED_SEND]);
+  });
+
+  it('an active programme with no question open takes the words: they never reach another flow or the model', async () => {
+    answer('should not be asked');
+    fake('program').active = true;
+    fake('program').takesTyped = false;
+    fake('venueWizard').startsOn = () => true;
+    fake('dayPlan').startsOn = () => true;
+    await coach().send('my knee hurts');
+    expect(fake('program').calls).toContain('takeTyped:my knee hurts');
+    expect(fake('venueWizard').calls).toEqual([]);
+    expect(fake('dayPlan').calls).toEqual([]);
+    expect(api.sentAll('/coach')).toHaveLength(0);
+    expect(texts()).not.toContain('my knee hurts');
   });
 
   it('nothing blank is sent, and nothing while a reply is in flight', async () => {
@@ -365,6 +414,7 @@ describe('the chat generation', () => {
 
 describe('saved chats (CoachPersistenceTests)', () => {
   it('health turns are not saved (testHealthTurnsAreNotSaved)', async () => {
+    await claimCoachForMember(MEMBER_A, false);
     seed([
       msg(GREETING_ID, 'assistant', en('coach.greeting')),
       msg('1', 'user', 'where can I swim?'),
@@ -386,6 +436,7 @@ describe('saved chats (CoachPersistenceTests)', () => {
   });
 
   it('a chat of only health turns is not saved at all (testAChatOfOnlyHealthTurnsIsNotSavedAtAll)', async () => {
+    await claimCoachForMember(MEMBER_A, false);
     seed([
       msg(GREETING_ID, 'assistant', en('coach.greeting')),
       msg('1', 'user', 'Get a 4-week plan', { isHealth: true }),
@@ -405,6 +456,7 @@ describe('saved chats (CoachPersistenceTests)', () => {
   });
 
   it('saving the same chat again replaces its entry; three at most', async () => {
+    await claimCoachForMember(MEMBER_A, false);
     seed([msg('1', 'user', 'first chat')]);
     coach().resetChat();
     for (const title of ['second chat', 'third chat', 'fourth chat']) {
@@ -433,6 +485,8 @@ describe('saved chats (CoachPersistenceTests)', () => {
         ],
       },
     ]);
+    await AsyncStorage.setItem(COACH_SESSIONS_OWNER_KEY, MEMBER_A);
+    await claimCoachForMember(MEMBER_A, false);
     await coach().loadSessions();
     seed([msg('101', 'user', 'the chat on screen')]);
     useCoachStore.setState({ limitReached: true });
@@ -466,11 +520,34 @@ describe('saved chats (CoachPersistenceTests)', () => {
     await writeSavedSessions([
       { id: 'old', title: 'old chat', date: '2026-09-01T10:00:00.000Z', messages: [{ id: '1', role: 'user', text: 'old chat' }] },
     ]);
-    seed([msg('1', 'user', 'new chat')]);
-    coach().resetChat();
-    await pendingCoachSaves();
+    await AsyncStorage.setItem(COACH_SESSIONS_OWNER_KEY, MEMBER_A);
+    const reads = holdSessionReads();
+    try {
+      await claimCoachForMember(MEMBER_A, false);
+      // The claim's read of the list is still on its way.
+      expect(reads.waiting).toBe(1);
+      seed([msg('1', 'user', 'new chat')]);
+      coach().resetChat();
+      reads.release();
+      await pendingCoachSaves();
+    } finally {
+      reads.restore();
+    }
     expect(coach().savedSessions.map((entry) => entry.title)).toEqual(['new chat', 'old chat']);
     expect((await loadSavedSessions()).map((entry) => entry.title)).toEqual(['new chat', 'old chat']);
+  });
+
+  it('nothing is read or written before the sign-in has claimed the chats', async () => {
+    await writeSavedSessions([
+      { id: 'theirs', title: 'not yours', date: '2026-09-01T10:00:00.000Z', messages: [{ id: '1', role: 'user', text: 'not yours' }] },
+    ]);
+    await coach().loadSessions();
+    expect(coach().savedSessions).toEqual([]);
+    expect(coach().sessionsLoaded).toBe(false);
+    seed([msg('1', 'user', 'typed before any claim')]);
+    coach().resetChat();
+    await pendingCoachSaves();
+    expect((await loadSavedSessions()).map((entry) => entry.title)).toEqual(['not yours']);
   });
 });
 
@@ -637,6 +714,35 @@ describe('entries parked by other tabs', () => {
     expect(texts().slice(1)).toEqual(['first', 'reply 1', 'from Home', 'reply 2']);
   });
 
+  it('two prompts waiting behind one reply go one after the other, even while the flows take their time', async () => {
+    let count = 0;
+    api.on('POST', '/coach', () => {
+      count += 1;
+      return Reply.delayed(count === 1 ? 100 : 0, Reply.ok({ reply: `reply ${count}` }));
+    });
+    // The flows look at every send for a while before passing (no isTyping yet).
+    fake('venueWizard').startFrom = async (text: string) => {
+      fake('venueWizard').calls.push(`startFrom:${text}`);
+      await tick(250);
+      return false;
+    };
+    const first = coach().send('first');
+    await tick(10);
+    useIntentStore.getState().parkCoachPrompt('prompt one');
+    const one = coach().consumeParkedEntries();
+    await tick(10);
+    useIntentStore.getState().parkCoachPrompt('prompt two');
+    const two = coach().consumeParkedEntries();
+    await Promise.all([first, one, two]);
+    const after = texts().slice(1);
+    expect(after.slice(0, 2)).toEqual(['first', 'reply 1']);
+    // Each prompt is followed by its own answer: never two in flight.
+    expect([after[2], after[4]].sort()).toEqual(['prompt one', 'prompt two']);
+    expect(after[3]).toBe('reply 2');
+    expect(after[5]).toBe('reply 3');
+    expect(api.sentAll('/coach')).toHaveLength(3);
+  }, 15_000);
+
   it('a reply that never ends holds a parked prompt at most 10 seconds', async () => {
     jest.useFakeTimers();
     try {
@@ -701,10 +807,117 @@ describe('whose chat it is', () => {
     expect(coach().memberId).toBe(MEMBER_B);
   });
 
-  it('the same member signing in again keeps the chat on screen', async () => {
-    coach().signedIn(MEMBER_A);
+  it('the same member signing in again keeps the chat on screen and the recents', async () => {
+    await claimCoachForMember(MEMBER_A, false);
     seed([msg('1', 'user', 'mine')]);
-    coach().signedIn(MEMBER_A.toUpperCase());
-    expect(texts()).toEqual(['mine']);
+    coach().resetChat();
+    await pendingCoachSaves();
+    seed([msg('2', 'user', 'on screen')]);
+    await claimCoachForMember(MEMBER_A.toUpperCase(), true);
+    expect(texts()).toEqual(['on screen']);
+    expect(coach().savedSessions.map((entry) => entry.title)).toEqual(['mine']);
+  });
+
+  it("a read that lands before the claim removed the last member's chats never reaches the drawer", async () => {
+    await claimCoachForMember(MEMBER_A, false);
+    seed([msg('1', 'user', "A's chat")]);
+    coach().resetChat();
+    await pendingCoachSaves();
+    // A's list is being read again (it was forgotten on screen) when B signs in.
+    useCoachStore.setState({ savedSessions: [], sessionsLoaded: false });
+    const reads = holdSessionReads();
+    try {
+      const loadingForA = coach().loadSessions();
+      expect(reads.waiting).toBe(1);
+      // B, with the tabs still mounted: the screen asks for the recents at
+      // once, as the first build's did on the user id.
+      const claim = claimCoachForMember(MEMBER_B, false);
+      const early = coach().loadSessions();
+      reads.release();
+      await Promise.all([loadingForA, early]);
+      expect(coach().savedSessions).toEqual([]);
+      await claim;
+      reads.release();
+      await coach().loadSessions();
+    } finally {
+      reads.restore();
+    }
+    expect(coach().savedSessions).toEqual([]);
+    expect(coach().memberId).toBe(MEMBER_B);
+    expect(await AsyncStorage.getItem(COACH_SESSIONS_KEY)).toBeNull();
+  });
+
+  it('a claim that fails deletes the chats rather than guess whose they are', async () => {
+    await claimCoachForMember(MEMBER_A, false);
+    seed([msg('1', 'user', "A's chat")]);
+    coach().resetChat();
+    await pendingCoachSaves();
+    // The claim's read of the owner key fails (used once, then the mock reads again).
+    jest.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('disk'));
+    await claimCoachForMember(MEMBER_B, false);
+    await coach().loadSessions();
+    expect(coach().savedSessions).toEqual([]);
+    expect(await AsyncStorage.getItem(COACH_SESSIONS_KEY)).toBeNull();
+    expect(await AsyncStorage.getItem(COACH_SESSIONS_OWNER_KEY)).toBe(MEMBER_B);
+  });
+
+  it("a reply still in flight at sign-out brings the next member none of the last one's counts", async () => {
+    api.on(
+      'POST',
+      '/coach',
+      Reply.delayed(80, Reply.ok({ reply: 'late', freeMessages: { limit: 3, remaining: 0, windowDays: 30, resetsAt: '2099-10-10T00:00:00Z' } })),
+    );
+    await claimCoachForMember(MEMBER_A, false);
+    const sending = coach().send('hello');
+    await tick(10);
+    await runSignOutCleaners({ memberId: MEMBER_A });
+    await sending;
+    expect(texts()).toEqual([en('coach.greeting')]);
+    expect({
+      limitReached: coach().limitReached,
+      freeMessages: coach().freeMessages,
+      freeLimitReached: coach().freeLimitReached,
+      upgrade: coach().upgrade,
+      freeCountHeardAt: coach().freeCountHeardAt,
+    }).toEqual(INITIAL_FREE_TIER);
+    expect(coach().isTyping).toBe(false);
+  });
+
+  it('a daily-limit refusal still in flight at sign-out locks nobody', async () => {
+    api.on(
+      'POST',
+      '/coach',
+      Reply.delayed(80, Reply.problem(429, 'coach-daily-limit', { detail: "You have used all of today's coach messages." })),
+    );
+    await claimCoachForMember(MEMBER_A, false);
+    const sending = coach().send('hello');
+    await tick(10);
+    await runSignOutCleaners({ memberId: MEMBER_A });
+    await sending;
+    await claimCoachForMember(MEMBER_B, false);
+    expect(coach().limitReached).toBe(false);
+    expect(selectIsAILocked(coach())).toBe(false);
+    expect(texts()).toEqual([en('coach.greeting')]);
+  });
+
+  it("a flow's counts after a sign-out are dropped too (the busy token's account)", async () => {
+    const token = coachHost().busy();
+    await runSignOutCleaners({ memberId: MEMBER_A });
+    coachHost().recordFreeMessages({ limit: 3, remaining: 0 }, token);
+    expect(coach().freeMessages).toBeNull();
+    expect(token.isCurrent()).toBe(false);
+    expect(token.sameAccount()).toBe(false);
+  });
+
+  it("a parked prompt waiting at sign-out is the last member's: it is never sent", async () => {
+    answer('reply');
+    useCoachStore.setState({ isTyping: true });
+    useIntentStore.getState().parkCoachPrompt('from Home');
+    const parked = coach().consumeParkedEntries();
+    await tick(10);
+    await runSignOutCleaners({ memberId: MEMBER_A });
+    await parked;
+    expect(texts()).toEqual([en('coach.greeting')]);
+    expect(api.sentAll('/coach')).toHaveLength(0);
   });
 });

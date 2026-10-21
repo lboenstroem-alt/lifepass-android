@@ -11,6 +11,16 @@
  * it without a React tree. Sign-out resets it (./register.ts): the next
  * member on the phone never sees the last one's chat, counts or locks.
  *
+ * THE STORE OUTLIVES THE ACCOUNT, the iOS view model does not (it goes with
+ * the tabs). Two things make up for that:
+ * - an ACCOUNT EPOCH, bumped at every sign-out and member switch: a reply,
+ *   a refusal or a parked entry still in flight then lands nowhere, and its
+ *   counts and locks are not the next member's;
+ * - THE CLAIM GATE: the saved chats are read and written only once the
+ *   sign-in hook has claimed them for the member on screen (`claimedFor`,
+ *   iOS `claimSavedSessions` before the view model is built). Nothing a
+ *   screen does can read the file before another member's chats are gone.
+ *
  * What lives here:
  * - the messages, the input, the typing dots and the CHAT GENERATION: New
  *   chat and a restore bump it, and every reply in flight checks it before
@@ -132,6 +142,11 @@ export interface CoachState extends FreeTierState {
   readonly pendingRoute: CoachRoute | null;
   /** The member this chat belongs to (lower case), or null before a sign-in. */
   readonly memberId: string | null;
+  /**
+   * The member whose saved chats the sign-in hook has claimed (lower case).
+   * The saved chats are read and written only while it is `memberId`.
+   */
+  readonly claimedFor: string | null;
 }
 
 export interface CoachActions {
@@ -172,15 +187,26 @@ export interface CoachActions {
 
   /** The profile's coach block, with when its read was sent (iOS `applyProfileCoach`). */
   applyProfileCoach(block: ProfileCoachBlock | null | undefined, readAt: Date | null | undefined): void;
-  recordFreeMessages(counts: CoachFreeMessages | null | undefined): void;
-  applyCoachLimit(error: ApiError): CoachLimitKind | null;
+  /** `token`: the busy token the call ran under; counts that land after a sign-out are dropped. */
+  recordFreeMessages(counts: CoachFreeMessages | null | undefined, token?: CoachBusyToken): void;
+  applyCoachLimit(error: ApiError, token?: CoachBusyToken): CoachLimitKind | null;
 
   /** The health data was wiped (iOS `dropHealthMessages`): every health turn leaves the chat. */
   dropHealthMessages(): void;
   /** The saved chats were forgotten (sign-out): the recents go from the screen too. */
   sessionsForgotten(): void;
-  /** A member became the signed-in one: a chat that was someone else's is dropped. */
+  /**
+   * A member is becoming the signed-in one (called synchronously as the
+   * sign-in starts, before the claim): a chat, counts and locks that were
+   * someone else's are dropped, and the saved chats stay closed until
+   * `sessionsClaimed`.
+   */
   signedIn(memberId: string): void;
+  /**
+   * The saved chats on disk are now this member's (the claim ran): anything
+   * read before it is thrown away and the list is read again.
+   */
+  sessionsClaimed(memberId: string): void;
   /** Everything goes (sign-out). */
   resetForSignOut(): void;
 
@@ -220,6 +246,21 @@ function advanceIdCounterPast(messages: readonly { readonly id: string }[]): voi
  * it, so each captures this and stands down when it moved.
  */
 let storageEpoch = 0;
+/**
+ * Bumped at every sign-out and member switch. Work for the Coach captures it
+ * when it starts (a reply, a parked entry, a flow's busy token) and stands
+ * down when it moved: the iOS view model dies with the tabs at sign-out, so
+ * its late replies write to nothing; this store lives on.
+ */
+let accountEpoch = 0;
+/**
+ * A `send` is running (set synchronously after its guard, before its first
+ * await). iOS `send` runs on the main actor and `callAI` sets `isTyping`
+ * before it suspends; here the flows' steps are awaited first, and a second
+ * parked prompt, a chip or a tile must not slip into that gap. Cleared by
+ * its own send, or by a new chat / sign-out (whose chat no longer waits).
+ */
+let activeSend: object | null = null;
 /** Saves run one after another, in the order they were made. */
 let saveChain: Promise<void> = Promise.resolve();
 let sessionsLoading: Promise<void> | null = null;
@@ -251,6 +292,7 @@ const initialState = (): CoachState => ({
   currentSessionId: null,
   pendingRoute: null,
   memberId: null,
+  claimedFor: null,
 });
 
 function freeTierOf(state: CoachState): FreeTierState {
@@ -279,13 +321,25 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
     return created.map((message) => message.id);
   };
 
+  /** Something is in flight: a reply or a flow's work (`isTyping`), or a send still in its flow steps. */
+  const isBusy = (): boolean => get().isTyping || activeSend !== null;
+
+  /** The saved chats were claimed for the member on screen (the gate for every read and write). */
+  const isClaimed = (): boolean => {
+    const { memberId, claimedFor } = get();
+    return memberId !== null && claimedFor === memberId;
+  };
+
   const busy = (): CoachBusyToken => {
     const generation = get().generation;
+    const account = accountEpoch;
     set({ isTyping: true });
     let ended = false;
+    const sameAccount = () => accountEpoch === account;
     return {
       generation,
-      isCurrent: () => get().generation === generation,
+      isCurrent: () => sameAccount() && get().generation === generation,
+      sameAccount,
       end: () => {
         if (ended) return;
         ended = true;
@@ -307,11 +361,13 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
 
   const ensureSessionsLoaded = (): Promise<void> => {
     if (get().sessionsLoaded) return Promise.resolve();
+    // Never before the claim: the file may still hold another member's chats.
+    if (!isClaimed()) return Promise.resolve();
     if (sessionsLoading) return sessionsLoading;
     const epoch = storageEpoch;
     const loading: Promise<void> = loadSavedSessions()
       .then((sessions) => {
-        if (epoch !== storageEpoch) return;
+        if (epoch !== storageEpoch || !isClaimed()) return;
         // A save made before the read finished is already on screen: it
         // stays on top of what was stored.
         const inMemory = get().savedSessions;
@@ -343,7 +399,9 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
     saveChain = saveChain
       .then(async () => {
         await ensureSessionsLoaded();
-        if (epoch !== storageEpoch) return;
+        // A sign-out or a sign-in meanwhile, or no claim yet: nothing is
+        // written (a claim judges the file by its owner key).
+        if (epoch !== storageEpoch || !isClaimed()) return;
         // After the read, the session is upserted again over what was stored.
         const next = upsertSession(get().savedSessions, session);
         set({ savedSessions: next });
@@ -361,6 +419,9 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
         // A flow that fails to reset must not keep the old chat on screen.
       }
     }
+    // The send that was running belongs to the old chat (its reply is
+    // dropped by the generation): the new chat may send at once.
+    activeSend = null;
     const state = get();
     set({
       ...forNewChat(freeTierOf(state)),
@@ -394,7 +455,9 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
     const token = busy();
     try {
       const reply = await postCoachChat(language(), buildModelMessages(get().messages));
-      get().recordFreeMessages(reply.freeMessages);
+      // Counted even when a New chat came meanwhile (the allowance was
+      // spent), but never into the next account's counts.
+      get().recordFreeMessages(reply.freeMessages, token);
       if (!token.isCurrent()) return;
       await appendAssistantReply(reply.reply.trim() ? reply.reply : tr('coach.ai_unavailable'), token);
     } catch (error) {
@@ -404,7 +467,7 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
         // server's words (English) or the app's own sentence (Icelandic).
         // 503 coach-busy: a moment's wait, never a lock, in the member's
         // own language.
-        get().applyCoachLimit(error);
+        get().applyCoachLimit(error, token);
         if (!token.isCurrent()) return;
         append({
           role: 'assistant',
@@ -419,18 +482,22 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
     }
   };
 
-  /** Waits out a reply in flight, at most 10 s (iOS's bounded wait); true when the chat is free. */
+  /**
+   * Waits out a reply in flight, at most 10 s (iOS's bounded wait); true when
+   * the chat is free AND still the account's that parked the entry.
+   */
   const waitForIdle = async (): Promise<boolean> => {
+    const account = accountEpoch;
     const deadline = Date.now() + PARKED_WAIT_MS;
-    while (get().isTyping && Date.now() < deadline) {
+    while (isBusy() && Date.now() < deadline && account === accountEpoch) {
       await sleep(PARKED_POLL_MS);
     }
-    return !get().isTyping;
+    return !isBusy() && account === accountEpoch;
   };
 
   /** A tap that starts a flow: never over a reply in flight, and every open question abandoned first. */
   const enterFlow = async (flowId: CoachFlowId, entry: CoachFlowEntry) => {
-    if (get().isTyping) return;
+    if (isBusy()) return;
     abandonOpenQuestions();
     await COACH_FLOWS[flowId].enter?.(entry);
   };
@@ -451,23 +518,35 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
 
     async send(text, options = TYPED_SEND) {
       const trimmed = text.trim();
-      if (!trimmed || get().isTyping) return;
-      set({ inputText: '' });
+      if (!trimmed || isBusy()) return;
+      const mine = {};
+      activeSend = mine;
+      const account = accountEpoch;
+      const generation = get().generation;
+      try {
+        set({ inputText: '' });
 
-      const took = await runSendPipeline(COACH_FLOWS, trimmed, options, { abandonOpenQuestions });
-      if (took !== null) return;
+        const took = await runSendPipeline(COACH_FLOWS, trimmed, options, { abandonOpenQuestions });
+        if (took !== null) return;
+        // Signed out, or a new chat, while the flows looked at the words:
+        // they belong to a chat that is gone.
+        if (account !== accountEpoch || generation !== get().generation) return;
 
-      // The daily cap and the free allowance only lock the AI path; the
-      // flows above never call the model on typed words, so they still work.
-      if (isAILocked(get())) return;
+        // The daily cap and the free allowance only lock the AI path; the
+        // flows above never call the model on typed words, so they still work.
+        if (isAILocked(get())) return;
 
-      append({ role: 'user', text: trimmed });
-      await callAI();
+        append({ role: 'user', text: trimmed });
+        await callAI();
+      } finally {
+        if (activeSend === mine) activeSend = null;
+      }
     },
 
     async sendParkedPrompt(text) {
       // send() drops words while a reply is in flight, so a parked prompt
       // waits for it (bounded, so a hung request cannot hold it forever).
+      // A sign-out meanwhile drops it: it was the last member's.
       if (!(await waitForIdle())) return;
       // An open question must never take the app's prompt as its answer.
       abandonOpenQuestions();
@@ -490,14 +569,14 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
     },
 
     startSearch(categoryKey, labelKey) {
-      if (get().isTyping) return;
+      if (isBusy()) return;
       const category = WIZARD_CATEGORY[categoryKey];
       if (!category) return;
       void enterFlow('venueWizard', { kind: 'category', category, userText: tr(labelKey) });
     },
 
     showCategoryPicker(chipLabelKey) {
-      if (get().isTyping) return;
+      if (isBusy()) return;
       abandonOpenQuestions();
       append(
         { role: 'user', text: tr(chipLabelKey) },
@@ -553,12 +632,13 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
       set(applyProfile(freeTierOf(get()), block, readAt));
     },
 
-    recordFreeMessages(counts) {
-      if (!counts) return;
+    recordFreeMessages(counts, token) {
+      if (!counts || (token && !token.sameAccount())) return;
       set(recordCounts(freeTierOf(get()), counts));
     },
 
-    applyCoachLimit(error) {
+    applyCoachLimit(error, token) {
+      if (token && !token.sameAccount()) return null;
       const result = applyLimit(freeTierOf(get()), error);
       if (result.kind) set(result.state);
       return result.kind;
@@ -584,20 +664,42 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
 
     signedIn(memberId) {
       const id = memberId.toLowerCase();
-      const previous = get().memberId;
+      const { memberId: previous, claimedFor } = get();
+      // The same member, already claimed (a refreshed sign-in): their chats
+      // stay as they are, and the claim that follows keeps the file.
+      if (previous === id && claimedFor === id) return;
       if (previous !== null && previous !== id) {
         // Someone else's chat, counts and locks never carry over.
         get().resetForSignOut();
       }
-      if (get().memberId !== id) {
-        storageEpoch += 1;
-        sessionsLoading = null;
-        set({ memberId: id, savedSessions: [], sessionsLoaded: false, currentSessionId: null });
-      }
+      // Closed until the claim: a read or a save started before it is dropped.
+      storageEpoch += 1;
+      sessionsLoading = null;
+      set({
+        memberId: id,
+        claimedFor: null,
+        savedSessions: [],
+        sessionsLoaded: false,
+        ...(previous === id ? {} : { currentSessionId: null }),
+      });
+    },
+
+    sessionsClaimed(memberId) {
+      const id = memberId.toLowerCase();
+      // A later sign-in took over while this claim ran: its own claim decides.
+      if (get().memberId !== id || get().claimedFor === id) return;
+      // Whatever was read or kept before the claim is dropped, even for the
+      // same member id: only what the claim left on disk is shown.
+      storageEpoch += 1;
+      sessionsLoading = null;
+      set({ claimedFor: id, savedSessions: [], sessionsLoaded: false });
+      void ensureSessionsLoaded();
     },
 
     resetForSignOut() {
       storageEpoch += 1;
+      accountEpoch += 1;
+      activeSend = null;
       sessionsLoading = null;
       for (const flow of Object.values(COACH_FLOWS)) {
         try {
@@ -661,8 +763,8 @@ const host: CoachHost = {
   isAILocked: () => isAILocked(useCoachStore.getState()),
   freeLimitReached: () => useCoachStore.getState().freeLimitReached,
   limitReached: () => useCoachStore.getState().limitReached,
-  applyCoachLimit: (error) => useCoachStore.getState().applyCoachLimit(error),
-  recordFreeMessages: (counts) => useCoachStore.getState().recordFreeMessages(counts),
+  applyCoachLimit: (error, token) => useCoachStore.getState().applyCoachLimit(error, token),
+  recordFreeMessages: (counts, token) => useCoachStore.getState().recordFreeMessages(counts, token),
   abandonOpenQuestions: () => useCoachStore.getState().abandonOpenQuestions(),
   modelMessages: (): CoachApiMessage[] => buildModelMessages(useCoachStore.getState().messages),
   route: (route) => useCoachStore.getState().route(route),
@@ -678,6 +780,8 @@ onSessionsForgotten(() => useCoachStore.getState().sessionsForgotten());
 export function resetCoachStoreForTests(): void {
   idCounter = FIRST_ID;
   storageEpoch += 1;
+  accountEpoch += 1;
+  activeSend = null;
   sessionsLoading = null;
   saveChain = Promise.resolve();
   useCoachStore.setState({ ...initialState() });

@@ -13,11 +13,16 @@
  *   const busy = host.busy();          // the typing dots, this chat's generation
  *   try {
  *     const venues = await fetchVenues(...);
- *     if (!busy.isCurrent()) return;   // New chat or a restore meanwhile: drop it
+ *     if (!busy.isCurrent()) return;   // New chat, a restore or a sign-out meanwhile: drop it
  *     host.append({ role: 'assistant', text: intro, venues });
  *   } finally {
  *     busy.end();
  *   }
+ *
+ * A flow that calls `/coach` hands the same token to the counts:
+ * `host.recordFreeMessages(reply.freeMessages, busy)` (before its
+ * `isCurrent` check, so a New chat mid-reply still counts the message) and
+ * `host.applyCoachLimit(error, busy)`.
  *
  * Read the host inside a call, never at module load: the store installs it
  * when its module loads, which may be after the flow's.
@@ -53,8 +58,16 @@ export type CoachRoute =
 export interface CoachBusyToken {
   /** The chat generation the work started in. */
   readonly generation: number;
-  /** False once the chat was reset or restored: drop the result instead of appending it to another chat. */
+  /** False once the chat was reset or restored, or the member signed out: drop the result instead of appending it to another chat. */
   isCurrent(): boolean;
+  /**
+   * False once the member it started for signed out (or another account
+   * signed in). A New chat keeps it true: an answer from `/coach` still
+   * spent this member's allowance, so its counts are kept; after a sign-out
+   * they belong to nobody on screen. Pass the token to
+   * `recordFreeMessages` / `applyCoachLimit` and they check it.
+   */
+  sameAccount(): boolean;
   /** The work is done: the typing dots go, unless the chat changed meanwhile (then the new chat owns them). */
   end(): void;
 }
@@ -86,10 +99,14 @@ export interface CoachHost {
   /** The free lock, and the daily lock (each flow words its own fallback). */
   freeLimitReached(): boolean;
   limitReached(): boolean;
-  /** A Coach 429 from any call to `/coach` (iOS `applyCoachLimit`). */
-  applyCoachLimit(error: ApiError): CoachLimitKind | null;
-  /** `freeMessages` from any answer to `/coach` (iOS `recordFreeMessages`). */
-  recordFreeMessages(counts: CoachFreeMessages | null | undefined): void;
+  /**
+   * A Coach 429 from any call to `/coach` (iOS `applyCoachLimit`). Pass the
+   * busy token the call ran under: a refusal that lands after the member
+   * signed out locks nobody (the next account never inherits it).
+   */
+  applyCoachLimit(error: ApiError, token?: CoachBusyToken): CoachLimitKind | null;
+  /** `freeMessages` from any answer to `/coach` (iOS `recordFreeMessages`); the token as above. */
+  recordFreeMessages(counts: CoachFreeMessages | null | undefined, token?: CoachBusyToken): void;
 
   /** iOS `abandonOpenQuestions`: every flow's open question dropped and every unanswered bubble closed. */
   abandonOpenQuestions(): void;
