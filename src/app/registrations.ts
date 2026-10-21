@@ -44,6 +44,26 @@ type Load = () => unknown;
  */
 const SHARED_LAYERS: Readonly<Record<string, Load>> = {
   /**
+   * Notifications (F7): the foreground handler that shows nothing while the
+   * app is open, the four channels named in the account language, and the
+   * account language kept for background work. Nothing here asks for
+   * permission.
+   */
+  notifications: () => require('../notifications/register'),
+  /**
+   * The payment rails (F8): sign-out wipes every in-flight record, waiting
+   * return link and pending outcome, so one member's payment never surfaces
+   * for the next person on the phone; activation recovers the attempts the
+   * app lost track of when Android killed it behind the hosted page.
+   */
+  payments: () => require('../payments/register'),
+  /**
+   * The health store (F7): the local wipe at sign-out (iOS
+   * `AppState.handleSignOut` calls it by name), `reconcile` on every profile
+   * read, the Today read on activation.
+   */
+  health: () => require('../health/register'),
+  /**
    * The UI kit (F5, contract request): its dialog and toast hosts sit ABOVE
    * the navigator and outlive the switch to the sign-in screens. A confirm
    * queued for the member who left (its buttons bound to their booking or
@@ -89,6 +109,9 @@ export const FEATURE_REGISTER_FILES: Readonly<Record<string, Load>> = {
   runner: () => require('../features/runner/register'),
   venue: () => require('../features/venue/register'),
 };
+
+/** The shared layers loaded here, for the test that every register file outside src/features is listed. */
+export const REGISTERED_SHARED_LAYERS: readonly string[] = Object.keys(SHARED_LAYERS);
 
 /** The feature areas loaded here, for the test that every register file is listed. */
 export const REGISTERED_FEATURE_AREAS: readonly string[] = Object.keys(FEATURE_REGISTER_FILES);

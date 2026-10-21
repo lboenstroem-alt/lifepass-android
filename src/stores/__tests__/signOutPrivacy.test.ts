@@ -30,7 +30,7 @@ import {
   SIGN_IN_HOOK_BUDGET_MS,
   SIGN_OUT_CLEANER_BUDGET_MS,
 } from '../../app/signOut';
-import { REGISTERED_FEATURE_AREAS } from '../../app/registrations';
+import { REGISTERED_FEATURE_AREAS, REGISTERED_SHARED_LAYERS } from '../../app/registrations';
 import { COACH_SESSIONS_KEY, COACH_SESSIONS_OWNER_KEY } from '../../features/coach/register';
 import { decodeProfile } from '../../api/profile';
 import { ACCOUNT_LANGUAGE_KEY, useAppStore } from '../appStore';
@@ -259,6 +259,19 @@ describe('the registry', () => {
     const features = join(__dirname, '..', '..', 'features');
     const onDisk = readdirSync(features).filter((area) => existsSync(join(features, area, 'register.ts')));
     expect([...REGISTERED_FEATURE_AREAS].sort()).toEqual(onDisk.sort());
+  });
+
+  it('every shared layer with a register file (health, payments, notifications) is loaded at startup', () => {
+    const src = join(__dirname, '..', '..');
+    const onDisk = readdirSync(src).filter((dir) => dir !== 'features' && existsSync(join(src, dir, 'register.ts')));
+    expect(onDisk.length).toBeGreaterThan(0);
+    for (const layer of onDisk) expect(REGISTERED_SHARED_LAYERS).toContain(layer);
+  });
+
+  it('a sign-out runs the health wipe and the payments wipe', () => {
+    const ids = registeredHookIds();
+    expect(ids.signOut.some((id) => id.startsWith('health'))).toBe(true);
+    expect(ids.signOut).toContain('payments.inflight');
   });
 
   it('every feature area has its register file loaded, and the Coach claims and forgets its chats', () => {
