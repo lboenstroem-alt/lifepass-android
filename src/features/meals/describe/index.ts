@@ -1,26 +1,33 @@
-// @f4-stub (plan 3.0.3): "Describe what you ate", filled by MEAL-5; used by MEAL-2 (the meal page).
-//
-// iOS `MealDescribeSheet`: the member describes a meal in words, the server
-// estimates it into a draft (OP-56, behind the `meal_describe` feature and
-// its consent version). Keep the exported names and signatures; replace the
-// bodies (and this marker). `DescribeHost` is mounted once by F4's tabs shell.
-import type { MealSlot } from '../../../navigation/types';
-
+/**
+ * "Describe what you ate" (MEAL-5, plan 3.0.3); used by MEAL-2 (the meal
+ * page's search).
+ *
+ * iOS `MealDescribeSheet`: the member describes a meal in words, the server
+ * estimates it into a draft (OP-56, behind the `meal_describe` feature and
+ * its consent version). `DescribeHost` is mounted once by F4's tabs shell.
+ *
+ * For the meal page:
+ *
+ *   if (useDescribeOffered(date)) ...  // the entries: "Describe a meal", "Describe it instead"
+ *   track('meal_describe_opened', { entry: 'empty_search' });
+ *   openDescribe({ text: query, slot, date, onDraft: (id, meal) => openDraft(id, meal), onSearch: setQuery });
+ *
+ * The opener tracks `meal_describe_opened` (its entry); the sheet tracks the
+ * rest. Words handed in are capped as the field caps them.
+ */
 export { default as DescribeHost } from './DescribeHost';
-
-export interface DescribePrefill {
-  /** Words already typed (the search field's text). */
-  readonly text?: string;
-  readonly slot?: MealSlot;
-  /** `YYYY-MM-DD`. */
-  readonly date?: string;
-  /** The estimate was saved as a draft: the meal page opens it. */
-  readonly onDraft: (mealId: string) => void;
-  /** "Search instead": back to the search with these words. */
-  readonly onSearch?: (text: string) => void;
-}
-
-/** Opens the describe sheet over whatever is showing. A no-op until MEAL-5 lands. */
-export function openDescribe(prefill: DescribePrefill): void {
-  void prefill;
-}
+export {
+  closeDescribe,
+  openDescribe,
+  type DescribePrefill,
+} from './presenter';
+export { DESCRIBE_PAST_DAYS, isDescribeAvailableOn, isDescribeOffered, useDescribeOffered } from './availability';
+export {
+  capDescribeText,
+  cleanDescribeText,
+  describeLength,
+  DESCRIBE_MAX_LENGTH,
+  DESCRIBE_MIN_LENGTH,
+  isDescribeSendable,
+  MealDescribeText,
+} from './describeText';
