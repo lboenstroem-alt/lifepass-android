@@ -1,10 +1,11 @@
 /**
  * Plan and pass checkout through Kling's hosted page: the Android port of iOS
  * `PaymentService` (Services/PaymentService.swift), split out of the legacy
- * src/supabase/services/payments.ts by F8. PLANS-2 takes this file over
- * (plan F8, PLANS-2) and builds the checkout screen on it; the return from
- * the page, and its recovery after Android closed the app behind it, are in
- * src/payments.
+ * src/supabase/services/payments.ts by F8 and owned by PLANS-2, whose payment
+ * sheet creates the checkout through it (src/features/plans/checkout). The
+ * return from the page, and its recovery after Android closed the app behind
+ * it, are in src/payments, which confirm through the pull and the status poll
+ * below.
  *
  * The hosted page owns the price: the app never computes or shows an ISK
  * figure at checkout. A partner discount code (already normalised by the

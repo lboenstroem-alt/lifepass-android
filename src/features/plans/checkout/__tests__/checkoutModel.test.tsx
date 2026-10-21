@@ -601,6 +601,33 @@ describe('the return on Android', () => {
     expect(vm.state.welcome).not.toBeNull();
   });
 
+  it('an earlier checkout of the same plan still unverified is verified first, and no second page opens', async () => {
+    let session = 0;
+    api.on('POST', '/payments/checkout-sessions', () => {
+      session += 1;
+      return Reply.ok({ checkoutUrl: `https://pay.kling.is/c/cs_${session}`, externalSessionId: `cs_${session}` }, 201);
+    });
+    // The first return: the status check meets a gateway page, so nothing is known (the attempt is kept).
+    api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'processing' }));
+    api.on('GET', '/payments/status', Reply.raw(504, '<html>504</html>'));
+    returnFromPage('lifepass://payment-success');
+    const first = model();
+    await first.purchasePlan(plus);
+    await first.openCheckout();
+    expect(first.state.error?.message).toBe(en('error.server'));
+    expect(openPage).toHaveBeenCalledTimes(1);
+
+    // The member tries again: the earlier payment, under its own session, is checked instead.
+    api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'fulfilled' }));
+    const again = model();
+    await again.purchasePlan(plus);
+    await again.openCheckout();
+    expect(openPage).toHaveBeenCalledTimes(1);
+    expect(api.sent('/payments/checkout-sessions/confirm').body).toEqual({ externalSessionId: 'cs_1' });
+    expect(again.state.welcome).toEqual({ name: 'Plus', isPass: false });
+    expect(again.state.isVerifying).toBe(false);
+  });
+
   it('a page that never opened is the payment alert, and nothing is verified', async () => {
     answerCheckout(OPENED);
     openPage.mockRejectedValue(new Error('No browser on this phone'));
