@@ -1,6 +1,8 @@
 // `openClassSheet` itself (re-exported by ./index.ts, plan 3.0.3). Its own
 // module so the Coach lookup (../coachLookup.ts) can open the sheet without
 // loading the sheet's index, which re-exports the lookup.
+import type { RefObject } from 'react';
+
 import type { ClassOccurrence } from '../model/occurrence';
 import { presentClassSheet } from './requests';
 
@@ -27,6 +29,13 @@ export interface OpenClassSheetOptions {
    * here after a booking (iOS `.sheet(item:onDismiss:)`).
    */
   readonly onDismiss?: () => void;
+  /**
+   * The row or button that opened the sheet: TalkBack focus goes back to it
+   * once the sheet has gone and the member is where it was opened (iOS
+   * VoiceOver returns to the element that presented a sheet). Not after a
+   * page took the member elsewhere, nor when a newer sheet replaced it.
+   */
+  readonly returnFocusRef?: RefObject<unknown>;
 }
 
 /**
@@ -36,7 +45,8 @@ export interface OpenClassSheetOptions {
  * once, so nothing waits on it.
  */
 export function openClassSheet(occurrence: ClassSheetOccurrence, options: OpenClassSheetOptions = {}): void {
-  if (!presentClassSheet(occurrence, { onBooked: options.onBooked, onDismiss: options.onDismiss })) {
+  const { onBooked, onDismiss, returnFocusRef } = options;
+  if (!presentClassSheet(occurrence, { onBooked, onDismiss, returnFocusRef })) {
     options.onDismiss?.();
   }
 }

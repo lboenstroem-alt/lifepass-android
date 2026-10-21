@@ -12,8 +12,12 @@
  *
  * FORGOTTEN AT SIGN-OUT, without calling anything: the host unmounts with
  * the tabs, and a request left here would show the previous member's class
- * to the next one.
+ * to the next one. A request worked out across a sign-out (the Coach's
+ * lookup reads the public class feed, which still answers) checks
+ * `classSheetSignOuts()` before it opens, for the same reason.
  */
+import type { RefObject } from 'react';
+
 import { createHostStore } from '../../../components/ui/hostStore';
 import { registerSignOutCleaner } from '../../../app/signOut';
 import type { ClassOccurrence } from '../model/occurrence';
@@ -22,6 +26,7 @@ import type { ClassOccurrence } from '../model/occurrence';
 export interface ClassSheetCallbacks {
   readonly onBooked?: () => void;
   readonly onDismiss?: () => void;
+  readonly returnFocusRef?: RefObject<unknown>;
 }
 
 export interface ClassSheetRequest {
@@ -42,6 +47,13 @@ interface RequestState {
 
 const requests = createHostStore<RequestState>({ request: null, busy: false });
 let nextId = 1;
+/** How many sign-outs this run has seen: an opener that awaited across one drops its sheet. */
+let signOuts = 0;
+
+/** The sign-outs so far: read before an awaited lookup, compared after it. */
+export function classSheetSignOuts(): number {
+  return signOuts;
+}
 
 /** Tells an opener its sheet has gone; a throwing callback never breaks the host. */
 function tellDismissed(request: ClassSheetRequest): void {
@@ -103,4 +115,7 @@ export function resetClassSheetRequestsForTests(): void {
   requests.set({ request: null, busy: false });
 }
 
-registerSignOutCleaner('classes.sheetRequest', () => requests.set({ request: null, busy: false }));
+registerSignOutCleaner('classes.sheetRequest', () => {
+  signOuts += 1;
+  requests.set({ request: null, busy: false });
+});

@@ -9,6 +9,11 @@
  * (the membership refusal with its plans step). The session is tomorrow
  * 10:00 to 11:00 Reykjavík, so it is always upcoming.
  *
+ * The venue is named by its slug only, so "See other times" has somewhere
+ * to go: the full flow when the phone has loaded the venues (its timetable
+ * then reads a made-up activity and finds nothing, as iOS's fixture flow
+ * does), else the venue's page. Neither is a write.
+ *
  * SAFETY, as on iOS: development builds only (`fixtureArg` is null in a
  * release bundle), reachable only through the variable, and it makes NO
  * request: the session is seeded with the state a re-check and a preview
@@ -63,7 +68,7 @@ export function classSheetFixtureOccurrence(variant: ClassSheetFixtureVariant, n
     id: CLASS_SHEET_FIXTURE_ID,
     activity: { id: '5f0c2a1e-7b3d-4c8e-9a6f-1d2e3f4a5b6c', name: 'Hress', provider: 'abler' },
     venueId: null,
-    venueSlug: null,
+    venueSlug: 'hress',
     handle: { kind: 'ablerClass', eventId: 4242 },
     startsAt,
     endsAt: new Date(startsAt.getTime() + 3_600_000),

@@ -37,6 +37,7 @@ export default function ClassSheetHost({ pages, sessionOptions }: ClassSheetHost
       key={id}
       occurrence={occurrence}
       onBooked={callbacks.onBooked}
+      returnFocusRef={callbacks.returnFocusRef}
       onFinished={(ending) => finishClassSheet(id, ending)}
       onBusyChange={(busy) => setClassSheetBusy(id, busy)}
       pages={pages}

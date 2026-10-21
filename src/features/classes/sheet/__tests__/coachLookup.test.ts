@@ -13,6 +13,7 @@ import { Reply } from '@test/server';
 
 import { decodeClassFeedItem, type ClassFeedItem, type ClassFeedPage, type ClassFeedPageQuery } from '../../../../api/classFeed';
 import { stubApiClientPerTest } from '../../../../api/testing';
+import { runSignOutCleaners } from '../../../../app/signOut';
 import {
   bookCoachClass,
   coachClassOccurrence,
@@ -239,6 +240,45 @@ describe('the lookup', () => {
     ).toBe('venue');
     expect(navigation.navigate).toHaveBeenCalledWith('VenueDetail', { slug: 'hress' });
     expect(openSheet).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['the session found', () => page([feedItem('Yoga Flow', ablerHandle(4242))])],
+    ['no session', () => page([])],
+  ])('a sign-out while it looks opens nothing for the next member (%s)', async (_label, answer) => {
+    const openSheet = jest.fn();
+    const navigation = { navigate: jest.fn() };
+    const onDismiss = jest.fn();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const looking = bookCoachClass(coachClass('Yoga Flow'), {
+      navigation: navigation as never,
+      openSheet,
+      onDismiss,
+      // The public feed still answers after the member has gone.
+      fetchPage: async () => {
+        await gate;
+        return answer();
+      },
+    });
+    await runSignOutCleaners({ memberId: 'member-a' });
+    release();
+    expect(await looking).toBe('none');
+    expect(openSheet).not.toHaveBeenCalled();
+    expect(navigation.navigate).not.toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes the opener to return TalkBack focus to', async () => {
+    const openSheet = jest.fn();
+    const returnFocusRef = { current: null };
+    await bookCoachClass(coachClass('Yoga Flow'), {
+      navigation: { navigate: jest.fn() } as never,
+      openSheet,
+      returnFocusRef,
+      fetchPage: async () => page([feedItem('Yoga Flow', ablerHandle(4242))]),
+    });
+    expect(openSheet.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ returnFocusRef }));
   });
 });
 

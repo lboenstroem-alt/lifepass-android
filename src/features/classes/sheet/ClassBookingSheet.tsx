@@ -38,8 +38,8 @@
  * and re-check when they close.
  */
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, ActivityIndicator, AppState, Pressable, StyleSheet, View, type Text } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { AccessibilityInfo, ActivityIndicator, AppState, findNodeHandle, Pressable, StyleSheet, View, type Text } from 'react-native';
 
 import type { RefusalCta } from '../../../api/refusals';
 import { announce, LPText, PrimaryButton, Sheet } from '../../../components/ui';
@@ -102,6 +102,8 @@ export interface ClassBookingSheetProps {
   readonly pages?: ClassSheetPages;
   /** The booking session's dependencies (tests). */
   readonly sessionOptions?: CreateBookingSessionOptions;
+  /** Where TalkBack focus goes back to once the sheet has ended where it was opened (the opener's row or button). */
+  readonly returnFocusRef?: RefObject<unknown>;
 }
 
 /**
@@ -113,6 +115,28 @@ type Phase = 'shown' | 'away' | 'otherTimes' | 'closing';
 /** The venue, for the payment record a card-less class leaves (null when a Coach plan did not say). */
 function venueOf(occurrence: ClassOccurrence): BookingVenue | null {
   return occurrence.venueId ? { id: occurrence.venueId, name: occurrence.venueName, slug: occurrence.venueSlug } : null;
+}
+
+/**
+ * TalkBack focus back on the opener once the sheet has gone (iOS VoiceOver
+ * returns to the element that presented a sheet). The UI kit's own
+ * `returnFocusRef` cannot do it here: the host unmounts the whole sheet in
+ * the same render the slide-out ends. A turn later, as the kit does, once
+ * the screens underneath are reachable to TalkBack again. A no-op without a
+ * screen reader, or when the opener has gone.
+ */
+function refocusOpener(ref: RefObject<unknown> | undefined): void {
+  if (!ref) return;
+  setTimeout(() => {
+    const target = ref.current;
+    if (!target) return;
+    try {
+      const tag = findNodeHandle(target as Parameters<typeof findNodeHandle>[0]);
+      if (typeof tag === 'number') AccessibilityInfo.setAccessibilityFocus(tag);
+    } catch {
+      // The opener has no native view any more: nothing to focus.
+    }
+  }, 0);
 }
 
 /** Says `text` when TalkBack is on (iOS posts an announcement only with VoiceOver running). */
@@ -132,6 +156,7 @@ export default function ClassBookingSheet({
   onBusyChange,
   pages = appPages,
   sessionOptions,
+  returnFocusRef,
 }: ClassBookingSheetProps) {
   const { t, language } = useT();
   const store = useNewBookingSession(sessionOptions);
@@ -210,9 +235,21 @@ export default function ClassBookingSheet({
     }
   }, [store, goTo, finish]);
 
+  /**
+   * The sheet has left the screen. Closing: it ends. Still 'shown': the
+   * member swiped it down or tapped the backdrop (the UI kit reports the
+   * slide-out before it asks `onClose`, and a step aside or the full flow
+   * set their own phase before hiding), so it ends too, as iOS
+   * `.sheet(item:onDismiss:)` does on every interactive dismissal. The
+   * `onClose` that follows then finds it closing and does nothing.
+   */
   const handleClosed = useCallback(() => {
-    if (phaseRef.current === 'closing') finish('closed');
-  }, [finish]);
+    const was = phaseRef.current;
+    if (was !== 'closing' && was !== 'shown') return;
+    goTo('closing');
+    finish('closed');
+    refocusOpener(returnFocusRef);
+  }, [goTo, finish, returnFocusRef]);
 
   // --- Pages ------------------------------------------------------------------
 
@@ -250,9 +287,11 @@ export default function ClassBookingSheet({
     if (!target) return;
     goTo('otherTimes');
     stopWatch.current?.();
-    stopWatch.current = pages.watchForReturn(() => {
+    stopWatch.current = pages.watchForReturn((how) => {
       stopWatch.current = null;
       finish('otherTimes');
+      // Back on the list it was opened from (not when the member went elsewhere).
+      if (how === 'back') refocusOpener(returnFocusRef);
     });
     if (!pages.openSharedRoute(target.route, target.params)) {
       // Nothing opened (the app is not on screen): the sheet stays.
@@ -263,7 +302,7 @@ export default function ClassBookingSheet({
     }
     // Opened, but nothing can tell when the member is back: end it now.
     if (!stopWatch.current) finish('otherTimes');
-  }, [store, occurrence, pages, goTo, finish]);
+  }, [store, occurrence, pages, goTo, finish, returnFocusRef]);
 
   /** A refusal's step: the sheet's own (another time, change guests, try again), then the app's. */
   const takeStep = useCallback(
@@ -307,7 +346,17 @@ export default function ClassBookingSheet({
     [pages, store, openOtherTimes, stepAside, comeBack],
   );
 
-  const offers = useCallback((cta: RefusalCta) => bookingScreenTakes(cta) || presentsRefusalStep(cta, null), []);
+  // The full flow needs the venue (its id, or its page by slug). Every feed
+  // row and Coach step names one; a session that names none never offers a
+  // way there that would do nothing.
+  const canOpenOtherTimes = otherTimesTarget(occurrence) !== null;
+  const offers = useCallback(
+    (cta: RefusalCta) => {
+      if (cta === 'chooseAnotherTime' || cta === 'editGuests') return canOpenOtherTimes;
+      return bookingScreenTakes(cta) || presentsRefusalStep(cta, null);
+    },
+    [canOpenOtherTimes],
+  );
 
   // --- What the sheet shows ---------------------------------------------------
 
@@ -423,7 +472,7 @@ export default function ClassBookingSheet({
 
           {status === 'ready' ? <BookingChargeSection store={store} offers={offers} onStep={takeStep} /> : null}
 
-          {showsOtherTimes(status, gateRefusal) ? (
+          {canOpenOtherTimes && showsOtherTimes(status, gateRefusal) ? (
             <Pressable
               onPress={openOtherTimes}
               accessibilityRole="button"
@@ -560,8 +609,9 @@ function ConfirmBar({
         title={title}
         onPress={onConfirm}
         // Disabled while the session is checked, drawn as the readable grey
-        // button; while booking it stays blue with its spinner.
-        disabled={!enabled}
+        // button; while booking it stays blue with its spinner (`loading`
+        // alone refuses presses: disabled with it would dim the blue to 40%).
+        disabled={!enabled && !isBooking}
         loading={isBooking}
         tone="action"
         shape="booking"

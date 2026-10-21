@@ -16,6 +16,11 @@
  * - Nothing found: the venue's page opens instead, whose timetable books it,
  *   rather than guessing.
  *
+ * A sign-out while the lookup runs drops the answer: the feed is public and
+ * still answers, and the sheet would otherwise open on this member's plan
+ * class for whoever signs in next (iOS tears the Coach view, and its sheet,
+ * down at sign-out).
+ *
  * A Coach slot handle carries no end. The sheet's re-check supplies it, and
  * if that fails the session is "unresolved" with Try again: a slot is never
  * booked blind.
@@ -29,6 +34,7 @@ import { openSharedRoute, type SharedRouteNavigation } from '../../navigation/sh
 import { PROVIDER_ABLER, PROVIDER_INTERNAL, toOccurrence, type ClassOccurrence } from './model/occurrence';
 import { openClassSheet, type OpenClassSheetOptions } from './sheet/open';
 import { knownVenueIdForSlug } from './sheet/pages';
+import { classSheetSignOuts } from './sheet/requests';
 
 /**
  * The class feed's booking handle on a plan's class: `{ kind: "class",
@@ -174,12 +180,27 @@ export interface BookCoachClassOptions extends CoachClassLookupDeps, OpenClassSh
 
 /**
  * A class step's Book: the class sheet on its session, or, when the feed has
- * no such class, the venue's page (its timetable books it). Says which.
+ * no such class, the venue's page (its timetable books it). Says which;
+ * `none` when the member signed out while it looked (nothing opens, and the
+ * opener hears `onDismiss` as for any sheet that never came).
  */
-export async function bookCoachClass(session: CoachPlanClass, options: BookCoachClassOptions): Promise<'sheet' | 'venue'> {
+export async function bookCoachClass(
+  session: CoachPlanClass,
+  options: BookCoachClassOptions,
+): Promise<'sheet' | 'venue' | 'none'> {
+  const signOutsBefore = classSheetSignOuts();
   const occurrence = await resolveCoachClassOccurrence(session, options);
+  if (classSheetSignOuts() !== signOutsBefore) {
+    try {
+      options.onDismiss?.();
+    } catch {
+      // The opener's own failure; nothing opened either way.
+    }
+    return 'none';
+  }
   if (occurrence) {
-    (options.openSheet ?? openClassSheet)(occurrence, { onBooked: options.onBooked, onDismiss: options.onDismiss });
+    const { onBooked, onDismiss, returnFocusRef } = options;
+    (options.openSheet ?? openClassSheet)(occurrence, { onBooked, onDismiss, returnFocusRef });
     return 'sheet';
   }
   openSharedRoute(options.navigation, 'VenueDetail', { slug: session.venueSlug });

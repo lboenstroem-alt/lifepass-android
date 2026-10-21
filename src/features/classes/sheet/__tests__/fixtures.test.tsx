@@ -14,7 +14,7 @@ import { lookup, setCurrentLanguage } from '../../../../i18n';
 import ClassSheetHost from '../ClassSheetHost';
 import { resetClassSheetFixtureForTests } from '../fixtures';
 import { resetClassSheetRequestsForTests } from '../requests';
-import { flush } from './sheetHarness';
+import { fakePages, flush, type FakePages } from './sheetHarness';
 
 jest.mock('@gorhom/bottom-sheet', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -42,8 +42,8 @@ beforeEach(() => {
 });
 afterEach(() => restoreTestFontScale());
 
-async function renderHost(): Promise<void> {
-  await render(<ClassSheetHost />);
+async function renderHost(pages?: FakePages): Promise<void> {
+  await render(<ClassSheetHost pages={pages} />);
   await flush();
 }
 
@@ -71,12 +71,29 @@ it('surcharge: the amount above Confirm', async () => {
   expect(api.requests).toHaveLength(0);
 });
 
-it('full: the class is full, no Confirm, See other times', async () => {
+it('full: the class is full, no Confirm, and See other times opens the venue', async () => {
   mockFixture = 'full';
-  await renderHost();
+  const pages = fakePages();
+  await renderHost(pages);
   expect(screen.getByText(en('booking.class.err_full'))).toBeOnTheScreen();
   expect(screen.queryByTestId('classsheet.confirm')).toBeNull();
-  expect(screen.getByTestId('classsheet.other_times')).toBeOnTheScreen();
+  await fireEvent.press(screen.getByTestId('classsheet.other_times'));
+  // The venues not loaded: its page, by slug.
+  expect(pages.opened).toEqual([{ name: 'VenueDetail', params: { slug: 'hress' } }]);
+  expect(api.requests).toHaveLength(0);
+});
+
+it('full, with the venues loaded: See other times opens the full flow on its day', async () => {
+  mockFixture = 'full';
+  const pages = fakePages({ hress: 'venue-hress' });
+  await renderHost(pages);
+  await fireEvent.press(screen.getByTestId('classsheet.other_times'));
+  expect(pages.opened).toEqual([
+    {
+      name: 'BookingFlow',
+      params: expect.objectContaining({ venueId: 'venue-hress', activity: expect.objectContaining({ name: 'Hress' }) }),
+    },
+  ]);
   expect(api.requests).toHaveLength(0);
 });
 

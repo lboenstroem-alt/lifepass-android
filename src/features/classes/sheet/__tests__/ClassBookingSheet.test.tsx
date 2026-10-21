@@ -17,7 +17,8 @@
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import * as WebBrowser from 'expo-web-browser';
-import { AccessibilityInfo, AppState, DeviceEventEmitter } from 'react-native';
+import * as ReactNative from 'react-native';
+import { AccessibilityInfo, AppState, DeviceEventEmitter, StyleSheet } from 'react-native';
 import { Reply, type StubReply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../../api/testing';
@@ -92,7 +93,7 @@ interface Opened {
 /** The host on screen, then the sheet asked for, as a feed row asks. */
 async function openSheet(
   occurrence = ablerOccurrence(),
-  options: { pages?: FakePages; now?: () => Date } = {},
+  options: { pages?: FakePages; now?: () => Date; returnFocusRef?: { current: unknown } } = {},
 ): Promise<Opened> {
   const pages = options.pages ?? fakePages();
   const session = sheetSessionOptions();
@@ -101,9 +102,28 @@ async function openSheet(
   const onDismiss = jest.fn();
   await render(<ClassSheetHost pages={pages} sessionOptions={sessionOptions} />);
   await act(async () => {
-    openClassSheet(occurrence, { onBooked, onDismiss });
+    openClassSheet(occurrence, { onBooked, onDismiss, returnFocusRef: options.returnFocusRef });
   });
   return { pages, onBooked, onDismiss, reminders: session.reminders };
+}
+
+const setFocus = jest.mocked(AccessibilityInfo.setAccessibilityFocus);
+
+/** The opener's row, with a native tag (the test renderer has no native views). */
+function openerRow(tag: number): { current: unknown } {
+  const row = { current: { row: tag } };
+  // The module itself (an `import * as` namespace is a copy of it).
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const reactNative: typeof ReactNative = require('react-native');
+  jest
+    .spyOn(reactNative, 'findNodeHandle')
+    .mockImplementation(((instance: unknown) => (instance != null && instance === row.current ? tag : null)) as typeof ReactNative.findNodeHandle);
+  return row;
+}
+
+/** The member swipes the sheet down or taps the backdrop: the library reports the dismissal. */
+async function swipeDown(): Promise<void> {
+  await act(async () => bottomSheetMock.latest()?.onDismiss?.());
 }
 
 /** A class the server lists, priced by `preview`, and booked by `create`. */
@@ -192,6 +212,44 @@ it('the close button, a swipe and back close an idle sheet; the opener hears onD
   expect(onDismiss).toHaveBeenCalledTimes(1);
 });
 
+it('a swipe down or a backdrop tap ends an idle sheet: onDismiss once, no onBooked, and TalkBack is back on the row', async () => {
+  classServer(Reply.ok(FREE_PREVIEW));
+  setFocus.mockClear();
+  const row = openerRow(7);
+  const { onBooked, onDismiss } = await openSheet(ablerOccurrence(), { returnFocusRef: row });
+  await screen.findByTestId('classsheet.confirm');
+
+  await swipeDown();
+  await waitFor(() => expect(screen.queryByTestId('classsheet.header')).toBeNull());
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+  expect(onBooked).not.toHaveBeenCalled();
+  // Nothing is left behind: no request, no hidden sheet still ticking.
+  expect(currentClassSheetRequest()).toBeNull();
+  expect(screen.queryByTestId('classsheet')).toBeNull();
+  await waitFor(() => expect(setFocus).toHaveBeenCalledWith(7));
+});
+
+it('the close button also gives TalkBack focus back to the row', async () => {
+  classServer(Reply.ok(FREE_PREVIEW));
+  setFocus.mockClear();
+  const row = openerRow(9);
+  const { onDismiss } = await openSheet(ablerOccurrence(), { returnFocusRef: row });
+  await fireEvent.press(await screen.findByTestId('classsheet.close'));
+  await waitFor(() => expect(onDismiss).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(setFocus).toHaveBeenCalledWith(9));
+});
+
+it('a session that names no venue offers no See other times, which would have nowhere to go', async () => {
+  respond((request) =>
+    request.path.endsWith('/classes')
+      ? classesReply([klass(4242, START, { canBook: false, reason: 'class_full', full: true })])
+      : Reply.problem(404, 'not_found'),
+  );
+  await openSheet({ ...ablerOccurrence({ snapshot: FULL_SNAPSHOT }), venueId: null, venueSlug: null });
+  expect(await screen.findByText(en('booking.class.err_full'))).toBeOnTheScreen();
+  expect(screen.queryByTestId('classsheet.other_times')).toBeNull();
+});
+
 it('a full class says so, is not previewed, hides Confirm, and See other times opens the full flow on its day', async () => {
   respond((request) =>
     request.path.endsWith('/classes')
@@ -256,15 +314,24 @@ it('a membership refusal offers plans; the sheet steps aside for Plans and check
   expect(requests('/classes')).toHaveLength(2);
   expect(requests('/booking-preview')).toHaveLength(2);
   expect(onDismiss).not.toHaveBeenCalled();
+
+  // Back on screen, a swipe ends it like any other.
+  await swipeDown();
+  await waitFor(() => expect(screen.queryByTestId('classsheet.header')).toBeNull());
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+  expect(currentClassSheetRequest()).toBeNull();
 });
 
-it('a page that took the member elsewhere for good ends the sheet', async () => {
+it('a page that took the member elsewhere for good ends the sheet, and leaves TalkBack where the member is', async () => {
   classServer(Reply.problem(403, 'no_active_plan_or_pass'));
-  const { pages, onDismiss } = await openSheet();
+  setFocus.mockClear();
+  const { pages, onDismiss } = await openSheet(ablerOccurrence(), { returnFocusRef: openerRow(5) });
   await fireEvent.press(await screen.findByRole('button', { name: en('booking.err.view_plans') }));
   await act(async () => pages.returnFrom('gone'));
   expect(onDismiss).toHaveBeenCalledTimes(1);
   expect(currentClassSheetRequest()).toBeNull();
+  await flush();
+  expect(setFocus).not.toHaveBeenCalledWith(5);
 });
 
 it('a page that could not open leaves the sheet where it was', async () => {
@@ -290,6 +357,10 @@ it('a booking in flight holds the sheet: no close, no swipe, no back, and no sec
 
   expect(screen.getByTestId('classsheet.close')).toBeDisabled();
   expect(bottomSheetMock.latest()?.enablePanDownToClose).toBe(false);
+  // Confirm keeps its solid blue under the spinner (iOS), refusing presses.
+  const confirm = screen.getByTestId('classsheet.confirm');
+  expect(confirm.props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+  expect(StyleSheet.flatten(confirm.props.style)?.opacity).not.toBe(0.4);
   await fireEvent.press(screen.getByTestId('classsheet.close'));
   await act(async () => {
     DeviceEventEmitter.emit('hardwareBackPress');
