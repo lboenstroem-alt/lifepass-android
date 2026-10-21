@@ -40,7 +40,13 @@ export interface HomeTodayRowProps {
   readonly onStart: (sessionId: string) => void;
 }
 
-/** iOS draws the row 68 pt tall; the title shrinks to 0.82 before it would ellipsize. */
+/**
+ * iOS draws the row 68 pt tall (here its minimum, so large text grows it
+ * rather than clipping), and the one-line title shrinks to 0.82 before it
+ * would ellipsize: "Full body strength, 40 min" beside Start is exactly the
+ * width of a small phone. Android honours the shrink; the floor is iOS-only
+ * in React Native, so it is passed for parity and ignored there.
+ */
 const ROW_HEIGHT = 68;
 const TITLE_MIN_SCALE = 0.82;
 
@@ -82,9 +88,9 @@ export default function HomeTodayRow({ upcomingBookingId, onOpenPlan, onStart }:
     >
       <View style={[styles.tile, isDone && styles.tileDone]} {...hiddenFromAccessibility} testID="home.todayRow.tile">
         {isDone ? (
-          <Ionicons name="checkmark" size={19} color={colors.rust} />
+          <Ionicons name="checkmark" size={17} color={colors.rust} />
         ) : (
-          <MaterialCommunityIcons name={sessionKindIcon(glyph)} size={19} color={colors.paper2} />
+          <MaterialCommunityIcons name={sessionKindIcon(glyph)} size={17} color={colors.paper2} />
         )}
       </View>
 
