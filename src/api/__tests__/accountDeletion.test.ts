@@ -2,7 +2,8 @@
  * The account-deletion operations (iOS `AccountDeletionService` and its
  * models in AccountDeletionSheet.swift), checked against the contract: what
  * the phone SENDS (no body, the caller's Idempotency-Key) and how it reads
- * the answers (every field optional, a wrong type refused, an unknown
+ * the answers (every field optional, a wrong type refused where the sheet
+ * draws from the field and read as null where nothing does, an unknown
  * obligation kind kept as a string).
  */
 import { api, Reply } from '@test/server';
@@ -69,12 +70,24 @@ describe('reading the state', () => {
     expect(state.obligations?.[0]?.kind).toBe('gift_card');
   });
 
-  it('a field present with the wrong type fails the read, as Swift Decodable does', async () => {
+  it('a field the sheet draws from fails the read when its type is wrong, as Swift Decodable does', async () => {
     expect(() => decodeAccountDeletionState({ ...pending, erasureScheduledAt: 'soon' })).toThrow();
     expect(() => decodeAccountDeletionState({ ...pending, obligations: [{ kind: 'subscription', count: 1.5 }] })).toThrow();
     expect(() => decodeAccountDeletionState('<html>')).toThrow();
     api.on('GET', '/account/deletion', Reply.ok({ ...pending, accountStatus: 7 }));
     await expect(fetchAccountDeletionState()).rejects.toBeInstanceOf(DecodingError);
+  });
+
+  it('a field the sheet never draws reads as null when its type is wrong, and the state still decodes', () => {
+    const state = decodeAccountDeletionState({
+      ...pending,
+      deletionRequestedAt: 'yesterday',
+      obligations: [{ kind: 'future_booking', count: 2, clearsAt: 1730000000 }],
+    });
+    expect(isDeletionPending(state)).toBe(true);
+    expect(state.deletionRequestedAt).toBeNull();
+    expect(state.erasureScheduledAt?.toISOString()).toBe('2026-11-10T00:00:00.000Z');
+    expect(state.obligations).toEqual([{ kind: 'future_booking', count: 2, clearsAt: null }]);
   });
 
   it('is active only when the server says deletion_pending', () => {
@@ -119,6 +132,41 @@ describe('requesting the deletion', () => {
       'erasureScheduledAt',
       'obligations',
     ]);
+  });
+
+  it('a malformed healthDeleted or alreadyPending still decodes to the pending answer', async () => {
+    // The server has deleted the account by the time it answers: a field
+    // nothing shows must never turn that into "Something went wrong" (and a
+    // retry with the same key replays the same body).
+    api.on(
+      'POST',
+      '/account/deletion',
+      Reply.ok({ ...pending, alreadyPending: 'no', healthDeleted: { bodyMeasurements: 24, mealLogs: '58', notes: 1.5 } }),
+    );
+    const result = await requestAccountDeletion('deletion-key-0003');
+    expect(isDeletionPending(stateOfRequestResult(result))).toBe(true);
+    expect(result.alreadyPending).toBeNull();
+    expect(result.healthDeleted).toEqual({ bodyMeasurements: 24 });
+
+    for (const healthDeleted of ['24 rows', [24], 7, true]) {
+      const decoded = decodeAccountDeletionRequestResult({ ...pending, healthDeleted });
+      expect(decoded.healthDeleted).toBeNull();
+      expect(isDeletionPending(stateOfRequestResult(decoded))).toBe(true);
+    }
+    const lateClear = decodeAccountDeletionRequestResult({
+      ...pending,
+      deletionRequestedAt: 17,
+      obligations: [{ kind: 'subscription', count: 1, clearsAt: 'when the period ends' }],
+    });
+    expect(lateClear.deletionRequestedAt).toBeNull();
+    expect(lateClear.obligations?.[0]?.clearsAt).toBeNull();
+    expect(lateClear.erasureScheduledAt?.toISOString()).toBe('2026-11-10T00:00:00.000Z');
+  });
+
+  it('the fields the sheet draws still fail the request answer when malformed, as on iOS', () => {
+    expect(() => decodeAccountDeletionRequestResult({ ...pending, erasureScheduledAt: 'soon' })).toThrow();
+    expect(() => decodeAccountDeletionRequestResult({ ...pending, accountStatus: 7 })).toThrow();
+    expect(() => decodeAccountDeletionRequestResult({ ...pending, obligations: [{ kind: 3, count: 1 }] })).toThrow();
   });
 
   it('POST /account/deletion/cancel sends no body and its own key', async () => {

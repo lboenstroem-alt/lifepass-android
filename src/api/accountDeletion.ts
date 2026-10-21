@@ -21,12 +21,22 @@
  * other account: nothing. The server reads no body as "erase once nothing is
  * left to settle", the behaviour the sheet's copy describes.
  *
- * DECODED AS iOS DECODES IT. Every member-facing field is optional, so an
- * older build never fails on a state it half understands; a field that is
- * present with the wrong type still fails the read, as Swift's synthesized
- * `Decodable` does. An obligation kind stays a string: a kind this build
- * does not know draws no line (../features/account/deletion/obligations.ts)
- * rather than failing the decode.
+ * DECODED AS iOS DECODES IT, WHERE IT MATTERS. Every field is optional, so
+ * an older build never fails on a state it half understands. The fields the
+ * sheet draws from (`accountStatus`, `erasureScheduledAt`, an obligation's
+ * `kind` and `count`) fail the read when present with the wrong type, as
+ * Swift's synthesized `Decodable` does. An obligation kind stays a string: a
+ * kind this build does not know draws no line
+ * (../features/account/deletion/obligations.ts) rather than failing the decode.
+ *
+ * LENIENT WHERE NOTHING SHOWS (an Android adaptation, DECISIONS.md). The
+ * fields the sheet never draws (`deletionRequestedAt`, an obligation's
+ * `clearsAt`, `alreadyPending`, `healthDeleted`) read as null when their type
+ * is wrong, and a non-integer `healthDeleted` count is dropped. iOS fails the
+ * whole answer on them, and for the request that is the worst place to fail:
+ * the server has already deleted the account, the member reads "Something
+ * went wrong", the phone's half never runs, and a retry with the same key
+ * replays the same body and fails the same way every time.
  */
 import { API_TIMEOUTS, apiGet, apiPost } from './client';
 import { parseIsoDate } from './wire';
@@ -123,12 +133,26 @@ function readDate(value: unknown, path: string): Date {
   return date;
 }
 
+/**
+ * For a field nothing on screen reads: absent, null or the wrong type is
+ * null, never a failed read (see the file comment).
+ */
+function lenient<T>(json: Json, key: string, read: (value: unknown, path: string) => T): T | null {
+  const value = json[key];
+  if (value === undefined || value === null) return null;
+  try {
+    return read(value, key);
+  } catch {
+    return null;
+  }
+}
+
 function readObligation(value: unknown, path: string): AccountDeletionObligation {
   const json = objectAt(value, path);
   return {
     kind: optional(json, 'kind', path, readString),
     count: optional(json, 'count', path, readInteger),
-    clearsAt: optional(json, 'clearsAt', path, readDate),
+    clearsAt: lenient(json, 'clearsAt', readDate),
   };
 }
 
@@ -137,17 +161,20 @@ function readObligations(value: unknown, path: string): AccountDeletionObligatio
   return value.map((item, index) => readObligation(item, `${path}[${index}]`));
 }
 
+/** `healthDeleted`: an object of whole numbers; an entry that is not one is dropped. */
 function readCounts(value: unknown, path: string): Record<string, number> {
   const json = objectAt(value, path);
   const out: Record<string, number> = {};
-  for (const [key, count] of Object.entries(json)) out[key] = readInteger(count, `${path}.${key}`);
+  for (const [key, count] of Object.entries(json)) {
+    if (typeof count === 'number' && Number.isInteger(count)) out[key] = count;
+  }
   return out;
 }
 
 function stateFrom(json: Json, path: string): AccountDeletionState {
   return {
     accountStatus: optional(json, 'accountStatus', path, readString),
-    deletionRequestedAt: optional(json, 'deletionRequestedAt', path, readDate),
+    deletionRequestedAt: lenient(json, 'deletionRequestedAt', readDate),
     erasureScheduledAt: optional(json, 'erasureScheduledAt', path, readDate),
     obligations: optional(json, 'obligations', path, readObligations),
   };
@@ -163,8 +190,8 @@ export function decodeAccountDeletionRequestResult(data: unknown): AccountDeleti
   const json = objectAt(data, 'deletion');
   return {
     ...stateFrom(json, 'deletion'),
-    alreadyPending: optional(json, 'alreadyPending', 'deletion', readBoolean),
-    healthDeleted: optional(json, 'healthDeleted', 'deletion', readCounts),
+    alreadyPending: lenient(json, 'alreadyPending', readBoolean),
+    healthDeleted: lenient(json, 'healthDeleted', readCounts),
   };
 }
 
