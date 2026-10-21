@@ -157,13 +157,17 @@ export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Dia
     void load(date, false);
   }, [date, load]);
 
-  // Every appearance: counted, and back from the meal page or an editor the day is read again.
+  // Every appearance (iOS `onAppear`): counted, and back from the meal page
+  // or an editor the day is read again. Not re-run by a new `load` (a
+  // language change), which is not an appearance.
+  const loadRef = useRef(load);
+  loadRef.current = load;
   useFocusEffect(
     useCallback(() => {
       const current = dateRef.current;
       track('diary_viewed', { relative: current === todayServerDay() ? 'today' : 'past' });
-      if (daysRef.current[current]) void load(current, true);
-    }, [load]),
+      if (daysRef.current[current]) void loadRef.current(current, true);
+    }, []),
   );
 
   const refresh = useCallback(async () => {

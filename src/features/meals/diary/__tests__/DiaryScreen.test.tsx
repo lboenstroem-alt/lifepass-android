@@ -152,11 +152,14 @@ function MealEditorStandIn({ route }: NativeStackScreenProps<Routes, 'MealEditor
   );
 }
 
-function MealCaptureStandIn({ route }: NativeStackScreenProps<Routes, 'MealCapture'>) {
+function MealCaptureStandIn({ route, navigation }: NativeStackScreenProps<Routes, 'MealCapture'>) {
   const { origin, mode, slot, date } = route.params;
   return (
     <View testID="route.MealCapture">
       <Text>{`capture ${origin} ${mode} ${slot} ${date}`}</Text>
+      <Text testID="capture.close" onPress={() => navigation.goBack()}>
+        close
+      </Text>
     </View>
   );
 }
@@ -291,6 +294,17 @@ it('Add food opens Search on the slot and the day (testTheDiaryOpensItsDraftAndA
   await renderDiary(YESTERDAY);
   await fireEvent.press(screen.getByTestId('diary.add.breakfast'));
   expect(await screen.findByText(`capture diary search breakfast ${YESTERDAY}`)).toBeOnTheScreen();
+});
+
+it('back from the meal page, the day is read again', async () => {
+  signIn();
+  const reads = serveDays({ [YESTERDAY]: fullDay(YESTERDAY) });
+  await renderDiary(YESTERDAY);
+  expect(reads).toEqual([YESTERDAY]);
+  await fireEvent.press(screen.getByTestId('diary.add.lunch'));
+  await fireEvent.press(await screen.findByTestId('capture.close'));
+  await settle();
+  expect(reads).toEqual([YESTERDAY, YESTERDAY]);
 });
 
 it('an empty day says so, and a target that is withheld says why', async () => {
