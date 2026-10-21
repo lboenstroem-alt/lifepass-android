@@ -61,12 +61,7 @@ function welcomeMessage(welcome: CheckoutWelcome): string {
   return t(welcome.isPass ? 'plans.success.pass' : 'plans.success.subscription', { name: welcome.name });
 }
 
-export interface UsePlanCheckoutOptions {
-  /** Tests only: a model of their own (the web-first fallback). */
-  readonly model?: PlanCheckoutModel;
-}
-
-export function usePlanCheckout(events: PlanCheckoutEvents, options: UsePlanCheckoutOptions = {}): PlanCheckout {
+export function usePlanCheckout(events: PlanCheckoutEvents): PlanCheckout {
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -75,7 +70,7 @@ export function usePlanCheckout(events: PlanCheckoutEvents, options: UsePlanChec
     };
   }, []);
 
-  const [model] = useState(() => options.model ?? new PlanCheckoutModel({ isScreenAlive: () => mounted.current }));
+  const [model] = useState(() => new PlanCheckoutModel({ isScreenAlive: () => mounted.current }));
   const state = useStore(model.store);
 
   const latestEvents = useRef(events);
