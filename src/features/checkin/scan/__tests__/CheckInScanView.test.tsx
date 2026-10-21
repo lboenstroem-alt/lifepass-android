@@ -546,10 +546,15 @@ describe('check-in links', () => {
   });
 
   it('is not taken by a scanner that left the screen before its turn came', async () => {
+    // Fake timers hold the hook's next-turn timer until the scanner has left.
+    // With real ones, React's setImmediate flushing inside render can lose
+    // the race to that 1 ms timer on a loaded machine, and the scanner takes
+    // the venue before the test navigates away (a flaky full-suite run).
+    jest.useFakeTimers();
     useIntentStore.getState().parkScanVenue(VENUE);
     await renderApp();
     await act(async () => navigationRef.current?.navigate('Home'));
-    await nextTurn();
+    await act(async () => jest.runOnlyPendingTimers());
     expect(flowDouble.getState().starts).toEqual([]);
     expect(useIntentStore.getState().pendingScanVenueId).toBe(VENUE);
   });
