@@ -1,271 +1,196 @@
-//Dropdown Menu just fo Coach Page
-
-import { useEffect, useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Animated,
-  ScrollView,
-  Pressable,
-  Modal,
-  Dimensions,
-} from 'react-native';
+/* eslint lifepass/no-literal-copy: "error" */
+// The Coach's drawer, behind the burger (iOS CoachView.swift
+// `CoachDrawerView`): 78% of the width, at most 300 dp, on #0E1E38.
+//
+//   the wordmark
+//   Add chat                a new chat (the one on screen is saved first)
+//   Saved                   the saved venues (Profile, Saved half)
+//   RECENTS                 the last three chats, or "No recent chats yet"
+//   New Chat                the same as Add chat, as a button at the foot
+//
+// A modal, so the back button and a tap on the shade close it, and TalkBack
+// stays inside it while it is open.
 import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Modal, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from './coachTheme';
-import Wordmark from '../../components/Wordmark';
-import type { RecentChat } from '../../data/mockCoach';
 
-const DRAWER_WIDTH = Math.min(Dimensions.get('window').width * 0.78, 300);
+import { LPText, Wordmark } from '../../components/ui';
+import type { RecentChat } from '../../features/coach/persistence/sessions';
+import { coachPalette } from '../../features/coach/theme/palette';
+import { useReduceMotion } from '../../hooks/useReduceMotion';
+import { useT } from '../../i18n';
 
 type Props = {
   visible: boolean;
   onClose: () => void;
   onNewChat: () => void;
-  /** Opens the saved-venues list (Bookings → Saved). */
+  /** The saved venues. */
   onSaved: () => void;
-  /** Restores a persisted conversation from RECENTS. */
+  /** A recent chat. */
   onSelectRecent: (chatId: string) => void;
-  recentChats: RecentChat[];
+  recentChats: readonly RecentChat[];
 };
 
-export default function ChatDrawer({
-  visible,
-  onClose,
-  onNewChat,
-  onSaved,
-  onSelectRecent,
-  recentChats,
-}: Props) {
+export default function ChatDrawer({ visible, onClose, onNewChat, onSaved, onSelectRecent, recentChats }: Props) {
+  const { t } = useT();
   const insets = useSafeAreaInsets();
-  const [mounted, setMounted] = useState(false);
-  const slideX = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
-  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const { width: screenWidth } = useWindowDimensions();
+  const reduceMotion = useReduceMotion();
+  const width = Math.min(screenWidth * 0.78, 300);
+  const [mounted, setMounted] = useState(visible);
+  const slide = useRef(new Animated.Value(visible ? 0 : -width)).current;
+  const shade = useRef(new Animated.Value(visible ? 1 : 0)).current;
 
   useEffect(() => {
-    if (visible) {
-      setMounted(true);
-      Animated.parallel([
-        Animated.spring(slideX, {
-          toValue: 0,
-          damping: 22,
-          stiffness: 180,
-          useNativeDriver: true,
-        }),
-        Animated.timing(backdropOpacity, {
-          toValue: 1,
-          duration: 240,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    } else {
-      Animated.parallel([
-        Animated.timing(slideX, {
-          toValue: -DRAWER_WIDTH,
-          duration: 220,
-          useNativeDriver: true,
-        }),
-        Animated.timing(backdropOpacity, {
-          toValue: 0,
-          duration: 220,
-          useNativeDriver: true,
-        }),
-      ]).start(() => setMounted(false));
-    }
-  }, [visible]);
+    if (visible) setMounted(true);
+    const duration = reduceMotion ? 0 : visible ? 260 : 200;
+    const animation = Animated.parallel([
+      Animated.timing(slide, { toValue: visible ? 0 : -width, duration, useNativeDriver: true }),
+      Animated.timing(shade, { toValue: visible ? 1 : 0, duration, useNativeDriver: true }),
+    ]);
+    animation.start(({ finished }) => {
+      if (finished && !visible) setMounted(false);
+    });
+    return () => animation.stop();
+  }, [visible, width, reduceMotion, slide, shade]);
 
   if (!mounted && !visible) return null;
 
+  const newChat = () => {
+    onNewChat();
+    onClose();
+  };
+
   return (
-    <Modal
-      visible={mounted}
-      transparent
-      animationType="none"
-      onRequestClose={onClose}
-      statusBarTranslucent
-    >
-      {/* Backdrop */}
-      <Animated.View
-        style={[StyleSheet.absoluteFill, styles.backdrop, { opacity: backdropOpacity }]}
-      >
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+    <Modal visible transparent animationType="none" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
+      <Animated.View style={[StyleSheet.absoluteFill, styles.shade, { opacity: shade }]}>
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.close')}
+        />
       </Animated.View>
 
-      {/* Drawer panel */}
       <Animated.View
         style={[
           styles.drawer,
-          {
-            width: DRAWER_WIDTH,
-            paddingTop: insets.top + 24,
-            paddingBottom: insets.bottom + 20,
-            transform: [{ translateX: slideX }],
-          },
+          { width, paddingTop: insets.top + 24, paddingBottom: insets.bottom + 20, transform: [{ translateX: slide }] },
         ]}
+        testID="coach.drawer"
       >
-        {/* LifePass logo */}
-        <View style={styles.logoRow}>
-          <Wordmark height={20} color={colors.paper} />
+        <View style={styles.logo}>
+          <Wordmark height={26} color="#FFFFFF" />
         </View>
 
-        {/* Primary nav */}
-        <View style={styles.navSection}>
-          <TouchableOpacity
-            style={styles.navItem}
-            activeOpacity={0.7}
-            onPress={() => {
-              onNewChat();
-              onClose();
-            }}
-          >
-            <Ionicons name="add" size={18} color={colors.paper} />
-            <Text style={styles.navText}>Add chat</Text>
-          </TouchableOpacity>
-
-          {/* (No "Chats" item — it was a no-op; RECENTS below covers it. Same as iOS.) */}
-          <TouchableOpacity
-            style={styles.navItem}
-            activeOpacity={0.7}
-            onPress={() => {
-              onClose();
-              onSaved();
-            }}
-          >
-            <Ionicons name="heart-outline" size={16} color={colors.paper} />
-            <Text style={styles.navText}>Saved</Text>
-          </TouchableOpacity>
+        <View style={styles.nav}>
+          <NavItem icon="add" label={t('coach.drawer.add_chat')} onPress={newChat} testID="coach.drawer.add_chat" />
+          <NavItem icon="heart-outline" label={t('coach.drawer.saved')} onPress={onSaved} testID="coach.drawer.saved" />
         </View>
 
-        {/* Recents */}
-        <Text style={styles.sectionLabel}>Recents</Text>
-        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+        <LPText size={13} weight="semibold" color={coachPalette.textMeta} tracking={0.5} style={styles.recentsHeading} accessibilityRole="header">
+          {t('coach.drawer.recents')}
+        </LPText>
+
+        <ScrollView style={styles.recents} showsVerticalScrollIndicator={false}>
           {recentChats.length === 0 ? (
-            <Text style={styles.noRecents}>No recent chats yet.</Text>
+            <LPText size={14} color={coachPalette.textMeta} style={styles.noRecents}>
+              {t('coach.drawer.no_recents')}
+            </LPText>
           ) : (
             recentChats.map((chat) => (
-              <TouchableOpacity
+              <Pressable
                 key={chat.id}
-                style={styles.recentItem}
-                activeOpacity={0.6}
-                onPress={() => {
-                  onSelectRecent(chat.id);
-                  onClose();
-                }}
+                onPress={() => onSelectRecent(chat.id)}
+                style={({ pressed }) => [styles.recent, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel={chat.title}
+                testID={`coach.drawer.recent.${chat.id}`}
               >
-                <Text style={styles.recentText} numberOfLines={1}>
+                <LPText size={15} color={coachPalette.textSecondary} numberOfLines={1}>
                   {chat.title}
-                </Text>
-              </TouchableOpacity>
+                </LPText>
+              </Pressable>
             ))
           )}
         </ScrollView>
 
-        {/* New chat button at bottom */}
-        <TouchableOpacity
-          style={styles.newChatButton}
-          activeOpacity={0.8}
-          onPress={() => {
-            onNewChat();
-            onClose();
-          }}
+        <Pressable
+          onPress={newChat}
+          style={({ pressed }) => [styles.newChat, pressed && styles.pressed]}
+          accessibilityRole="button"
+          accessibilityLabel={t('coach.drawer.new_chat')}
+          testID="coach.drawer.new_chat"
         >
-          <Ionicons name="add-circle-outline" size={18} color={colors.paper} />
-          <Text style={styles.newChatText}>New Chat</Text>
-        </TouchableOpacity>
+          <Ionicons name="add-circle-outline" size={18} color={coachPalette.textPrimary} />
+          <LPText size={15} weight="semibold" color={coachPalette.textPrimary}>
+            {t('coach.drawer.new_chat')}
+          </LPText>
+        </Pressable>
       </Animated.View>
     </Modal>
   );
 }
 
+function NavItem({
+  icon,
+  label,
+  onPress,
+  testID,
+}: {
+  icon: 'add' | 'heart-outline';
+  label: string;
+  onPress: () => void;
+  testID: string;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.navItem, pressed && styles.pressed]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      testID={testID}
+    >
+      <View style={styles.navIcon}>
+        <Ionicons name={icon} size={18} color={coachPalette.textPrimary} />
+      </View>
+      <LPText size={16} color={coachPalette.textPrimary}>
+        {label}
+      </LPText>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  backdrop: {
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
+  shade: { backgroundColor: coachPalette.drawerScrim },
   drawer: {
     position: 'absolute',
     top: 0,
     bottom: 0,
     left: 0,
-    backgroundColor: '#0E1E38',
     paddingHorizontal: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 6, height: 0 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    elevation: 20,
+    backgroundColor: coachPalette.drawer,
   },
-  logoRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    marginBottom: 36,
-  },
-  logoLife: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: colors.paper,
-    letterSpacing: -0.5,
-  },
-  logoPass: {
-    fontSize: 26,
-    fontWeight: '300',
-    fontStyle: 'italic',
-    color: colors.paper,
-    letterSpacing: -0.5,
-  },
-  navSection: {
-    gap: 2,
-    marginBottom: 32,
-  },
-  navItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingVertical: 11,
-  },
-  navText: {
-    fontSize: 16,
-    fontWeight: '400',
-    color: colors.paper,
-    letterSpacing: 0.1,
-  },
-  sectionLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.paper3,
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  recentItem: {
-    paddingVertical: 10,
-  },
-  noRecents: {
-    fontSize: 14,
-    color: colors.paper3,
-    paddingVertical: 8,
-  },
-  recentText: {
-    fontSize: 15,
-    fontWeight: '400',
-    color: colors.paper2,
-    lineHeight: 20,
-  },
-  newChatButton: {
+  logo: { marginBottom: 36, alignItems: 'flex-start' },
+  nav: { marginBottom: 28, gap: 2 },
+  navItem: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 11, minHeight: 48 },
+  navIcon: { width: 20, alignItems: 'center' },
+  recentsHeading: { marginBottom: 6 },
+  recents: { flex: 1 },
+  noRecents: { paddingVertical: 8 },
+  recent: { paddingVertical: 10, minHeight: 44, justifyContent: 'center' },
+  newChat: {
+    marginTop: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 14,
     paddingVertical: 14,
-    marginTop: 16,
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 14,
+    backgroundColor: coachPalette.tile,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: coachPalette.glassStroke,
   },
-  newChatText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.paper,
-  },
+  pressed: { opacity: 0.7 },
 });

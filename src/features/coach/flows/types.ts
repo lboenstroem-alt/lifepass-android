@@ -1,13 +1,17 @@
-// @f4-stub (plan 3.0.3): how a Coach flow plugs into COACH-1's send pipeline; COACH-1 owns this file.
+// How a Coach flow plugs into COACH-1's store (plan 3.0.3); COACH-1 owns this file.
 //
 // iOS `CoachViewModel.send(_:detectPlanRequest:detectScheduleQuestion:)` runs
 // ONE ordered pipeline for every typed message. Each step is either a flow
-// with a question OPEN taking the words, or a flow STARTING from them, and
-// the two kinds interleave (`SEND_PIPELINE`):
+// already under way taking the words (in progress for the programme wizard
+// and Adjust my plan, a question OPEN for the other two), or a flow STARTING
+// from them, and the two kinds interleave (`SEND_PIPELINE`):
 //
-//   1. program.open      the programme wizard has a question open: it reads
-//                        nothing typed, says so once and repeats its question;
-//   2. adjust.open       Adjust my plan has a question open: the same (tap to choose);
+//   1. program.open      the programme wizard is IN PROGRESS (`isActive`, iOS
+//                        `programFlow != nil`), question open or not: it reads
+//                        nothing typed (ruling 2), says so once and repeats
+//                        its question. The words stop here, always: they never
+//                        go on to another flow or to the model;
+//   2. adjust.open       Adjust my plan is in progress: the same (tap to choose);
 //   3. program.start     a typed request for WEEKS ("a 4 week plan") OFFERS
 //                        the programme wizard. Only with `detectPlanRequest`.
 //                        It comes BEFORE the venue and day-plan wizards' open
@@ -41,9 +45,28 @@
 //
 // A flow is a module that exports a `CoachFlow`. COACH-1's store runs the
 // pipeline (`runSendPipeline`); COACH-2 to COACH-5 fill the four flows. The
-// message renderers are the flow's own bubbles (question chips, plan cards,
-// proposal cards), keyed by the message kind the flow appends.
+// message renderers are the flow's own bubbles (plan cards, proposal cards,
+// multi-selects), keyed by the message kind the flow appends.
+//
+// WHAT A FLOW WORKS WITH. Everything a flow does to the chat goes through the
+// store's host (`coachHost()` in ../store/host.ts): append and update
+// messages (a QUESTION bubble is a message with `options`, drawn by COACH-1's
+// question bubble and answered back through `selectOption` below), the
+// typing dots and the chat generation (`host.busy()`), the AI locks, the
+// model history, and the one-shot routes (Plans, Account, the Plan tab). A
+// flow keeps its own state (what it has asked, the answers) and resets it in
+// `abandon` and `reset`.
+//
+// HOW A FLOW IS ENTERED. Typed words reach it through the pipeline above. A
+// tap reaches it through `enter` (a category tile, an empty-state chip, a
+// parked entry from another tab) and `selectOption` (a chip on a question
+// bubble the flow asked: the message carries `flow`, so the tap goes back to
+// the flow that asked it, iOS `selectOption`'s routing). The store checks
+// `!isTyping` and abandons every open question before `enter`, as each iOS
+// entry point does first.
 import type { ComponentType } from 'react';
+
+import type { CoachProgramEntry } from '../../../stores/intentStore';
 
 export type CoachFlowId = 'venueWizard' | 'dayPlan' | 'program' | 'adjust';
 
@@ -67,6 +90,15 @@ export const SEND_PIPELINE: readonly CoachSendStep[] = [
   'dayPlan.start',
   'venueWizard.start',
 ];
+
+/**
+ * The steps gated on the flow being IN PROGRESS rather than on an open
+ * question (iOS `if programFlow != nil { ...; return }`). Such a flow always
+ * swallows the words: a summary, a body or days sheet, or a confirmation
+ * pending is still the wizard, and "my knee hurts" typed then must never go
+ * on to the day plan, the venue wizard or the model.
+ */
+export const ACTIVE_FLOW_STEPS: readonly CoachSendStep[] = ['program.open', 'adjust.open'];
 
 /** The steps that run only when the words may start a wizard (`detectPlanRequest`). */
 export const PLAN_REQUEST_STEPS: readonly CoachSendStep[] = ['program.start', 'dayPlan.start'];
@@ -95,24 +127,74 @@ export interface CoachStartContext {
   abandonOpenQuestions(): void;
 }
 
-/** A message a flow added to the chat, as COACH-1's store keeps it. */
+/**
+ * A flow's own bubble, as COACH-1's store keeps it (a `CoachMessage` with a
+ * `kind`; see ../store/messages.ts for the whole message).
+ */
 export interface CoachFlowMessage {
   readonly id: string;
   /** Which renderer draws it. */
   readonly kind: string;
   /** The flow's own data for the bubble. */
   readonly payload?: unknown;
+  /** The text the bubble keeps when the chat is saved (a plan's intro), or its caption. */
+  readonly text: string;
+  /** The health lane: never saved, never sent to the model, wiped with the health data. */
+  readonly isHealth?: boolean;
 }
 
 export interface CoachMessageRendererProps {
   readonly message: CoachFlowMessage;
+  /** A reply or a build is in flight (iOS `isBusy: vm.isTyping`): chips that would call out wait. */
+  readonly busy: boolean;
 }
+
+/**
+ * The venue wizard's categories (iOS `venueQuestions` keys): what a category
+ * tile, the strip and the lagoon chip start (`CoachViewModel.wizardCategory`).
+ */
+export type CoachWizardCategory = 'swimming' | 'gym' | 'spa' | 'yoga' | 'golf' | 'lagoon';
+
+/**
+ * A tap that starts a flow (never typed words: those go through the pipeline).
+ *
+ * - `category`: a category tile, the strip after a search, or the lagoon
+ *   chip. The venue wizard, under `userText` (the tile's own label, so an
+ *   Icelandic member sees an Icelandic bubble). iOS `startSearch`.
+ * - `chip`: the empty state's full-width chips: "Plan my day" (the day-plan
+ *   wizard), "Get a 4-week plan" (the programme wizard), "Adjust my plan"
+ *   (Adjust my plan). `userText` is the chip's label for the member's bubble.
+ *   iOS `startPlan(labelKey:)`, `startProgram(entry: .chip)`, `startAdjust()`.
+ * - `parked`: an entry another tab parked (Plan's intro card, Home, the end
+ *   of a block, a feedback line's Adjust). The programme flow takes
+ *   `planTab`, `home` and `nextBlock`; Adjust my plan takes `adjust`. iOS
+ *   `startProgram(parked:)`, after the store has waited out a reply in flight.
+ */
+export type CoachFlowEntry =
+  | { readonly kind: 'category'; readonly category: CoachWizardCategory; readonly userText: string }
+  | { readonly kind: 'chip'; readonly userText: string }
+  | { readonly kind: 'parked'; readonly entry: CoachProgramEntry };
 
 export interface CoachFlow {
   readonly id: CoachFlowId;
-  /** True while this flow has a question open. */
+  /**
+   * True while this flow is in progress at all (iOS `programFlow != nil`,
+   * `adjustFlow != nil`), whether or not a question bubble is open: a summary
+   * waiting for Build it, a body or days sheet up, a confirmation pending.
+   * False again after `abandon` and `reset`. The programme wizard and Adjust
+   * my plan are gated on THIS (`ACTIVE_FLOW_STEPS`); the venue wizard and the
+   * day plan on `hasOpenQuestion`.
+   */
+  isActive(): boolean;
+  /** True while this flow has a question bubble open. */
   hasOpenQuestion(): boolean;
-  /** An `.open` step: the words while a question is open. True when the flow took them. */
+  /**
+   * An `.open` step: the words while this flow is in progress (programme,
+   * Adjust) or has a question open (venue wizard, day plan). True when the
+   * flow took them. For the programme wizard and Adjust my plan the answer is
+   * ignored: the words are theirs whatever they return (they show the typed
+   * hint and repeat the open question; they never keep the words).
+   */
   takeTyped(text: string): boolean | Promise<boolean>;
   /** A `.start` step: start from the words. True when it started (or offered). */
   startFrom(text: string, options: CoachSendOptions, context: CoachStartContext): boolean | Promise<boolean>;
@@ -122,6 +204,31 @@ export interface CoachFlow {
   reset(): void;
   /** The flow's bubbles, by message kind. */
   readonly renderers: Readonly<Record<string, ComponentType<CoachMessageRendererProps>>>;
+  /**
+   * A tap that starts this flow (see `CoachFlowEntry`). The store has checked
+   * that no reply is in flight and abandoned every open question first.
+   * Absent: the flow has no button entry (or has not landed yet), and the tap
+   * does nothing.
+   */
+  enter?(entry: CoachFlowEntry): void | Promise<void>;
+  /**
+   * A chip on a question bubble this flow asked (`message.flow === id`):
+   * `value` is the option's wire value, `label` what the member saw (or the
+   * text typed into an "Other" field, for both). The flow checks that the
+   * bubble is still its open question (iOS: "only the CURRENT flow's open
+   * question may answer").
+   */
+  selectOption?(messageId: string, value: string, label: string): void | Promise<void>;
+  /**
+   * The health data on this phone was wiped (tracking switched off, here or
+   * elsewhere; iOS `.healthLocalDataWiped`). A flow that holds health answers
+   * (the programme wizard, Adjust my plan) ends here. The flows are told
+   * FIRST: the store removes every `isHealth` turn from the chat right after
+   * this returns (iOS `dropHealthMessages`: `programFlow = nil`,
+   * `endAdjustFlow()`, then `messages.removeAll { $0.isHealth }`), so
+   * `host.messages()` read here still holds them.
+   */
+  healthWiped?(): void;
 }
 
 /**
@@ -138,6 +245,14 @@ export async function runSendPipeline(
   for (const step of SEND_PIPELINE) {
     const { flow, phase } = sendStepParts(step);
     const target = flows[flow];
+    if (ACTIVE_FLOW_STEPS.includes(step)) {
+      // In progress: the words end here whatever the flow answers.
+      if (target.isActive()) {
+        await target.takeTyped(text);
+        return step;
+      }
+      continue;
+    }
     if (phase === 'open') {
       if (target.hasOpenQuestion() && (await target.takeTyped(text))) return step;
       continue;
@@ -152,6 +267,7 @@ export async function runSendPipeline(
 export function inactiveFlow(id: CoachFlowId): CoachFlow {
   return {
     id,
+    isActive: () => false,
     hasOpenQuestion: () => false,
     takeTyped: () => false,
     startFrom: () => false,

@@ -1,60 +1,113 @@
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import type { SuggestionChip } from '../../data/mockCoach';
+/* eslint lifepass/no-literal-copy: "error" */
+// The empty state's chips (iOS CoachView.swift `suggestionChips`): a 2x2 grid
+// of the free, model-less paths, then two full-width chips.
+//
+//   What's nearby? / After work / Something new   the category strip
+//   Lagoon enthusiast                             the lagoon wizard, directly
+//   Plan my day                                   the day-plan wizard
+//   Get a 4-week plan                             the programme wizard; reads
+//                                                 "Adjust my plan" while a plan
+//                                                 runs on a server that revises;
+//                                                 hidden for a member under 18
+import { Pressable, StyleSheet, View } from 'react-native';
 
-type Props = {
-  chips: SuggestionChip[];
-  onSelect: (chip: SuggestionChip) => void;
+import { LPText } from '../../components/ui';
+import { coachPalette } from '../../features/coach/theme/palette';
+import { useT } from '../../i18n';
+
+export type SuggestionChipAction =
+  | { readonly kind: 'categoryPicker'; readonly labelKey: string }
+  | { readonly kind: 'search'; readonly categoryKey: string; readonly labelKey: string }
+  | { readonly kind: 'plan'; readonly labelKey: string }
+  | { readonly kind: 'program' }
+  | { readonly kind: 'adjust' };
+
+interface ChipDef {
+  readonly id: string;
+  readonly labelKey: string;
+  readonly action: SuggestionChipAction;
+}
+
+/** The grid, in iOS order. */
+export const GRID_CHIPS: readonly ChipDef[] = [
+  { id: 'c1', labelKey: 'coach.chip.nearby', action: { kind: 'categoryPicker', labelKey: 'coach.chip.nearby' } },
+  { id: 'c2', labelKey: 'coach.chip.after_work', action: { kind: 'categoryPicker', labelKey: 'coach.chip.after_work' } },
+  {
+    id: 'c3',
+    labelKey: 'coach.chip.lagoon',
+    action: { kind: 'search', categoryKey: 'lagoon', labelKey: 'coach.chip.lagoon' },
+  },
+  {
+    id: 'c4',
+    labelKey: 'coach.chip.something_new',
+    action: { kind: 'categoryPicker', labelKey: 'coach.chip.something_new' },
+  },
+];
+
+const PLAN_CHIP: ChipDef = {
+  id: 'c5',
+  labelKey: 'coach.chip.plan_day',
+  action: { kind: 'plan', labelKey: 'coach.chip.plan_day' },
 };
+const PROGRAM_CHIP: ChipDef = { id: 'c6', labelKey: 'coach.chip.program', action: { kind: 'program' } };
+const ADJUST_CHIP: ChipDef = { id: 'adjust', labelKey: 'coach.chip.adjust_plan', action: { kind: 'adjust' } };
 
 /**
- * 2×2 grid of frosted-glass suggestion chips shown in the Coach empty state.
- * Same four chips as iOS; the caller decides whether a chip sends a prompt
- * or shows the category strip (chip.showsCategoryStrip).
+ * The full-width chips: "Plan my day", then the programme chip unless the
+ * member is under 18 (no plan feature to offer), as "Adjust my plan" when
+ * `programChipAdjusts`.
  */
-export default function SuggestionChips({ chips, onSelect }: Props) {
+export function fullWidthChips(options: { readonly isMinor: boolean; readonly programChipAdjusts: boolean }): ChipDef[] {
+  if (options.isMinor) return [PLAN_CHIP];
+  return [PLAN_CHIP, options.programChipAdjusts ? ADJUST_CHIP : PROGRAM_CHIP];
+}
+
+type Props = {
+  isMinor: boolean;
+  programChipAdjusts: boolean;
+  onAction: (action: SuggestionChipAction) => void;
+};
+
+export default function SuggestionChips({ isMinor, programChipAdjusts, onAction }: Props) {
+  const { t } = useT();
+  const chip = (def: ChipDef, fullWidth: boolean) => (
+    <Pressable
+      key={def.id}
+      onPress={() => onAction(def.action)}
+      style={({ pressed }) => [styles.chip, fullWidth ? styles.full : styles.half, pressed && styles.pressed]}
+      accessibilityRole="button"
+      accessibilityLabel={t(def.labelKey)}
+      testID={`coach.chip.${def.id}`}
+    >
+      <LPText size={15} weight="medium" color="#FFFFFF" align="center" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+        {t(def.labelKey)}
+      </LPText>
+    </Pressable>
+  );
   return (
-    <View style={styles.grid}>
-      {chips.map((chip) => (
-        <TouchableOpacity
-          key={chip.id}
-          style={styles.chip}
-          activeOpacity={0.7}
-          onPress={() => onSelect(chip)}
-        >
-          <Text style={styles.label} numberOfLines={1}>
-            {chip.text}
-          </Text>
-        </TouchableOpacity>
-      ))}
+    <View style={styles.root}>
+      <View style={styles.grid}>{GRID_CHIPS.map((def) => chip(def, false))}</View>
+      {fullWidthChips({ isMinor, programChipAdjusts }).map((def) => chip(def, true))}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-  },
+  root: { gap: 12, paddingHorizontal: 16, paddingBottom: 8 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   chip: {
-    width: 155,
-    height: 35,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.10)',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    minHeight: 48,
     borderRadius: 999,
-    borderWidth: 0.8,
-    borderColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: coachPalette.tile,
+    borderWidth: 1,
+    borderColor: coachPalette.chipStroke,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  label: {
-    fontSize: 13,
-    fontWeight: '400',
-    color: '#FFFFFF',
-    textAlign: 'center',
-  },
+  // Two columns with a 12 dp gap.
+  half: { flexBasis: '47%', flexGrow: 1 },
+  full: { alignSelf: 'stretch' },
+  pressed: { opacity: 0.8 },
 });
