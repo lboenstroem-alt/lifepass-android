@@ -3,15 +3,23 @@
 // and `startDictation`), through expo-speech-recognition.
 //
 // - A tap asks for the microphone; refused (now or before), the alert points
-//   to Settings, in the account language (coach.mic.*), as iOS does: a dead,
-//   silent mic is worse than a sentence.
+//   to Settings, in the account language, as iOS does: a dead, silent mic is
+//   worse than a sentence. iOS's body names Speech Recognition too, a
+//   permission Android does not have, so Android says only the microphone.
 // - US English for every account (Icelandic is not dictated), ON THE PHONE
 //   where the phone can (owner decision D12): if the on-device recogniser
 //   refuses the language or the service, it is asked once more through the
 //   system recogniser.
-// - Partial transcripts stream into the input; it stops on a final result,
-//   an error, a tap, or the Coach tab losing focus. Nothing is sent until
-//   the member taps send.
+// - Partial transcripts stream into the input WHILE RECORDING only (iOS
+//   `if speech.isRecording { vm.inputText = newValue }`); it stops on a final
+//   result, an error, a tap, a send, or the Coach tab losing focus. Nothing
+//   is sent until the member taps send.
+// - Stopping CANCELS (iOS `SpeechRecognizer.stop` cancels its task): the
+//   recogniser is aborted, which reports no final result, and anything it
+//   still says is ignored. `stop()` on Android would deliver one more
+//   result, and after a send it would put the words just sent back into the
+//   input. A stop that comes before the recogniser has started (it starts a
+//   moment after asking, or after the permission prompt) still cancels it.
 //
 // The native module does not exist in Expo Go (its import throws there): the
 // hook then reports `available: false` and the screen shows no mic.
@@ -55,14 +63,14 @@ export interface Dictation {
   readonly isRecording: boolean;
   /** Asks for the microphone and starts listening; partial text goes to `onTranscript`. */
   start(): Promise<void>;
-  /** Stops listening (safe to call at any time). */
+  /** Stops listening and drops anything still to come (safe to call at any time). */
   stop(): void;
 }
 
 function showMicDenied(): void {
   showDialog({
     title: t('coach.mic.denied_title'),
-    message: t('coach.mic.denied_body'),
+    message: t('coach.android.mic.denied_body'),
     buttons: [
       { label: t('common.cancel'), role: 'cancel' },
       { label: t('coach.mic.open_settings'), onPress: () => void Linking.openSettings() },
@@ -90,6 +98,10 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
   latestTranscript.current = onTranscript;
   /** This attempt asked for the on-device recogniser and has heard nothing yet. */
   const onDeviceAttempt = useRef(false);
+  /** The recogniser was asked to start and has not said 'start' (or 'end') yet. */
+  const pending = useRef(false);
+  /** Bumped by every stop: a start still waiting on the permission prompt gives up. */
+  const attempt = useRef(0);
 
   const setRecordingBoth = (value: boolean) => {
     recordingRef.current = value;
@@ -100,6 +112,7 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
     (onDevice: boolean) => {
       if (!speech) return;
       onDeviceAttempt.current = onDevice;
+      pending.current = true;
       speech.start({
         lang: DICTATION_LANG,
         interimResults: true,
@@ -113,20 +126,35 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
   useEffect(() => {
     if (!speech) return undefined;
     const subscriptions = [
-      speech.addListener('start', () => setRecordingBoth(true)),
-      speech.addListener('end', () => setRecordingBoth(false)),
+      speech.addListener('start', () => {
+        // A stop already came (pending cleared): this start is not wanted.
+        if (!pending.current) return;
+        pending.current = false;
+        setRecordingBoth(true);
+      }),
+      speech.addListener('end', () => {
+        pending.current = false;
+        setRecordingBoth(false);
+      }),
       speech.addListener('result', (event) => {
+        // Only while recording: a result after a stop (a send, a blur, a
+        // tap) is for words the member has already dealt with.
+        if (!recordingRef.current) return;
         onDeviceAttempt.current = false;
-        const transcript = event.results[0]?.transcript ?? '';
-        if (recordingRef.current || transcript) latestTranscript.current(transcript);
+        latestTranscript.current(event.results[0]?.transcript ?? '');
       }),
       speech.addListener('error', (event) => {
-        if (onDeviceAttempt.current && ON_DEVICE_REFUSALS.includes(event.error)) {
+        if (
+          (pending.current || recordingRef.current) &&
+          onDeviceAttempt.current &&
+          ON_DEVICE_REFUSALS.includes(event.error)
+        ) {
           // The phone's own recogniser cannot take US English after all:
           // the system recogniser, once.
           begin(false);
           return;
         }
+        pending.current = false;
         setRecordingBoth(false);
       }),
     ];
@@ -136,9 +164,13 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
   }, [speech, begin]);
 
   const stop = useCallback(() => {
-    if (!speech || !recordingRef.current) return;
+    attempt.current += 1;
+    if (!speech || (!recordingRef.current && !pending.current)) return;
+    pending.current = false;
+    onDeviceAttempt.current = false;
+    // Cancel, not stop: no final result comes after it.
     try {
-      speech.stop();
+      speech.abort();
     } catch {
       // Already stopped.
     }
@@ -151,12 +183,16 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
 
   const start = useCallback(async () => {
     if (!speech) return;
+    const mine = ++attempt.current;
     let granted = false;
     try {
       granted = (await speech.requestPermissionsAsync()).granted;
     } catch {
       granted = false;
     }
+    // Stopped while the prompt was up (the tab lost focus, a send): never
+    // start listening off screen.
+    if (mine !== attempt.current) return;
     if (!granted) {
       showMicDenied();
       return;

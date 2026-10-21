@@ -76,7 +76,7 @@ export function VenueMiniCard({
           style={styles.heart}
           hitSlop={8}
           accessibilityRole="button"
-          accessibilityLabel={t('coach.android.a11y.favourite')}
+          accessibilityLabel={t(heart.isFavourite ? 'coach.android.a11y.unfavourite' : 'coach.android.a11y.favourite')}
           accessibilityState={{ selected: heart.isFavourite }}
           testID={`coach.venue.${venue.slug}.heart`}
         >

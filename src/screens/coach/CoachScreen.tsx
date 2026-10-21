@@ -13,15 +13,22 @@
 //
 // On every appearance (iOS `onAppear`): the profile's coach block is applied
 // (the newer reading wins), and whatever another tab parked for the Coach (a
-// prompt, a programme entry) is taken and run once. The conversation lives
-// in the store, so it survives tab switches. Location is NOT asked for here:
-// the venue wizard warms a fix when it starts.
+// prompt, a programme entry) is taken and run once. An entry parked while
+// this tab has a page pushed (a venue from Book it, Saved, Account) first
+// takes the tab back to the chat: iOS rebuilds the tab on a switch, so its
+// Coach always appears and sends at once. The conversation lives in the
+// store, so it survives tab switches. Location is NOT asked for here: the
+// venue wizard warms a fix when it starts.
+//
+// The saved chats are read only once the sign-in hook has claimed them for
+// this member (src/features/coach/register.ts); the screen never reads them
+// on a sign-in of its own, since the tabs can stay mounted through one.
 import { useFocusEffect } from '@react-navigation/native';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { setStatusBarStyle } from 'expo-status-bar';
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   ImageBackground,
@@ -42,7 +49,7 @@ import { LPText, Wordmark } from '../../components/ui';
 import { inputPromptKey } from '../../features/coach/freeTier/freeTier';
 import FreeTierStrip from '../../features/coach/freeTier/FreeTierStrip';
 import type { CoachRoute } from '../../features/coach/store/host';
-import { hasStartedChat, type CoachMessage } from '../../features/coach/store/messages';
+import { hasStartedChat, isFlowBubble, type CoachMessage } from '../../features/coach/store/messages';
 import {
   COACH_FLOWS,
   selectIsAILocked,
@@ -64,7 +71,7 @@ import { MessageBubble, TypingIndicator } from './MessageBubble';
 import MicButton from './MicButton';
 import QuestionBubbleMessage from './QuestionBubbleMessage';
 import SuggestionChips, { type SuggestionChipAction } from './SuggestionChips';
-import { useDictation } from './useDictation';
+import { useDictation, type Dictation } from './useDictation';
 import VenueCarouselMessage from './VenueCarouselMessage';
 
 const BACKGROUND = require('../../../assets/bg-chat.jpg');
@@ -106,20 +113,19 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
   const keyboard = useKeyboardCoverage();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  // The input's text is NOT read here (./CoachInputBar below): a keystroke or
+  // a dictation partial re-renders the bar, not every row of the chat.
   const messages = useCoachStore((s) => s.messages);
-  const inputText = useCoachStore((s) => s.inputText);
   const isTyping = useCoachStore((s) => s.isTyping);
-  const locked = useCoachStore(selectIsAILocked);
-  const limitReached = useCoachStore((s) => s.limitReached);
   const freeLimitReached = useCoachStore((s) => s.freeLimitReached);
   const freeMessages = useCoachStore((s) => s.freeMessages);
   const upgrade = useCoachStore((s) => s.upgrade);
   const savedSessions = useCoachStore((s) => s.savedSessions);
   const pendingRoute = useCoachStore((s) => s.pendingRoute);
+  const claimed = useCoachStore((s) => s.memberId !== null && s.claimedFor === s.memberId);
 
   const coachBlock = useAppStore((s) => s.profile?.coach ?? null);
   const profileReadAt = useAppStore((s) => s.profileReadAt);
-  const userId = useAppStore((s) => s.userId);
   const healthAccess = useAppStore((s) => s.healthAccess);
   const supportsPlanRevision = useAppStore(selectSupportsPlanRevision);
   const profileProgramLive = useAppStore((s) => isLiveProgramStatus(s.profile?.health?.program?.status));
@@ -134,12 +140,11 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
 
   // MARK: The account
 
-  // The chats belong to the member signed in; read them once they are claimed.
+  // The chats belong to the member signed in: read once the sign-in hook has
+  // claimed them (the store refuses before that; the claim also reads them).
   useEffect(() => {
-    if (!userId) return;
-    if (coach().memberId !== userId.toLowerCase()) coach().signedIn(userId);
-    void coach().loadSessions();
-  }, [userId, coach]);
+    if (claimed) void coach().loadSessions();
+  }, [claimed, coach]);
 
   // The greeting follows the account language while it is all there is.
   useEffect(() => {
@@ -175,6 +180,21 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
       };
     }, [coach, stopDictation]),
   );
+
+  // An entry parked while a page is pushed on this tab (focused or not):
+  // back to the chat, whose focus then runs it. Mounted, not focused: the
+  // chat is not focused exactly when a page covers it.
+  useEffect(() => {
+    if (!navigation) return undefined;
+    return useIntentStore.subscribe((intents, previous) => {
+      const promptArrived = intents.pendingCoachPrompt !== null && intents.pendingCoachPrompt !== previous.pendingCoachPrompt;
+      const programArrived =
+        intents.pendingCoachProgram !== null && intents.pendingCoachProgram !== previous.pendingCoachProgram;
+      if (!promptArrived && !programArrived) return;
+      const stack = navigation.getState();
+      if (stack && stack.index > 0) navigation.popToTop();
+    });
+  }, [navigation]);
 
   // The first build's Home passed its prompt as a route param; it is parked
   // like any other, so it is sent once per tap, never once per mount.
@@ -258,59 +278,40 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
     }
   };
 
-  const send = () => {
+  const send = useCallback(() => {
     Keyboard.dismiss();
-    dictation.stop();
+    // Cancels: nothing the recogniser still says lands in the emptied input.
+    stopDictation();
     void coach().send(coach().inputText);
-  };
+  }, [coach, stopDictation]);
 
   // MARK: The chat list
 
   const scroll = useRef<ScrollView>(null);
   const offsets = useRef(new Map<string, number>());
-  const lastId = messages[messages.length - 1]?.id;
-  const lastIsCard = !!messages[messages.length - 1]?.kind;
+  const noteOffset = useCallback((id: string, y: number) => {
+    offsets.current.set(id, y);
+  }, []);
+  const last = messages[messages.length - 1];
+  const lastId = last?.id;
+  const lastAnchorsTop = !!last?.anchorTop;
 
-  // New messages scroll into view; a flow's card (a plan) is taller than the
-  // screen, so it lands on its top and the member reads down through it.
+  // New messages scroll to the end, where the chips and buttons are; a day
+  // plan (`anchorTop`) is taller than the screen, so it lands on its top and
+  // the member reads down through it (iOS `last.plan == nil ? .bottom : .top`).
   useEffect(() => {
     if (!started || !lastId) return;
     const timer = setTimeout(() => {
-      const top = lastIsCard ? offsets.current.get(lastId) : undefined;
+      const top = lastAnchorsTop ? offsets.current.get(lastId) : undefined;
       if (top !== undefined) scroll.current?.scrollTo({ y: Math.max(0, top - 8), animated: true });
       else scroll.current?.scrollToEnd({ animated: true });
     }, 60);
     return () => clearTimeout(timer);
-  }, [messages.length, lastId, lastIsCard, started]);
+  }, [messages.length, lastId, lastAnchorsTop, started]);
 
   useEffect(() => {
     if (isTyping) scroll.current?.scrollToEnd({ animated: true });
   }, [isTyping]);
-
-  const renderMessage = (message: CoachMessage) => {
-    if (message.kind && message.flow) {
-      const Renderer = COACH_FLOWS[message.flow].renderers[message.kind];
-      if (Renderer) return <Renderer message={{ ...message, kind: message.kind }} busy={isTyping} />;
-    }
-    if (message.venues && message.venues.length > 0) {
-      return <VenueCarouselMessage intro={message.text} venues={message.venues} onBook={openVenue} />;
-    }
-    if (message.options && message.options.length > 0) {
-      return (
-        <QuestionBubbleMessage
-          question={message.text}
-          options={message.options}
-          answered={!!message.answered}
-          selectedAnswer={message.selectedAnswer}
-          onSelect={(value, label) => void coach().selectOption(message.id, value, label)}
-        />
-      );
-    }
-    if (message.showCategoryStrip) {
-      return <CategoryPrompt intro={message.text} onSelect={(tile) => coach().startSearch(tile.id, tile.labelKey)} />;
-    }
-    return <MessageBubble role={message.role} text={message.text} />;
-  };
 
   // MARK: Layout
 
@@ -319,7 +320,6 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
   const barClearance = tabBarHeight ?? TAB_BAR_HEIGHT + insets.bottom;
   const bottomPadding = keyboard > 0 ? keyboard + 8 : barClearance + 20;
   const inputMaxHeight = INPUT_LINES * INPUT_LINE_HEIGHT * Math.max(1, fontScale) + INPUT_PADDING_V * 2;
-  const inputEmpty = inputText.trim().length === 0;
 
   return (
     <View style={styles.root} testID="coach.screen">
@@ -347,7 +347,11 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
       </View>
 
       <View style={[styles.body, { paddingBottom: bottomPadding }]}>
-        <View style={styles.content} onTouchStart={() => Keyboard.dismiss()}>
+        {/* A tap on the chat's background closes the keyboard through the
+            scroll views themselves (keyboardShouldPersistTaps="handled":
+            a tap no child takes blurs the input), never on a touch that
+            lands in a field: the question bubble's "Other" keeps focus. */}
+        <View style={styles.content}>
           {started ? (
             <ScrollView
               ref={scroll}
@@ -359,12 +363,13 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
               testID="coach.chat"
             >
               {messages.map((message) => (
-                <View
+                <MessageRow
                   key={message.id}
-                  onLayout={(event: LayoutChangeEvent) => offsets.current.set(message.id, event.nativeEvent.layout.y)}
-                >
-                  {renderMessage(message)}
-                </View>
+                  message={message}
+                  busy={isFlowBubble(message) ? isTyping : false}
+                  onBook={openVenue}
+                  onOffset={noteOffset}
+                />
               ))}
               {isTyping ? <TypingIndicator /> : null}
             </ScrollView>
@@ -399,46 +404,7 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
 
         <FreeTierStrip freeMessages={freeMessages} freeLimitReached={freeLimitReached} onGetMembership={openMembership} />
 
-        <View style={[styles.inputBar, locked && { opacity: LOCKED_INPUT_OPACITY }]}>
-          <TextInput
-            value={inputText}
-            onChangeText={(text) => coach().setInputText(text)}
-            placeholder={t(inputPromptKey({ limitReached, freeLimitReached }))}
-            placeholderTextColor={coachPalette.placeholder}
-            editable={!locked}
-            multiline
-            submitBehavior="blurAndSubmit"
-            returnKeyType="send"
-            enterKeyHint="send"
-            onSubmitEditing={send}
-            selectionColor={coachPalette.accent}
-            underlineColorAndroid="transparent"
-            textAlignVertical="center"
-            style={[styles.input, { maxHeight: inputMaxHeight }]}
-            accessibilityLabel={t(inputPromptKey({ limitReached, freeLimitReached }))}
-            accessibilityState={{ disabled: locked }}
-            testID="coach.input"
-          />
-          {dictation.isRecording ? (
-            <MicButton recording disabled={false} onStart={() => undefined} onStop={dictation.stop} />
-          ) : inputEmpty ? (
-            dictation.available ? (
-              <MicButton recording={false} disabled={locked} onStart={() => void dictation.start()} onStop={dictation.stop} />
-            ) : null
-          ) : (
-            <Pressable
-              onPress={send}
-              disabled={isTyping}
-              style={({ pressed }) => [styles.send, (pressed || isTyping) && styles.sendDimmed]}
-              accessibilityRole="button"
-              accessibilityLabel={t('coach.a11y.send_message')}
-              accessibilityState={{ disabled: isTyping }}
-              testID="coach.send"
-            >
-              <Ionicons name="arrow-up" size={18} color="#FFFFFF" />
-            </Pressable>
-          )}
-        </View>
+        <CoachInputBar dictation={dictation} onSend={send} maxHeight={inputMaxHeight} />
       </View>
 
       <ChatDrawer
@@ -455,6 +421,125 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
           setDrawerOpen(false);
         }}
       />
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// One row of the chat. Memoised: a row draws again only when its message (a
+// new object only when that message changed), its busy flag or a callback
+// changes, never on a keystroke.
+
+type MessageRowProps = {
+  message: CoachMessage;
+  /** For a flow's own bubble only (iOS `isBusy: vm.isTyping`); false for every other row. */
+  busy: boolean;
+  onBook: (venue: Venue) => void;
+  onOffset: (id: string, y: number) => void;
+};
+
+const MessageRow = memo(function MessageRow({ message, busy, onBook, onOffset }: MessageRowProps) {
+  return (
+    <View onLayout={(event: LayoutChangeEvent) => onOffset(message.id, event.nativeEvent.layout.y)}>
+      <MessageContent message={message} busy={busy} onBook={onBook} />
+    </View>
+  );
+});
+
+function MessageContent({ message, busy, onBook }: Omit<MessageRowProps, 'onOffset'>) {
+  if (isFlowBubble(message)) {
+    const Renderer = COACH_FLOWS[message.flow].renderers[message.kind];
+    // The message as the store keeps it (no copy), so a renderer can memoise on it.
+    if (Renderer) return <Renderer message={message} busy={busy} />;
+  }
+  if (message.venues && message.venues.length > 0) {
+    return <VenueCarouselMessage intro={message.text} venues={message.venues} onBook={onBook} />;
+  }
+  if (message.options && message.options.length > 0) {
+    return (
+      <QuestionBubbleMessage
+        question={message.text}
+        options={message.options}
+        answered={!!message.answered}
+        selectedAnswer={message.selectedAnswer}
+        onSelect={(value, label) => void useCoachStore.getState().selectOption(message.id, value, label)}
+      />
+    );
+  }
+  if (message.showCategoryStrip) {
+    return (
+      <CategoryPrompt
+        intro={message.text}
+        onSelect={(tile) => useCoachStore.getState().startSearch(tile.id, tile.labelKey)}
+      />
+    );
+  }
+  return <MessageBubble role={message.role} text={message.text} />;
+}
+
+// ---------------------------------------------------------------------------
+// The input: 1 to 5 lines, Send on the keyboard, the mic while empty, the
+// send arrow while not; locked (55%, its own placeholder) while an allowance
+// is spent. Its own component, so the text it follows re-renders only it.
+
+function CoachInputBar({
+  dictation,
+  onSend,
+  maxHeight,
+}: {
+  dictation: Dictation;
+  onSend: () => void;
+  maxHeight: number;
+}) {
+  const { t } = useT();
+  const inputText = useCoachStore((s) => s.inputText);
+  const isTyping = useCoachStore((s) => s.isTyping);
+  const locked = useCoachStore(selectIsAILocked);
+  const limitReached = useCoachStore((s) => s.limitReached);
+  const freeLimitReached = useCoachStore((s) => s.freeLimitReached);
+  const inputEmpty = inputText.trim().length === 0;
+  const prompt = t(inputPromptKey({ limitReached, freeLimitReached }));
+
+  return (
+    <View style={[styles.inputBar, locked && { opacity: LOCKED_INPUT_OPACITY }]}>
+      <TextInput
+        value={inputText}
+        onChangeText={(text) => useCoachStore.getState().setInputText(text)}
+        placeholder={prompt}
+        placeholderTextColor={coachPalette.placeholder}
+        editable={!locked}
+        multiline
+        submitBehavior="blurAndSubmit"
+        returnKeyType="send"
+        enterKeyHint="send"
+        onSubmitEditing={onSend}
+        selectionColor={coachPalette.accent}
+        underlineColorAndroid="transparent"
+        textAlignVertical="center"
+        style={[styles.input, { maxHeight }]}
+        accessibilityLabel={prompt}
+        accessibilityState={{ disabled: locked }}
+        testID="coach.input"
+      />
+      {dictation.isRecording ? (
+        <MicButton recording disabled={false} onStart={() => undefined} onStop={dictation.stop} />
+      ) : inputEmpty ? (
+        dictation.available ? (
+          <MicButton recording={false} disabled={locked} onStart={() => void dictation.start()} onStop={dictation.stop} />
+        ) : null
+      ) : (
+        <Pressable
+          onPress={onSend}
+          disabled={isTyping}
+          style={({ pressed }) => [styles.send, (pressed || isTyping) && styles.sendDimmed]}
+          accessibilityRole="button"
+          accessibilityLabel={t('coach.a11y.send_message')}
+          accessibilityState={{ disabled: isTyping }}
+          testID="coach.send"
+        >
+          <Ionicons name="arrow-up" size={18} color="#FFFFFF" />
+        </Pressable>
+      )}
     </View>
   );
 }

@@ -23,7 +23,9 @@ import {
   resetCoachStoreForTests,
   useCoachStore,
 } from '../../../features/coach/store/coachStore';
+import { claimCoachForMember } from '../../../features/coach/register';
 import { lookup, translatePlural } from '../../../i18n';
+import { runSignInHooks } from '../../../app/signOut';
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
 import { resetIntentStoreForTests, useIntentStore } from '../../../stores/intentStore';
 import CoachScreen from '../CoachScreen';
@@ -44,6 +46,7 @@ jest.mock('../../../features/favourites', () => ({
 stubApiClientPerTest();
 
 const MEMBER_A = '8c2c1b36-2a7e-4b1f-9e0e-2f1c4f0a9c11';
+const MEMBER_B = '3c4c1b36-2a7e-4b1f-9e0e-2f1c4f0a9c22';
 const en = (key: string) => lookup(key, 'en');
 
 /**
@@ -111,13 +114,15 @@ async function settle() {
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   resetAppStoreForTests();
   resetIntentStoreForTests();
   resetCoachStoreForTests();
   resetSpeechModuleForTests();
   fakeSpeech.reset();
   useAppStore.setState({ isAuthenticated: true, userId: MEMBER_A, profile: profile() });
+  // The sign-in hook claims the saved chats before the tabs appear.
+  await claimCoachForMember(MEMBER_A, false);
 });
 
 afterEach(async () => {
@@ -252,6 +257,22 @@ describe('the chat', () => {
     await settle();
     expect(screen.getByText('re: Plan a perfect spa evening for me.')).toBeOnTheScreen();
     expect(api.sentAll('/coach')).toHaveLength(2);
+  });
+
+  it('a prompt parked while a venue page covers the chat takes the tab back to the chat and is sent at once', async () => {
+    api.on('POST', '/coach', Reply.ok({ reply: 'Here is a spa evening.' }));
+    await renderCoach();
+    await act(async () => navigation.navigate('VenueDetail', { slug: 'sky-lagoon' }));
+    await settle();
+    expect(screen.getByText('VenueDetail {"slug":"sky-lagoon"}')).toBeOnTheScreen();
+
+    // Home parks it (the member went to Home and tapped a card).
+    await act(async () => useIntentStore.getState().parkCoachPrompt('Plan a perfect spa evening for me.'));
+    await settle();
+    expect(screen.queryByText('VenueDetail {"slug":"sky-lagoon"}')).toBeNull();
+    expect(screen.getByText('Here is a spa evening.')).toBeOnTheScreen();
+    expect(useIntentStore.getState().pendingCoachPrompt).toBeNull();
+    expect(api.sentAll('/coach')).toHaveLength(1);
   });
 });
 
@@ -389,6 +410,30 @@ describe('the drawer', () => {
     expect(screen.getByText('Three pools.')).toBeOnTheScreen();
   });
 
+  it("another account signing in with the tabs still up sees none of the last member's chats", async () => {
+    api.on('POST', '/coach', Reply.ok({ reply: 'Three pools.' }));
+    await renderCoach();
+    await fireEvent.changeText(screen.getByTestId('coach.input'), "A's question");
+    await fireEvent(screen.getByTestId('coach.input'), 'submitEditing');
+    await settle();
+    await fireEvent.press(screen.getByRole('button', { name: en('coach.android.a11y.menu') }));
+    await fireEvent.press(screen.getByTestId('coach.drawer.add_chat'));
+    await settle();
+    await fireEvent.press(screen.getByRole('button', { name: en('coach.android.a11y.menu') }));
+    expect(within(screen.getByTestId('coach.drawer')).getByRole('button', { name: "A's question" })).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: en('common.close') }));
+
+    // An auth link for B: the user id changes first, then the sign-in hooks run.
+    await act(async () => {
+      useAppStore.setState({ userId: MEMBER_B });
+      await runSignInHooks({ userId: MEMBER_B, restoredSession: false });
+    });
+    await settle();
+    await fireEvent.press(screen.getByRole('button', { name: en('coach.android.a11y.menu') }));
+    expect(screen.getByText(en('coach.drawer.no_recents'))).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: "A's question" })).toBeNull();
+  });
+
   it('"Saved" opens the saved venues', async () => {
     await renderCoach();
     await fireEvent.press(screen.getByRole('button', { name: en('coach.android.a11y.menu') }));
@@ -441,7 +486,9 @@ describe('dictation', () => {
     await fireEvent.press(screen.getByRole('button', { name: lookup('coach.a11y.start_voice', 'is') }));
     await settle();
     expect(screen.getByText(lookup('coach.mic.denied_title', 'is'))).toBeOnTheScreen();
-    expect(screen.getByText(lookup('coach.mic.denied_body', 'is'))).toBeOnTheScreen();
+    // Android has no Speech Recognition permission: the sentence names only the microphone.
+    expect(screen.getByText(lookup('coach.android.mic.denied_body', 'is'))).toBeOnTheScreen();
+    expect(screen.queryByText(lookup('coach.mic.denied_body', 'is'))).toBeNull();
     expect(screen.getByRole('button', { name: lookup('coach.mic.open_settings', 'is') })).toBeOnTheScreen();
     expect(fakeSpeech.started).toEqual([]);
   });
@@ -461,9 +508,54 @@ describe('dictation', () => {
     await renderCoach();
     await fireEvent.press(screen.getByRole('button', { name: en('coach.a11y.start_voice') }));
     await settle();
-    expect(fakeSpeech.stops).toBe(0);
+    expect(fakeSpeech.aborts).toBe(0);
     await act(async () => navigation.navigate('Elsewhere'));
     await settle();
-    expect(fakeSpeech.stops).toBe(1);
+    expect(fakeSpeech.aborts).toBe(1);
+  });
+
+  it('a send mid-dictation leaves the input empty: nothing the recogniser still says comes back', async () => {
+    api.on('POST', '/coach', Reply.ok({ reply: 'Sky Lagoon.' }));
+    await renderCoach();
+    await fireEvent.press(screen.getByRole('button', { name: en('coach.a11y.start_voice') }));
+    await settle();
+    await act(async () => fakeSpeech.result('a sauna near me'));
+    await fireEvent(screen.getByTestId('coach.input'), 'submitEditing');
+    // A final result the native module still delivers after the send.
+    await act(async () => fakeSpeech.result('a sauna near me', true));
+    await settle();
+    expect(screen.getByTestId('coach.input').props.value).toBe('');
+    expect(fakeSpeech.stops).toBe(0);
+    expect(api.sentAll('/coach')).toHaveLength(1);
+  });
+
+  it('leaving before the recogniser has started still cancels it', async () => {
+    fakeSpeech.autoStart = false;
+    await renderCoach();
+    await fireEvent.press(screen.getByRole('button', { name: en('coach.a11y.start_voice') }));
+    await settle();
+    expect(fakeSpeech.started).toHaveLength(1);
+    await act(async () => navigation.navigate('Elsewhere'));
+    await settle();
+    expect(fakeSpeech.aborts).toBe(1);
+    // The recogniser's late 'start' and words go nowhere.
+    await act(async () => fakeSpeech.emit('start', {}));
+    await act(async () => fakeSpeech.result('off screen'));
+    await act(async () => navigation.goBack());
+    await settle();
+    expect(screen.getByTestId('coach.input').props.value).toBe('');
+    expect(screen.queryByRole('button', { name: en('coach.a11y.stop_recording') })).toBeNull();
+  });
+
+  it('leaving while the microphone prompt is up never starts listening off screen', async () => {
+    fakeSpeech.holdPermission = true;
+    await renderCoach();
+    await fireEvent.press(screen.getByRole('button', { name: en('coach.a11y.start_voice') }));
+    await settle();
+    await act(async () => navigation.navigate('Elsewhere'));
+    await settle();
+    await act(async () => fakeSpeech.answerPermission());
+    await settle();
+    expect(fakeSpeech.started).toEqual([]);
   });
 });

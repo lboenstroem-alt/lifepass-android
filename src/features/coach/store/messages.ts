@@ -44,6 +44,21 @@ export interface CoachMessage {
   /** A flow's own bubble: drawn by `flows[flow].renderers[kind]`. */
   readonly kind?: string;
   readonly payload?: unknown;
+  /**
+   * The chat lands on this message's TOP when it arrives, not its bottom: a
+   * day plan is taller than the screen, and the member reads down through it
+   * (iOS `last.plan == nil ? .bottom : .top`). Only the day plan sets it;
+   * every other bubble, a proposal or summary card included, scrolls to the
+   * end, where its chips and buttons are.
+   */
+  readonly anchorTop?: boolean;
+}
+
+/** A flow's own bubble (a `kind` its flow draws). */
+export type CoachFlowBubble = CoachMessage & { readonly kind: string; readonly flow: CoachFlowId };
+
+export function isFlowBubble(message: CoachMessage): message is CoachFlowBubble {
+  return typeof message.kind === 'string' && message.kind.length > 0 && message.flow !== undefined;
 }
 
 /**
