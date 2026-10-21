@@ -126,6 +126,11 @@ export function isHike(item: { readonly kind: string }): boolean {
 
 // MARK: - Images
 
+/** The plate route's canvas, 1200 x 630 (api/v1/attractions/plate/[slug]). */
+export const PLATE_ASPECT_RATIO = 1200 / 630;
+/** The plate's paper, MAP_PAPER (#F7F5F0) in the web's map-colors.ts. */
+export const PLATE_PAPER = '#F7F5F0';
+
 /** A plate is a map, never "Photo". */
 export function isPlate(image: Pick<AttractionImage, 'isMapPlate'>): boolean {
   return image.isMapPlate === true;
@@ -153,6 +158,19 @@ export function imageAlt(image: Pick<AttractionImage, 'altEn' | 'altIs'>, langua
  */
 export function isPlateImageUrl(url: string | null | undefined): boolean {
   return typeof url === 'string' && url.includes('/attractions/plate/');
+}
+
+/**
+ * What a Coach plan sight may draw (iOS `CoachPlanSight.drawableImageURL`):
+ * the location plate, or a photograph that arrived with its photographer.
+ * A photo without its credit is not shown at all: null, and the row draws
+ * the ring. `imageCredit` is read as the Coach reads it (trimmed, blank is
+ * none).
+ */
+export function drawableSightImageUrl(imageUrl: string | null | undefined, imageCredit: string | null | undefined): string | null {
+  const credited = typeof imageCredit === 'string' && imageCredit.trim() !== '';
+  if (!isPlateImageUrl(imageUrl) && !credited) return null;
+  return resolveAttractionAsset(imageUrl);
 }
 
 // MARK: - Nearby

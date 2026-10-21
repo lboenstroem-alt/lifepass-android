@@ -48,6 +48,8 @@ import {
   isPlate,
   locationPreviewRegion,
   nearestRoadNoteMetres,
+  PLATE_ASPECT_RATIO,
+  PLATE_PAPER,
   returnPairings,
   roadDriveFromReykjavik,
   roadKilometres,
@@ -65,10 +67,6 @@ import SightMap from './SightMap';
 /** iOS's monospaced figures and kickers (`LPFont.mono`). */
 export const MONO = { fontFamily: 'monospace' } as const;
 
-/** The plate route's canvas, 1200 x 630 (api/v1/attractions/plate/[slug]). */
-export const PLATE_ASPECT_RATIO = 1200 / 630;
-/** The plate's paper, MAP_PAPER (#F7F5F0) in the web's map-colors.ts. */
-export const PLATE_PAPER = '#F7F5F0';
 /** A photograph fills a band this tall and may lose its edges doing it. */
 export const HERO_HEIGHT = 240;
 
@@ -89,8 +87,9 @@ export function SectionTitle({ text }: { readonly text: string }) {
 
 /** A small mono kicker, upper-cased (iOS `Text(...uppercased()).font(LPFont.mono(10)).tracking(1.4)`). */
 function MonoKicker({ text, testID }: { readonly text: string; readonly testID?: string }) {
+  // TalkBack reads the words as written, not letter by letter in capitals.
   return (
-    <LPText size={10} color={colors.paper3} tracking={1.4} style={MONO} testID={testID}>
+    <LPText size={10} color={colors.paper3} tracking={1.4} style={MONO} accessibilityLabel={text} testID={testID}>
       {text.toUpperCase()}
     </LPText>
   );
@@ -130,6 +129,7 @@ export function Hero({ detail, onOpenUrl }: { readonly detail: AttractionDetail;
     );
   }
   const plate = isPlate(image);
+  const url = imageUrl(image);
   return (
     <>
       <View
@@ -140,11 +140,13 @@ export function Hero({ detail, onOpenUrl }: { readonly detail: AttractionDetail;
         testID={plate ? 'attraction.hero.plate' : 'attraction.hero.photo'}
       >
         <SightImage
-          uri={imageUrl(image)}
+          uri={url}
           contentFit={plate ? 'contain' : 'cover'}
           style={StyleSheet.absoluteFill}
+          // A URL that will not load shows the glyph; with no usable URL at
+          // all iOS draws the bare band, and so does this.
           placeholder={(phase) =>
-            phase === 'failed' ? (
+            phase === 'failed' && url !== null ? (
               <Ionicons name={plate ? 'map-outline' : 'image-outline'} size={20} color={colors.paper4} />
             ) : null
           }
@@ -206,7 +208,7 @@ export function TopPickBadge() {
       <View style={styles.badgeRing}>
         <View style={styles.badgeDot} />
       </View>
-      <LPText size={10} color={colors.attraction2} tracking={1.4} style={MONO}>
+      <LPText size={10} color={colors.attraction2} tracking={1.4} style={MONO} accessibilityLabel={label}>
         {label.toUpperCase()}
       </LPText>
     </View>
@@ -220,7 +222,7 @@ export function KindRegionKicker({ detail }: { readonly detail: AttractionDetail
 
 function TravelLabel({ icon, text, testID }: { readonly icon: MCIName; readonly text: string; readonly testID: string }) {
   return (
-    <View style={styles.travel}>
+    <View style={styles.travel} accessible accessibilityLabel={text}>
       <MaterialCommunityIcons name={icon} size={14} color={colors.paper3} style={styles.travelIcon} />
       <LPText size={14} color={colors.paper2} style={styles.flex} testID={testID}>
         {text}
@@ -285,7 +287,7 @@ export function FactsSection({ detail }: { readonly detail: AttractionDetail }) 
       <SectionTitle text={t('attraction.facts')} />
       {rows.map(([label, value]) => (
         <View key={label} style={styles.factRow} accessible accessibilityLabel={`${label}, ${value}`}>
-          <LPText size={10} color={colors.paper3} tracking={1.2} style={[MONO, styles.factLabel]}>
+          <LPText size={10} color={colors.paper3} tracking={1.2} style={[MONO, styles.factLabel]} accessibilityLabel={label}>
             {label.toUpperCase()}
           </LPText>
           <LPText size={15} color={colors.paper} align="right" style={styles.flex}>

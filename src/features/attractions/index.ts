@@ -19,8 +19,9 @@
  *     `driveFromReykjavik` and `roadAccess` (a drive under a minute, or an
  *     unknown access value, is none);
  *   - `roadDriveFromReykjavik`: the drive only where the road goes;
- *   - `isPlateImageUrl`, `PLATE_PAPER`, `resolveAttractionAsset`: the plate
- *     rule (a map, shown whole on its paper, never credited as a photo) and
+ *   - `isPlateImageUrl`, `drawableSightImageUrl`, `PLATE_PAPER`,
+ *     `resolveAttractionAsset`: the plate rule (a map, shown whole on its
+ *     paper, never credited as a photo), a photo only with its credit, and
  *     where an image URL points;
  *   - `sightDuration`: the card's own "1 h 20 min" wording;
  *   - `ATTRACTION_CREDITS_URL`: the credits page the Plan and Body and goals
@@ -29,9 +30,16 @@
 export { default as AttractionRing, ringDotColor, ringDotDiameter, ringLineWidth } from './AttractionRing';
 export type { AttractionRingProps } from './AttractionRing';
 export { kindLabel, kindRegionLine, regionLabel, ringDiameter, isAroundIceland } from './rules';
-export { isHike, isPlateImageUrl, roadDriveFromReykjavik, sightDisplayName } from './model';
+export {
+  drawableSightImageUrl,
+  isHike,
+  isPlateImageUrl,
+  PLATE_ASPECT_RATIO,
+  PLATE_PAPER,
+  roadDriveFromReykjavik,
+  sightDisplayName,
+} from './model';
 export { driveKilometres, sightDistance, sightDuration } from './format';
-export { PLATE_PAPER } from './detail/sections';
 export {
   httpsLink,
   parseAttractionDrive,

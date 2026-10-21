@@ -24,6 +24,7 @@ import {
   accessSentenceKey,
   afterPairings,
   creditedThumbUrl,
+  drawableSightImageUrl,
   geoUrl,
   googleMapsUrl,
   imageAlt,
@@ -157,6 +158,16 @@ describe('pictures and credits', () => {
     expect(imageAlt({ altEn: 'A', altIs: 'Á' }, 'is')).toBe('Á');
     expect(imageAlt({ altEn: 'A', altIs: null }, 'is')).toBe('A');
     expect(imageAlt({ altEn: 'A', altIs: 'Á' }, 'en')).toBe('A');
+  });
+
+  it('draws a Coach plan sight’s photo only with its credit, a plate always (CoachPlanSight.drawableImageURL)', () => {
+    const photo = 'https://upload.wikimedia.org/glymur.jpg';
+    const plate = 'https://www.lifepass.is/api/v1/attractions/plate/glymur';
+    expect(drawableSightImageUrl(photo, 'Zoran')).toBe(photo);
+    expect(drawableSightImageUrl(photo, null)).toBeNull();
+    expect(drawableSightImageUrl(photo, '  ')).toBeNull();
+    expect(drawableSightImageUrl(plate, null)).toBe(plate);
+    expect(drawableSightImageUrl(null, 'Zoran')).toBeNull();
   });
 
   it('knows a plate by its URL (the Coach’s plan sights)', () => {
