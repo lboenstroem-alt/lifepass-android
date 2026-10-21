@@ -4,20 +4,31 @@
  * (Views/Workout/FinishWorkoutSheet.swift).
  *
  * PLAN-1 owns the bridge (`src/features/plan/shell/bridges.ts`,
- * `installPlanOutbox(kind, source)`); this object has exactly the shape of its
- * `PlanOutboxSource`, so installing it is one line once both packages are on
- * the same branch:
+ * `installPlanOutbox(kind, source)`); this object fills its
+ * `PlanOutboxSource`, so installing it is one line in ../register.ts once
+ * both packages are on the same branch (the merge checklist there; a test,
+ * ./__tests__/planBridgeInstall.test.ts, fails until it is in):
  *
  *   installPlanOutbox('workout', workoutPlanOutboxSource);
  *
+ * NOT INSTALLED ON THIS BRANCH. Until it is, Plan's load sends nothing with
+ * foreground semantics and shows no failed-item banner; the activation hooks
+ * (../register.ts) still send the queue on every profile load and return to
+ * the foreground, and a failed item waits on disk for the banner.
+ *
  * What Plan gets from it, in iOS's order:
  *
- * - `flush` is Plan's load step "before the read" (iOS PlanView: the
- *   runner support's activate, then `PlanOutboxBridge.flush()`): the Resume
- *   row is read again from runner.json, the member's queue is loaded, and
- *   what waits is sent with FOREGROUND semantics (a member is looking at
- *   Plan, so a withdrawn consent may show its sheet). Plan reads the day
- *   itself afterwards, so no Today read follows here.
+ * - `activate` is Plan's APPEARANCE (iOS PlanView's `.task`:
+ *   `WorkoutRunnerSupport.activate` runs before `load()` and before its
+ *   minor and consent guard): the Resume row is read again from runner.json
+ *   (one past its day is deleted) and the member's queue is loaded. It is
+ *   not a PLAN-1 `PlanOutboxSource` member yet: contract request to PLAN-1 to
+ *   call `source.activate?.()` on every appearance ahead of `reloadPlan`'s
+ *   guard. Until then `flush` runs it, behind that guard.
+ * - `flush` is Plan's load step "before the read" (iOS `PlanOutboxBridge
+ *   .flush()`): what waits is sent with FOREGROUND semantics (a member is
+ *   looking at Plan, so a withdrawn consent may show its sheet). Plan reads
+ *   the day itself afterwards, so no Today read follows here.
  * - `failedItems` are the items Plan's banner offers a decision on.
  * - `saveAsExtra` and `discard` act only on an item this outbox holds; a
  *   meal item belongs to the meal outbox's half.
@@ -42,8 +53,9 @@ export interface WorkoutPlanOutboxItem {
   readonly kind: 'workout' | 'meal';
 }
 
-/** PLAN-1's `PlanOutboxSource`, as the workout outbox fills it. */
+/** PLAN-1's `PlanOutboxSource`, as the workout outbox fills it, plus `activate`. */
 export interface WorkoutPlanOutboxSource {
+  activate(): Promise<void>;
   flush(): Promise<void>;
   failedItems(): readonly FailedOutboxItem[];
   saveAsExtra(item: WorkoutPlanOutboxItem): Promise<void>;
@@ -56,12 +68,16 @@ function holds(item: WorkoutPlanOutboxItem): boolean {
 }
 
 export const workoutPlanOutboxSource: WorkoutPlanOutboxSource = {
-  async flush() {
-    const app = useAppStore.getState();
+  async activate() {
     // iOS guards on the profile: without one there is no folder to read.
-    const memberId = app.profile?.id;
-    if (!memberId) return;
-    await activateWorkoutRunnerSupport(memberId);
+    const memberId = useAppStore.getState().profile?.id;
+    if (memberId) await activateWorkoutRunnerSupport(memberId);
+  },
+  async flush() {
+    if (!useAppStore.getState().profile?.id) return;
+    // Cheap when `activate` already ran on this appearance: the queue is
+    // loaded once per member, runner.json is one small read.
+    await workoutPlanOutboxSource.activate();
     await flushWorkoutOutbox({ foreground: true });
   },
   failedItems() {
