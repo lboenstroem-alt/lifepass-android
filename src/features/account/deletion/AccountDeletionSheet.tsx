@@ -9,7 +9,8 @@
  *
  * - ACTIVE: what deletion does, the health line, a red "Delete my account"
  *   that asks once more in an alert, and Cancel. The request has no body
- *   and one Idempotency-Key per presentation (../../../api/accountDeletion.ts).
+ *   and one Idempotency-Key per request (see `keys` below for how that
+ *   differs from iOS, and why).
  * - PENDING (`deletion_pending`): the erasure date in the account language,
  *   one line per obligation still to settle, "Keep my account" and the note
  *   that deleted health data does not come back.
@@ -109,10 +110,18 @@ function DeletionPresentation({ visible, onClose, onClosed, returnFocusRef, test
   /** Read synchronously by the actions, so a double tap starts one call. */
   const working = useRef(false);
   /**
-   * One key per presentation for the request: a member who taps Delete
-   * twice, or retries after a timeout, makes one request. Spent once the
-   * server has answered it, so a request made again after "Keep my account"
-   * in the same sheet is a new request, not a replay of the first answer.
+   * The request's Idempotency-Key: a member who taps Delete twice, or
+   * retries after a timeout or an error, makes one request (iOS: one key per
+   * presentation).
+   *
+   * AN ANDROID ADAPTATION (DECISIONS.md, engineering adaptations). The key
+   * is spent once the server has ANSWERED, so a Delete made again after
+   * "Keep my account" in the same sheet is a new request with a new key.
+   * iOS keeps one key for the whole presentation, and the server replays a
+   * key's cached answer to the same member (the backend's 05_MOBILE_API.md,
+   * "Idempotent Writes": discard the key once the action is observed
+   * complete): the second Delete would request nothing and show the stale
+   * pending answer for an account the cancel had made active again.
    */
   const [keys] = useState(() => new ActionKeys<KeyedAction>());
   /** The local wipe this phone owes once the sheet has gone, and whose it is. */

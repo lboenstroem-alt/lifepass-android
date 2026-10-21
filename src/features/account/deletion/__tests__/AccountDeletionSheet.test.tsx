@@ -1,7 +1,7 @@
 /**
  * The deletion sheet (iOS AccountDeletionSheet): the active and pending
  * states, the confirm alert, the request with no body and one key per
- * presentation (reused on a retry), the answer shown BEFORE the local wipe,
+ * request (reused on a retry), the answer shown BEFORE the local wipe,
  * the wipe and profile read once the sheet has gone (closed, or unmounted by
  * whatever held it, even mid-request: iOS `onDisappear`), Keep my account
  * with a fresh key, the error lines, the lock while a request runs, and the
@@ -250,6 +250,8 @@ describe('requesting the deletion', () => {
     expect(bottomSheetMock.latest()?.enablePanDownToClose).toBe(true);
   });
 
+  // An Android adaptation (DECISIONS.md): iOS reuses the presentation's key,
+  // and the server would replay the first, now stale, pending answer.
   it('a second request in the same sheet, after Keep my account, is a new request with a new key', async () => {
     signIn();
     api.on('GET', '/account/deletion', Reply.ok(ACTIVE));

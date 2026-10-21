@@ -4,7 +4,7 @@
  * (Views/Profile/AccountDeletionSheet.swift).
  *
  *   const state = await fetchAccountDeletionState();
- *   const result = await requestAccountDeletion(key);   // one key per sheet
+ *   const result = await requestAccountDeletion(key);   // one key per request, kept for its retries
  *   const back = await cancelAccountDeletion(newIdempotencyKey());
  *
  * NO CACHE. `POST /account/deletion` answers with `healthDeleted`, the counts
@@ -229,8 +229,9 @@ export function fetchAccountDeletionState(options: AccountDeletionCallOptions = 
 
 /**
  * OP-05 `POST /account/deletion`, with no body (see the file comment).
- * `idempotencyKey`: the sheet's one key, reused for a retry, so a member who
- * taps Delete twice, or retries after a timeout, makes one request.
+ * `idempotencyKey`: the sheet's key for this request, reused for a retry, so
+ * a member who taps Delete twice, or retries after a timeout, makes one
+ * request.
  */
 export function requestAccountDeletion(
   idempotencyKey: string,
