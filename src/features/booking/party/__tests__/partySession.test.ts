@@ -18,6 +18,7 @@ import {
   disclosedPriceIsk,
   groupBookable,
   guestAgeBandsForRequest,
+  hasSelection,
   selectedVisitOption,
   showsAgeBands,
   visitChoiceOptions,
@@ -32,6 +33,7 @@ import {
   CONFIRMED,
   consent,
   FIRST_PARTY,
+  flush,
   FREE_PREVIEW,
   iso,
   klass,
@@ -175,6 +177,99 @@ describe('the party size', () => {
     await store.getState().changeParticipants(5);
     expect(store.getState().selectedSlot).toBeNull();
     expect(store.getState().availableSlots.map((slot) => slot.startTime)).toEqual([START, SECOND]);
+  });
+
+  describe('two changes faster than the server answers (a quick double tap)', () => {
+    /**
+     * A Bókun day whose reads wait, once `holding`, until released by the
+     * order they were asked in: 10:00 with `spots` places, 11:00 with plenty.
+     */
+    function heldDay(spots: number) {
+      const waiting: (() => void)[] = [];
+      const day = {
+        holding: false,
+        release: (index: number) => waiting[index]!(),
+        waiting: () => waiting.length,
+      };
+      respond((request) => {
+        if (!request.path.endsWith('/availability')) return Reply.problem(404, 'not_found');
+        const reply = Reply.ok({
+          activityId: BOKUN.id,
+          provider: 'bokun',
+          slots: [START, SECOND].map((start) => ({
+            startsAt: iso(start),
+            endsAt: iso(plus(start, 7200)),
+            available: true,
+            remainingCapacity: start.getTime() === START.getTime() ? spots : 20,
+          })),
+          ageBands: BANDS,
+          fetchedAt: iso(new Date()),
+        });
+        if (!day.holding) return reply;
+        return new Promise<StubReply>((resolve) => waiting.push(() => resolve(reply)));
+      });
+      return day;
+    }
+
+    /** Two plus taps from the member alone, answered in `order`. */
+    async function doubleTap(spots: number, order: readonly number[]): Promise<TestSession> {
+      const day = heldDay(spots);
+      const session = await onTimetable();
+      expect(session.store.getState().selectedSlot?.startTime).toEqual(START);
+      day.holding = true;
+      const first = session.store.getState().changeGuests({ adult: 1 });
+      const second = session.store.getState().changeGuests({ adult: 2 });
+      await flush();
+      expect(day.waiting()).toBe(2);
+      expect(requests('/availability').slice(-2).map((request) => request.query.participants)).toEqual(['2', '3']);
+      for (const index of order) {
+        day.release(index);
+        await flush();
+      }
+      await Promise.all([first, second]);
+      expect(session.store.getState().participants).toBe(3);
+      expect(session.store.getState().isLoading).toBe(false);
+      return session;
+    }
+
+    it.each([
+      ['in the order asked', [0, 1]],
+      ['the other way round', [1, 0]],
+    ])('a time with two places is let go for three people, answered %s', async (_, order) => {
+      const { store } = await doubleTap(2, order);
+      expect(store.getState().selectedSlot).toBeNull();
+      expect(hasSelection(store.getState())).toBe(false);
+    });
+
+    it.each([
+      ['in the order asked', [0, 1]],
+      ['the other way round', [1, 0]],
+    ])('a time with eight places is kept for three people, answered %s', async (_, order) => {
+      const { store } = await doubleTap(8, order);
+      expect(store.getState().selectedSlot?.startTime).toEqual(START);
+      expect(store.getState().selectedSlot?.remainingCapacity).toBe(8);
+    });
+
+    it('another day read while a change is out lets the old day\'s time go', async () => {
+      const day = heldDay(8);
+      const { store } = await onTimetable();
+      day.holding = true;
+      const change = store.getState().changeGuests({ adult: 1 });
+      // The member goes back and opens the next day before the answer.
+      store.getState().selectDay('2030-03-15');
+      const reread = store.getState().loadTimetable();
+      const after = store.getState().changeGuests({ adult: 2 });
+      await flush();
+      expect(day.waiting()).toBe(3);
+      for (const index of [0, 1, 2]) {
+        day.release(index);
+        await flush();
+      }
+      await Promise.all([change, reread, after]);
+      expect(requests('/availability').at(-1)!.query).toMatchObject({ start: '2030-03-15', participants: '3' });
+      expect(store.getState().participants).toBe(3);
+      expect(store.getState().selectedSlot).toBeNull();
+    });
   });
 
   it('a time the provider stopped offering for the party is let go; one with no known spot count is kept', async () => {
