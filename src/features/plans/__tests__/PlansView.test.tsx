@@ -9,6 +9,10 @@
  * resuming it only on a verification made in the sheet; and Plans held open
  * while a checkout is in flight.
  *
+ * What follows the gate is PLANS-2's checkout (../checkout): a purchase that
+ * clears the gate opens the payment sheet, and its "Continue to payment"
+ * creates the checkout against the stub server.
+ *
  * Plans runs as the root modal over another screen in a real native stack,
  * so back and closing go through React Navigation as in the app.
  */
@@ -16,6 +20,7 @@ import { createNavigationContainerRef, NavigationContainer } from '@react-naviga
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
+import * as WebBrowser from 'expo-web-browser';
 import { DeviceEventEmitter, View } from 'react-native';
 
 import { decodeProfile } from '../../../api/profile';
@@ -28,7 +33,6 @@ import { setAnalyticsObserver } from '../../../lib/analytics';
 import type { RootModalProps, RootRoutes } from '../../../navigation/types';
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
 import { MEMBER_A, profileJSON } from '../../../stores/__tests__/storeHarness';
-import * as legacyPayments from '../../../supabase/services/payments';
 import { openKenniSheet, type KenniSheetOptions } from '../../kenni';
 import { resetPlanCatalog } from '../catalogStore';
 import PlansView from '../PlansView';
@@ -63,11 +67,6 @@ async function pressBack(): Promise<void> {
   });
 }
 
-let startCheckout: jest.SpyInstance<
-  ReturnType<typeof legacyPayments.startCheckout>,
-  Parameters<typeof legacyPayments.startCheckout>
->;
-
 beforeEach(() => {
   bottomSheetMock.reset();
   setTestFontScale(1);
@@ -76,7 +75,9 @@ beforeEach(() => {
   setCurrentLanguage('en');
   dismissAllDialogs();
   openKenni.mockReset();
-  startCheckout = jest.spyOn(legacyPayments, 'startCheckout').mockResolvedValue('canceled');
+  jest.mocked(WebBrowser.openAuthSessionAsync).mockReset();
+  // A checkout the member backs out of, unless a test says otherwise.
+  api.on('POST', '/payments/checkout-sessions', Reply.problem(409, 'order_create_failed'));
 });
 
 afterEach(() => {
@@ -128,6 +129,13 @@ const continueButton = () => screen.getByTestId('plans.continue');
 // The first text in the pill is its label (the arrow is a glyph after it).
 const continueText = () => within(continueButton()).getAllByText(/./)[0].props.children;
 const kenniOptions = (): KenniSheetOptions => openKenni.mock.calls.at(-1)![0];
+/** The payment sheet (PLANS-2) open for `slug`, or null. */
+const paymentSheetFor = (slug: string) => screen.queryByTestId(`plans.payment_sheet.${slug}`);
+/** "Continue to payment" in the payment sheet: creates the checkout. */
+const payInSheet = async () => fireEvent.press(screen.getByTestId('plans.mandate.continue'));
+/** The checkouts created (`POST /payments/checkout-sessions`), oldest first. */
+const checkouts = () => api.sentAll('/payments/checkout-sessions', 'POST');
+const checkoutSlugs = () => checkouts().map((request) => (request.body as { productSlug: string }).productSlug);
 
 describe('the screen', () => {
   it('opens on the memberships, Plus selected, with no price and the generic line before the catalogue', async () => {
@@ -275,10 +283,15 @@ describe('the screen', () => {
   it('stays open while the checkout is in flight: back and the chevron wait for its answer', async () => {
     signIn({ verified: true });
     serveCatalogue(CATALOGUE_WITHOUT_POOL);
-    let finish: (outcome: legacyPayments.CheckoutOutcome) => void = () => undefined;
-    startCheckout.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    let finish: () => void = () => undefined;
+    const answered = new Promise<void>((resolve) => (finish = resolve));
+    api.on('POST', '/payments/checkout-sessions', async () => {
+      await answered;
+      return Reply.problem(409, 'order_create_failed');
+    });
     await renderPlans();
     await fireEvent.press(continueButton());
+    await payInSheet();
     expect(continueButton()).toBeDisabled();
 
     await pressBack();
@@ -286,8 +299,9 @@ describe('the screen', () => {
     await fireEvent.press(screen.getByRole('button', { name: en('common.back') }));
     expect(currentRoute()).toBe('Plans');
 
-    // The checkout answered (the member backed out of the payment page): Plans can close again.
-    await act(async () => finish('canceled'));
+    // The checkout answered (refused): its alert, then Plans can close again.
+    await act(async () => finish());
+    await fireEvent.press(await screen.findByRole('button', { name: en('common.ok') }));
     expect(continueButton()).toBeEnabled();
     await pressBack();
     expect(currentRoute()).toBe('Main');
@@ -371,7 +385,7 @@ describe('the eID gate', () => {
     expect(card('pass-adventurer')).toBeSelected();
   });
 
-  it('a verified member’s Continue on a membership goes straight to the checkout', async () => {
+  it('a verified member’s Continue on a membership goes straight to the payment sheet', async () => {
     signIn({ verified: true });
     serveCatalogue(CATALOGUE_WITHOUT_POOL);
     const events: string[] = [];
@@ -379,17 +393,20 @@ describe('the eID gate', () => {
     await renderPlans();
     await fireEvent.press(continueButton());
     expect(openKenni).not.toHaveBeenCalled();
-    expect(startCheckout).toHaveBeenCalledWith('plan-plus');
+    expect(paymentSheetFor('plan-plus')).toBeOnTheScreen();
     expect(events).toContain('plan_selected plan-plus');
+    await payInSheet();
+    await waitFor(() => expect(checkoutSlugs()).toEqual(['plan-plus']));
+    expect(events).toContain('begin_checkout plan-plus');
   });
 
-  it('a pass needs no eID: Continue checks out at once for an unverified member', async () => {
+  it('a pass needs no eID: Continue goes to the payment sheet at once for an unverified member', async () => {
     signIn({ verified: false });
     serveCatalogue(CATALOGUE_WITHOUT_POOL);
     await renderPlans({ segment: 'passes' });
     await fireEvent.press(continueButton());
     expect(openKenni).not.toHaveBeenCalled();
-    expect(startCheckout).toHaveBeenCalledWith('pass-adventurer');
+    expect(paymentSheetFor('pass-adventurer')).toBeOnTheScreen();
   });
 
   it('Continue on a membership while unverified parks it, opens Kenni, and resumes once verified', async () => {
@@ -399,13 +416,13 @@ describe('the eID gate', () => {
     await fireEvent.press(continueButton());
     expect(openKenni).toHaveBeenCalledTimes(1);
     expect(kenniOptions().bodyKey).toBe('kenni.body');
-    expect(startCheckout).not.toHaveBeenCalled();
+    expect(paymentSheetFor('plan-plus')).toBeNull();
 
     // Kenni verified the member and re-read the profile before closing.
     await act(async () => signIn({ verified: true }));
     await act(async () => kenniOptions().onClose());
-    expect(startCheckout).toHaveBeenCalledWith('plan-plus');
-    expect(startCheckout).toHaveBeenCalledTimes(1);
+    expect(paymentSheetFor('plan-plus')).toBeOnTheScreen();
+    expect(checkouts()).toHaveLength(0);
   });
 
   it('the Step 1 chip parks the selected membership the same way', async () => {
@@ -416,7 +433,7 @@ describe('the eID gate', () => {
     await fireEvent.press(screen.getByTestId('plans.kenni_step'));
     await act(async () => signIn({ verified: true }));
     await act(async () => kenniOptions().onClose());
-    expect(startCheckout).toHaveBeenCalledWith('plan-max');
+    expect(paymentSheetFor('plan-max')).toBeOnTheScreen();
   });
 
   it('closing Kenni unverified never resumes, after one more read of the profile to be sure', async () => {
@@ -427,7 +444,7 @@ describe('the eID gate', () => {
     const reads = api.sentAll('/profile', 'GET').length;
     await act(async () => kenniOptions().onClose());
     expect(api.sentAll('/profile', 'GET').length).toBe(reads + 1);
-    expect(startCheckout).not.toHaveBeenCalled();
+    expect(paymentSheetFor('plan-plus')).toBeNull();
   });
 
   it('resumes when the verified profile lands only after the sheet has closed', async () => {
@@ -437,7 +454,7 @@ describe('the eID gate', () => {
     await fireEvent.press(continueButton());
     api.on('GET', '/profile', Reply.ok(profileJSON({ kennitalaVerified: true })));
     await act(async () => kenniOptions().onClose());
-    await waitFor(() => expect(startCheckout).toHaveBeenCalledWith('plan-plus'));
+    await waitFor(() => expect(paymentSheetFor('plan-plus')).toBeOnTheScreen());
   });
 
   it('"See visitor passes" in the Kenni sheet forgets the parked plan and shows the passes', async () => {
@@ -450,17 +467,11 @@ describe('the eID gate', () => {
     expect(screen.getByRole('tab', { name: en('plans.segment.passes') })).toBeSelected();
     await act(async () => signIn({ verified: true }));
     await act(async () => kenniOptions().onClose());
-    expect(startCheckout).not.toHaveBeenCalled();
+    expect(screen.queryByTestId(/^plans\.payment_sheet\./)).toBeNull();
   });
 
   describe('the server’s refusal (the local flag said verified, and was stale)', () => {
-    const kennitalaRequired = () => {
-      const { ProblemError } = jest.requireActual('../../../api');
-      return new ProblemError(
-        { type: 'https://lifepass.is/problems/kennitala_verification_required', title: 'x', status: 403 },
-        403,
-      );
-    };
+    const KENNITALA_REQUIRED = Reply.problem(403, 'kennitala_verification_required');
     /** The server's profile says what the server believes; the phone still has `verified: true`. */
     const serverProfileSays = (verified: boolean) =>
       api.on('GET', '/profile', Reply.ok(profileJSON({ kennitalaVerified: verified })));
@@ -469,16 +480,21 @@ describe('the eID gate', () => {
       signIn({ verified: true });
       serverProfileSays(false);
       serveCatalogue(CATALOGUE_WITHOUT_POOL);
-      let refuse: (error: unknown) => void = () => undefined;
-      startCheckout.mockImplementationOnce(() => new Promise((_resolve, reject) => (refuse = reject)));
+      let refuse: () => void = () => undefined;
+      const refused = new Promise<void>((resolve) => (refuse = resolve));
+      api.on('POST', '/payments/checkout-sessions', async () => {
+        await refused;
+        return KENNITALA_REQUIRED;
+      });
       await renderPlans();
       await fireEvent.press(continueButton());
+      await payInSheet();
       expect(continueButton()).toBeDisabled();
       // The member moves the selection while the checkout is being created.
       await fireEvent.press(card('plan-base'));
       const reads = api.sentAll('/profile', 'GET').length;
-      await act(async () => refuse(kennitalaRequired()));
-      expect(openKenni).toHaveBeenCalledTimes(1);
+      await act(async () => refuse());
+      await waitFor(() => expect(openKenni).toHaveBeenCalledTimes(1));
       expect(kenniOptions().bodyKey).toBe('kenni.body');
       expect(screen.queryByText(en('plans.payment_issue'))).toBeNull();
       // The stale flag is corrected: the note and the chip come back.
@@ -486,25 +502,29 @@ describe('the eID gate', () => {
       expect(await screen.findByText(en('plans.eid.no_id_hint'))).toBeOnTheScreen();
       expect(screen.getByTestId('plans.kenni_step')).toBeOnTheScreen();
 
-      // The member verifies in the sheet; it closes, and the SUBMITTED plan resumes.
+      // The member verifies in the sheet; it closes, and the SUBMITTED plan
+      // resumes at its payment sheet, which waits for a tap.
       serverProfileSays(true);
       await act(async () => kenniOptions().onClose());
-      await waitFor(() => expect(startCheckout).toHaveBeenCalledTimes(2));
-      expect(startCheckout).toHaveBeenLastCalledWith('plan-plus');
+      await waitFor(() => expect(paymentSheetFor('plan-plus')).toBeOnTheScreen());
+      expect(paymentSheetFor('plan-base')).toBeNull();
+      expect(checkoutSlugs()).toEqual(['plan-plus']);
     });
 
     it('closing Kenni without verifying sends nothing again: no refusal, sheet, refusal loop', async () => {
       signIn({ verified: true });
       serverProfileSays(false);
       serveCatalogue(CATALOGUE_WITHOUT_POOL);
-      startCheckout.mockRejectedValue(kennitalaRequired());
+      api.on('POST', '/payments/checkout-sessions', KENNITALA_REQUIRED);
       await renderPlans();
       await fireEvent.press(continueButton());
+      await payInSheet();
       await waitFor(() => expect(openKenni).toHaveBeenCalledTimes(1));
       await act(async () => kenniOptions().onClose());
       await act(async () => undefined);
-      expect(startCheckout).toHaveBeenCalledTimes(1);
+      expect(checkouts()).toHaveLength(1);
       expect(openKenni).toHaveBeenCalledTimes(1);
+      expect(paymentSheetFor('plan-plus')).toBeNull();
       // The plan is still selected; the member can try again with a tap.
       expect(card('plan-plus')).toBeSelected();
       expect(continueButton()).toBeEnabled();
@@ -514,20 +534,23 @@ describe('the eID gate', () => {
       // The server's profile and its checkout disagree: only a tap sends another checkout.
       signIn({ verified: true });
       serveCatalogue(CATALOGUE_WITHOUT_POOL);
-      startCheckout.mockRejectedValue(kennitalaRequired());
+      api.on('POST', '/payments/checkout-sessions', KENNITALA_REQUIRED);
       await renderPlans();
       await fireEvent.press(continueButton());
+      await payInSheet();
       await waitFor(() => expect(openKenni).toHaveBeenCalledTimes(1));
       const reads = api.sentAll('/profile', 'GET').length;
       await act(async () => kenniOptions().onClose());
       await waitFor(() => expect(api.sentAll('/profile', 'GET').length).toBeGreaterThan(reads));
       await act(async () => undefined);
-      expect(startCheckout).toHaveBeenCalledTimes(1);
+      expect(checkouts()).toHaveLength(1);
       expect(openKenni).toHaveBeenCalledTimes(1);
+      expect(paymentSheetFor('plan-plus')).toBeNull();
 
       await fireEvent.press(continueButton());
+      await payInSheet();
       await waitFor(() => expect(openKenni).toHaveBeenCalledTimes(2));
-      expect(startCheckout).toHaveBeenCalledTimes(2);
+      expect(checkouts()).toHaveLength(2);
     });
   });
 
@@ -537,10 +560,10 @@ describe('the eID gate', () => {
     await renderPlans({ segment: 'passes' });
     await fireEvent.press(card('pass-day-pool'));
     expect(card('pass-day-pool')).toBeSelected();
-    startCheckout.mockRestore();
     api.on('POST', '/payments/checkout-sessions', Reply.problem(404, 'product_not_on_sale'));
     serveCatalogue(CATALOGUE_WITHOUT_POOL);
     await fireEvent.press(continueButton());
+    await payInSheet();
     expect(await screen.findByText(en('plans.payment_issue'))).toBeOnTheScreen();
     expect(screen.getByText(en('plans.err.not_on_sale'))).toBeOnTheScreen();
     await waitFor(() => expect(cardIds()).not.toContain('pass-day-pool'));
@@ -551,9 +574,14 @@ describe('the eID gate', () => {
     signIn({ verified: true });
     serveCatalogue(CATALOGUE_WITHOUT_POOL);
     api.on('GET', '/subscriptions', Reply.ok(null));
-    startCheckout.mockResolvedValue('fulfilled');
+    api.on('POST', '/payments/checkout-sessions', Reply.ok({ checkoutUrl: 'https://pay.kling.is/c/cs_1', externalSessionId: 'cs_1' }, 201));
+    api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'fulfilled' }));
+    jest
+      .mocked(WebBrowser.openAuthSessionAsync)
+      .mockResolvedValue({ type: 'success', url: 'lifepass://payment-success' } as WebBrowser.WebBrowserAuthSessionResult);
     await renderPlans();
     await fireEvent.press(continueButton());
+    await payInSheet();
     expect(await screen.findByText(en('plans.welcome_title'))).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: en('plans.welcome_cta') }));
     expect(currentRoute()).toBe('Main');
