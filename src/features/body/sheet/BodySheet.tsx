@@ -569,7 +569,7 @@ export default function BodySheet({ visible, mode, onDismiss, onClosed }: BodySh
     </LPText>
   ) : (
     <View style={styles.block}>
-      <LPText size={13} weight="semibold" color={colors.paper2} accessibilityRole="header">
+      <LPText size={13} weight="semibold" color={colors.paper2}>
         {t('body.age')}
       </LPText>
       <ChipRow>
@@ -689,7 +689,7 @@ export default function BodySheet({ visible, mode, onDismiss, onClosed }: BodySh
           <>
             {ageBlock}
             <View style={styles.block}>
-              <LPText size={13} weight="semibold" color={colors.paper2} accessibilityRole="header">
+              <LPText size={13} weight="semibold" color={colors.paper2}>
                 {t('body.sex')}
               </LPText>
               <View style={styles.chipLine}>
@@ -710,7 +710,7 @@ export default function BodySheet({ visible, mode, onDismiss, onClosed }: BodySh
               </LPText>
             </View>
             <View style={styles.block}>
-              <LPText size={13} weight="semibold" color={colors.paper2} accessibilityRole="header">
+              <LPText size={13} weight="semibold" color={colors.paper2}>
                 {t('body.activity')}
               </LPText>
               <View style={styles.card} accessibilityRole="radiogroup">

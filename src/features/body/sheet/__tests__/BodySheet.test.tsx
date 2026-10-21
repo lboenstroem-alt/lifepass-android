@@ -15,7 +15,7 @@ import { resetHealthStoreForTests } from '../../../../health/store';
 import { restoreTestFontScale, setTestFontScale } from '../../../../hooks/testing';
 import { translate } from '../../../../i18n';
 import { resetAppStoreForTests, useAppStore } from '../../../../stores/appStore';
-import { BodySheetsHost, openBodySheet, type BodyIntakeResult, type BodySheetMode } from '../../sheets';
+import { BodySheetsHost, openBodySheet, openTargetSheet, type BodyIntakeResult, type BodySheetMode } from '../../sheets';
 import { resetBodySheetPresenterForTests, useBodySheetPresenter } from '../presenter';
 
 jest.mock('@gorhom/bottom-sheet', () =>
@@ -417,6 +417,51 @@ describe('intake mode (the wizard question)', () => {
     await act(async () => openBodySheet({ kind: 'intake', prefill: { kennitalaVerified: true }, onResult: (r) => second.push(r) }));
     expect(second).toEqual([{ kind: 'cancelled' }]);
     expect(first).toEqual([]);
+  });
+});
+
+describe('closing and what comes next', () => {
+  /** The member pans the sheet down (or taps the backdrop): the library reports it gone while it is still up. */
+  const swipeAway = () => act(async () => bottomSheetMock.latest()?.onDismiss?.());
+
+  it('an intake swiped away answers cancelled exactly once, and the next open works', async () => {
+    signIn();
+    const results: BodyIntakeResult[] = [];
+    await open({ kind: 'intake', prefill: { kennitalaVerified: true }, onResult: (r) => results.push(r) });
+    await swipeAway();
+    expect(results).toEqual([{ kind: 'cancelled' }]);
+    expect(useBodySheetPresenter.getState()).toEqual({ request: null, visible: false });
+    expect(screen.queryByRole('header', { name: en('body.title') })).toBeNull();
+
+    const next: BodyIntakeResult[] = [];
+    await act(async () => openBodySheet({ kind: 'intake', prefill: { kennitalaVerified: true }, onResult: (r) => next.push(r) }));
+    expect(screen.getByRole('header', { name: en('body.title') })).toBeOnTheScreen();
+    expect(next).toEqual([]);
+    expect(results).toEqual([{ kind: 'cancelled' }]);
+  });
+
+  it("a save's callback opens the target sheet, and it shows", async () => {
+    signIn();
+    const picked: number[] = [];
+    await open({
+      kind: 'update',
+      programId: PROGRAM,
+      onSaved: () => openTargetSheet({ kind: 'pick', goal: 'lose_weight', onPicked: (kg) => picked.push(kg) }),
+    });
+    await fireEvent.press(button('body.save'));
+    expect(await screen.findByRole('header', { name: en('target.sheet.title') })).toBeOnTheScreen();
+    expect(useBodySheetPresenter.getState().visible).toBe(true);
+    expect(useBodySheetPresenter.getState().request?.sheet).toBe('target');
+    expect(api.requests).toHaveLength(0);
+  });
+
+  it('the field labels are plain text; only the title is a heading, as on iOS', async () => {
+    signIn({ verified: false });
+    await open({ kind: 'update', programId: PROGRAM });
+    expect(screen.getAllByRole('header').map((node) => node.props.children)).toEqual([en('body.title')]);
+    expect(screen.getByText(en('body.age'))).toBeOnTheScreen();
+    expect(screen.getByText(en('body.sex'))).toBeOnTheScreen();
+    expect(screen.getByText(en('body.activity'))).toBeOnTheScreen();
   });
 });
 

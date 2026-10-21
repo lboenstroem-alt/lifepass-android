@@ -335,6 +335,27 @@ describe('pick mode (the Coach confirms first)', () => {
     expect(api.requests).toHaveLength(0);
   });
 
+  it('swiped away, it answers onCancel exactly once and the presenter is free again', async () => {
+    signIn();
+    const answers: string[] = [];
+    const mode: TargetSheetMode = {
+      kind: 'pick',
+      goal: 'lose_weight',
+      existing: view(),
+      onPicked: () => answers.push('picked'),
+      onCancel: () => answers.push('cancelled'),
+    };
+    await open(mode);
+    await act(async () => bottomSheetMock.latest()?.onDismiss?.());
+    expect(answers).toEqual(['cancelled']);
+    expect(useBodySheetPresenter.getState()).toEqual({ request: null, visible: false });
+
+    await act(async () => openTargetSheet(mode));
+    expect(field().props.value).toBe('75');
+    expect(answers).toEqual(['cancelled']);
+    expect(api.requests).toHaveLength(0);
+  });
+
   it('a standing target that points the other way does not prefill', async () => {
     signIn();
     await open({ kind: 'pick', goal: 'gain_weight', existing: view(), onPicked: jest.fn() });

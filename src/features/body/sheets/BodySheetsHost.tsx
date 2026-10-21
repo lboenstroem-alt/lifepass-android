@@ -5,7 +5,8 @@
 // errors and its Idempotency-Key start fresh, as iOS makes new @State per
 // presentation. The request stays while its sheet slides away, so the content
 // does not vanish mid-slide; what the sheet owes its caller runs once it has
-// gone (../sheet/presenter.ts).
+// gone, whether the sheet closed itself or the member swiped it away
+// (../sheet/presenter.ts).
 //
 // A page the caller opens from a callback goes through `openSharedRoute`
 // (src/navigation/sharedSheet.ts); the sheet has already gone by then, so the
@@ -22,6 +23,9 @@ export default function BodySheetsHost() {
   const request = useBodySheetPresenter((s) => s.request);
   const visible = useBodySheetPresenter((s) => s.visible);
   if (!request) return null;
+  // Both are bound to this request, so a sheet that is no longer the one on
+  // record (replaced while it slid away) can never close the next one.
+  const onDismiss = (after: (() => void) | null) => dismissBodySheet(request.id, after);
   const onClosed = () => bodySheetClosed(request.id);
   if (request.sheet === 'body') {
     return (
@@ -29,7 +33,7 @@ export default function BodySheetsHost() {
         key={request.id}
         visible={visible}
         mode={request.mode}
-        onDismiss={dismissBodySheet}
+        onDismiss={onDismiss}
         onClosed={onClosed}
       />
     );
@@ -39,7 +43,7 @@ export default function BodySheetsHost() {
       key={request.id}
       visible={visible}
       mode={request.mode}
-      onDismiss={dismissBodySheet}
+      onDismiss={onDismiss}
       onClosed={onClosed}
     />
   );
