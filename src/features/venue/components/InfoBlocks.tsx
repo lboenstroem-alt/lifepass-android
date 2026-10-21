@@ -1,6 +1,6 @@
 /* eslint lifepass/no-literal-copy: "error" */
 // The lower half of the page (iOS VenueDetailView `openingHoursBlock` and
-// `contactBlock`): this week's hours, only when the venue has hours, and
+// `contactBlock`): the venue's usual weekly hours, only when it has hours, and
 // "Getting there", only when there is an address, a phone or somewhere to
 // give directions to.
 import { Ionicons } from '@expo/vector-icons';
@@ -14,14 +14,18 @@ import { WEEKDAYS, type Venue } from '../../../types/venue';
 import { hasDirections, hourText, showsGettingThere } from '../model';
 import { DirectionsCapsule, SectionTitle } from './shared';
 
-/** "Hours" / "This week": Monday to Sunday, each "06:00 – 22:00", "Closed" or a dash. */
+/**
+ * "Hours" / "Usual hours": Monday to Sunday, each "06:00 – 22:00", "Closed" or a dash.
+ * One weekly set staff edit, not this week's calendar (holidays and one-off
+ * closures are not in it), so the kicker promises usual hours, as on iOS.
+ */
 export function OpeningHoursBlock({ venue }: { readonly venue: Venue }) {
   const { t } = useT();
   const hours = venue.openingHours;
   if (!hours) return null;
   return (
     <View style={styles.section} testID="venue.hours">
-      <SectionTitle title={t('venue.hours')} kicker={t('venue.hours_this_week')} />
+      <SectionTitle title={t('venue.hours')} kicker={t('venue.hours_usual')} />
       <View style={styles.hoursCard}>
         {WEEKDAYS.map((day, index) => {
           const value = hourText(hours[day], t);

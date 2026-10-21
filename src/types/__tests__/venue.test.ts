@@ -4,6 +4,7 @@
  */
 import { setCurrentLanguage, translate, type Lang } from '../../i18n';
 import {
+  icelandicDescription,
   iskPrefix,
   isBoutique,
   isComingSoon,
@@ -131,6 +132,16 @@ it('the description follows the account language, falling back to English', () =
   expect(localizedDescription(both, 'is')).toBe('Líkamsrækt.');
   expect(localizedDescription({ description: 'A gym.', descriptionIs: null }, 'is')).toBe('A gym.');
   expect(localizedDescription({ description: null, descriptionIs: 'Líkamsrækt.' }, 'en')).toBeNull();
+  expect(localizedDescription({ description: null, descriptionIs: 'Líkamsrækt.' }, 'is')).toBe('Líkamsrækt.');
+});
+
+it('a blank Icelandic description is no Icelandic description: Icelandic shows the English', () => {
+  for (const blank of ['', '   ', '\n\t ']) {
+    expect(localizedDescription({ description: 'A gym.', descriptionIs: blank }, 'is')).toBe('A gym.');
+    expect(icelandicDescription({ descriptionIs: blank })).toBeNull();
+  }
+  expect(icelandicDescription({ descriptionIs: null })).toBeNull();
+  expect(icelandicDescription({ descriptionIs: '  Líkamsrækt.  ' })).toBe('Líkamsrækt.');
 });
 
 it('a venue without a photo has no images', () => {
