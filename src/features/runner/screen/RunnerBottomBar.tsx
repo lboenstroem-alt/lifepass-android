@@ -146,7 +146,8 @@ function RestBar({ controller, countdownRef }: { controller: RunnerController; c
   const fit = useFit();
   const inner = Math.max(0, fit.width - 32);
   // Until measured, the narrow layout: it never cuts "Skip rest" short.
-  const oneLine = fitsInRow(fit, inner, ['countdown', 'buttons'], { gap: 14, fallback: false });
+  // The countdown, a spacer of at least 4 and the buttons, 10 apart (iOS HStack(spacing: 10)).
+  const oneLine = fitsInRow(fit, inner, ['countdown', 'buttons'], { gap: 10, fixed: 4, fixedCount: 1, fallback: false });
 
   const countdown = (
     <View onLayout={fit.onPartLayout('countdown')} style={styles.countdown}>
@@ -270,6 +271,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
   },
   restStack: {
     paddingHorizontal: 16,

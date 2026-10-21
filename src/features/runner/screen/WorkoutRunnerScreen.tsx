@@ -10,12 +10,17 @@
  * Whether another session's saved workout may be replaced is decided before
  * the runner is opened (RUN-3's launch rule).
  *
- * A session that cannot be found, or no member signed in, leaves at once:
- * there is nothing to run.
+ * A session that cannot be found, or no member signed in (neither happens
+ * through Plan or Home, which hand the session over): there is nothing to
+ * run, so the page says something went wrong and offers only its close;
+ * back closes it too. It never opens an empty workout.
  */
+import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { LPText } from '../../../components/ui';
 import { useT } from '../../../i18n';
 import type { RootModalProps } from '../../../navigation/types';
 import { useAppStore } from '../../../stores/appStore';
@@ -77,17 +82,53 @@ export default function WorkoutRunnerScreen({ route, navigation }: RootModalProp
     };
   }, [sessionId, entry, navigation]);
 
-  useEffect(() => {
-    if (launch?.kind === 'missing' && navigation.canGoBack()) navigation.goBack();
-  }, [launch, navigation]);
-
+  if (launch?.kind === 'missing') {
+    return <NothingToRun onClose={() => navigation.canGoBack() && navigation.goBack()} />;
+  }
   if (launch?.kind !== 'ready') return <View style={styles.page} testID="runner.opening" />;
   return <WorkoutRunnerView controller={launch.controller} />;
+}
+
+function NothingToRun({ onClose }: { onClose: () => void }) {
+  const { t } = useT();
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.page, { paddingTop: insets.top }]} testID="runner.unavailable">
+      <Pressable
+        testID="runner.close"
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel={t('common.close')}
+        style={styles.close}
+      >
+        <Ionicons name="close" size={24} color={colors.paper} />
+      </Pressable>
+      <View style={styles.body}>
+        <LPText size={15} color={colors.paper2} align="center">
+          {t('common.error_body')}
+        </LPText>
+      </View>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
   page: {
     flex: 1,
     backgroundColor: colors.ink,
+  },
+  close: {
+    width: 44,
+    height: 44,
+    marginLeft: 6,
+    marginTop: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  body: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
   },
 });

@@ -277,6 +277,11 @@ export class RunnerController {
     this.updateKeepAwake(now);
   }
 
+  /** `tick` at the controller's own time (the screen's half-second timer). */
+  tickNow(): void {
+    this.tick(this.clock());
+  }
+
   /** The app came to the foreground (`true`) or left it. */
   appStateChanged(isActive: boolean): void {
     // Two reports for one departure (inactive, then background) are one.

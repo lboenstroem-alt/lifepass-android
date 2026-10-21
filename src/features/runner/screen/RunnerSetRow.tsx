@@ -316,8 +316,10 @@ export default function RunnerSetRow({
     !accessibilityLayout &&
     fitsInRow(fit, inner, controlKeys, {
       gap: WIDE_GAP,
+      // The label, the spacer (no width, but a gap each side, as in SwiftUI's
+      // HStack) and the check.
       fixed: LABEL_WIDTH + CHECK_SIZE,
-      fixedCount: 2,
+      fixedCount: 3,
       fallback: !loads,
     });
   const sideBySide =

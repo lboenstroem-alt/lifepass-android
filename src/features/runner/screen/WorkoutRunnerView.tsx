@@ -76,7 +76,7 @@ function RunnerPage() {
 
   // The clock.
   useEffect(() => {
-    const timer = setInterval(() => controller.tick(new Date()), RUNNER_TICK_MS);
+    const timer = setInterval(() => controller.tickNow(), RUNNER_TICK_MS);
     return () => clearInterval(timer);
   }, [controller]);
 
