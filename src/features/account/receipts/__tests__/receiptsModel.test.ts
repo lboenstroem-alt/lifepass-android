@@ -9,6 +9,7 @@
  */
 import { api, Reply } from '@test/server';
 
+import { isPurchasePaid } from '../../../../api/purchases';
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { lookup } from '../../../../i18n';
 import { receiptStatusKey, ReceiptsViewModel, WEB_PURCHASES_URL, type ReceiptsState } from '../receiptsModel';
@@ -79,7 +80,8 @@ it('the orders are listed and paged with the server cursor', async () => {
 
   const shown = rows(viewModel.state);
   expect(shown.map((p) => p.productSlug)).toEqual(['plan-plus', 'pass-day-gym']);
-  expect(shown[0]!.status).toBe('fulfilled');
+  expect(isPurchasePaid(shown[0]!)).toBe(true);
+  expect(isPurchasePaid(shown[1]!)).toBe(false); // a started checkout is not a receipt
   expect(shown[1]!.id).toBe('0b7d4a62-3c9e-4f1a-a2d5-6e8f9c1b2a34');
   expect(viewModel.hasMore).toBe(true);
   expect(api.requests[0]!.query.limit).toBe('20');
