@@ -714,6 +714,12 @@ export function createBookingSession(options: CreateBookingSessionOptions = {}):
   // an earlier answer was still on its way.
   let timetableGeneration = 0;
   let previewGeneration = 0;
+  // The time a party change is keeping while its timetable read is out, with
+  // that read's generation. A second change made before the answer (a quick
+  // double tap on the stepper) finds the selection already cleared by the
+  // first read, so it takes this one over; any other read since (a new day)
+  // makes it stale.
+  let keptAcrossResize: { readonly slot: AvailabilitySlot; readonly generation: number } | null = null;
 
   const today = () => todayServerDay(deps.now());
   const initialDay = options.initialDay
@@ -1251,6 +1257,12 @@ export function createBookingSession(options: CreateBookingSessionOptions = {}):
      * from the end). The pending consent belongs to the OLD party, and so
      * does a rung; the timetable is read again so capacity covers everyone,
      * and a kept selection re-previews at the new composition.
+     *
+     * Only the NEWEST read decides the selection, against the party now on
+     * screen. Changes made faster than the server answers (iOS has no guard
+     * here) would otherwise let an older answer re-select a time on the old
+     * timetable, checked against the old party size, after the newer read
+     * had cleared it: three people on a time with two places, Next enabled.
      */
     async function resizeParty(participants: number, bands: readonly string[] | null): Promise<void> {
       set((state) => ({
@@ -1261,14 +1273,22 @@ export function createBookingSession(options: CreateBookingSessionOptions = {}):
         visitChoice: null,
       }));
       // The selection survives unless its known capacity can't seat the party.
-      const kept = get().selectedSlot;
-      await loadTimetable();
+      const carried = keptAcrossResize?.generation === timetableGeneration ? keptAcrossResize.slot : null;
+      const kept = get().selectedSlot ?? carried;
+      const read = loadTimetable();
+      // loadTimetable takes its generation before it first waits.
+      const mine = timetableGeneration;
+      keptAcrossResize = kept ? { slot: kept, generation: mine } : null;
+      await read;
+      if (mine !== timetableGeneration) return;
+      keptAcrossResize = null;
       if (!kept) return;
+      const party = get().participants;
       const refreshed = get().availableSlots.find((slot) => slot.id === kept.id);
       if (
         refreshed &&
         refreshed.isAvailable &&
-        (refreshed.remainingCapacity == null || refreshed.remainingCapacity >= participants)
+        (refreshed.remainingCapacity == null || refreshed.remainingCapacity >= party)
       ) {
         set((state) => slotPatch(state, refreshed));
         if (get().currentStep === 2) await loadPreview();
