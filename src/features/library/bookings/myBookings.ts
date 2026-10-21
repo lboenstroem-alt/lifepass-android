@@ -12,6 +12,14 @@
  * shows the "Error" alert with the error's own sentence (never a refusal
  * row: nothing was refused).
  *
+ * The reload after a cancel's answer is the exception to that guard: it must
+ * read the list as the server holds it NOW. A load already running (a pull
+ * started while the cancel was in flight; Android keeps the list, and so the
+ * X, on screen during a pull) may have read the booking before the cancel
+ * landed, so the cancel waits for that load to finish and then reads again.
+ * Simply returning, as iOS does, would leave a cancelled booking on screen as
+ * "Confirmed" with a live X until the next focus or pull.
+ *
  * THE CANCEL (2.5.5):
  *   - one at a time. While one is in flight every cancel button is disabled
  *     and a second cancel (a double tap, another card) is dropped, so a
@@ -119,8 +127,10 @@ export function createMyBookingsStore(overrides: Partial<MyBookingsDeps> = {}): 
   const deps: MyBookingsDeps = { ...defaultDeps(), ...overrides };
 
   return createStore<MyBookingsState>()((set, get) => {
-    const load = async (): Promise<void> => {
-      if (get().isLoading) return;
+    /** The load in flight, so a cancel's reload can wait it out (see THE LOAD). */
+    let running: Promise<void> | null = null;
+
+    const read = async (): Promise<void> => {
       set({ isLoading: true });
       try {
         const [upcoming, past] = await Promise.allSettled([deps.fetch('upcoming'), deps.fetch('past')]);
@@ -138,6 +148,23 @@ export function createMyBookingsStore(overrides: Partial<MyBookingsDeps> = {}): 
       }
     };
 
+    const load = async (): Promise<void> => {
+      if (running) return;
+      const run = read();
+      running = run;
+      try {
+        await run;
+      } finally {
+        if (running === run) running = null;
+      }
+    };
+
+    /** A load whose reads start after now: waits out one already running, then reads again. */
+    const reloadFresh = async (): Promise<void> => {
+      while (running) await running;
+      await load();
+    };
+
     const cancel = async (booking: MemberBooking): Promise<void> => {
       if (get().cancellingBookingId !== null) return;
       set({ cancellingBookingId: booking.id });
@@ -153,7 +180,7 @@ export function createMyBookingsStore(overrides: Partial<MyBookingsDeps> = {}): 
           const message = refusalMessage(error, 'cancel');
           // The server answered: show the list as it now stands, then the
           // refusal (a failed reload never replaces it).
-          if (refusal) await load();
+          if (refusal) await reloadFresh();
           set({ error: message, errorCta: refusal?.cta ?? null });
           return;
         }
@@ -163,7 +190,7 @@ export function createMyBookingsStore(overrides: Partial<MyBookingsDeps> = {}): 
         } catch {
           // A reminder that could not be removed never turns a cancel into a failure.
         }
-        await load();
+        await reloadFresh();
       } finally {
         set({ cancellingBookingId: null });
       }

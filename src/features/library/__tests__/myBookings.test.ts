@@ -224,6 +224,67 @@ describe('the cancel, around the answer', () => {
     expect(store.getState().errorCta).toBeNull();
   });
 
+  it('a cancel answered during a pull reads the list again once the pull is done', async () => {
+    // The pull's reads are held until after the cancel has landed, and answer
+    // with the booking still confirmed (read before the cancel). The cancel's
+    // reload must not be swallowed by the pull's re-entry guard.
+    const held: (() => void)[] = [];
+    let calls = 0;
+    api.on('GET', '/bookings', (request) => {
+      calls += 1;
+      if (calls > 2) return emptyPage;
+      const stale = request.query.range === 'upcoming' ? pageOf([rowJSON(BOOKING_ID, '2030-03-14T10:00:00Z')]) : emptyPage;
+      return new Promise<StubReply>((resolve) => held.push(() => resolve(stale)));
+    });
+    api.on('POST', '/bookings/:id/cancel', cancelled);
+    const { store } = makeStore();
+
+    const pull = store.getState().load();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(store.getState().isLoading).toBe(true);
+
+    const cancelling = store.getState().cancelBooking(booking);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(cancels()).toHaveLength(1);
+    held.forEach((release) => release());
+    await Promise.all([pull, cancelling]);
+
+    expect(reads()).toHaveLength(4);
+    // The last two reads went out after the cancel.
+    const cancelAt = api.requests.findIndex((r) => r.method === 'POST');
+    expect(api.requests.slice(cancelAt + 1).filter((r) => r.method === 'GET')).toHaveLength(2);
+    expect(store.getState().upcoming).toHaveLength(0);
+    expect(store.getState().isLoading).toBe(false);
+  });
+
+  it('a refusal answered during a pull also reads the list again after it', async () => {
+    let release: () => void = () => undefined;
+    let calls = 0;
+    api.on('GET', '/bookings', () => {
+      calls += 1;
+      if (calls > 2) return emptyPage;
+      return new Promise<StubReply>((resolve) => {
+        const previous = release;
+        release = () => {
+          previous();
+          resolve(emptyPage);
+        };
+      });
+    });
+    api.on('POST', '/bookings/:id/cancel', Reply.problem(404, 'booking_not_found'));
+    const { store } = makeStore();
+
+    const pull = store.getState().load();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const cancelling = store.getState().cancelBooking(booking);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release();
+    await Promise.all([pull, cancelling]);
+
+    expect(reads()).toHaveLength(4);
+    expect(store.getState().error).toBe(t('refusal.not_cancellable'));
+  });
+
   it('keeps every cancel button waiting while one is in flight', async () => {
     let release: () => void = () => undefined;
     api.on('POST', '/bookings/:id/cancel', () => new Promise<StubReply>((resolve) => (release = () => resolve(cancelled()))));
