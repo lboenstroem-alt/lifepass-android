@@ -215,6 +215,11 @@ export function reminderDraft(programId: string): ReminderPreferences | null {
   return reminderDrafts.get(programId) ?? null;
 }
 
+/** A health wipe: no card's choice is remembered (the cards listening stay). */
+export function forgetProposalDrafts(): void {
+  reminderDrafts.clear();
+}
+
 /** Tests and sign-out: nobody listening, no card's choice remembered. */
 export function resetProposalBridges(): void {
   listeners.clear();

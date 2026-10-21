@@ -39,6 +39,11 @@ export function historyItem(id: string): SessionHistoryItem | null {
   return items.get(id) ?? null;
 }
 
+/** Sign-out and a health wipe: the workouts go now, whatever list is still mounted. */
+export function forgetHistoryItems(): void {
+  items.clear();
+}
+
 /** Tests: nothing held. */
 export function resetHistoryItemsForTests(): void {
   items.clear();
