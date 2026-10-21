@@ -19,9 +19,17 @@ import type { CheckInState, WeighInState } from '../../../health';
 import type { Lang } from '../../../i18n';
 import { formatDecimalInput } from '../../../components/ui/numberInput';
 import { decimal, parseDecimal, parseInteger, shortDay } from '../../../i18n/format';
-import { BODY_HEIGHT_RANGE, BODY_WEIGHT_RANGE } from '../../body/sheets';
 
 import type { HealthCheckInBody, WeekRating } from './api';
+
+/**
+ * iOS `BodyDetails.weightRange` and `heightRange`: the 30 to 300 kg and 120
+ * to 230 cm every body field takes, the same numbers as the body sheet's
+ * (BODY-2's `BODY_WEIGHT_RANGE` / `BODY_HEIGHT_RANGE`, which a test holds
+ * these to). Written here so these rules load without the body sheet's UI.
+ */
+export const CHECKIN_WEIGHT_RANGE = { min: 30, max: 300 } as const;
+export const CHECKIN_HEIGHT_RANGE = { min: 120, max: 230 } as const;
 
 /** `weekly`: the check-in. `weightOnly`: Body and goals "Log weight", the weight field and nothing else. */
 export type WeeklyCheckInMode = 'weekly' | 'weightOnly';
@@ -89,7 +97,7 @@ export function weightIsValid(form: Pick<CheckInForm, 'weightText' | 'weightSkip
   if (form.weightSkipped) return true;
   const value = checkInWeight(form);
   if (value === null) return form.weightText === '';
-  return value >= BODY_WEIGHT_RANGE.min && value <= BODY_WEIGHT_RANGE.max;
+  return value >= CHECKIN_WEIGHT_RANGE.min && value <= CHECKIN_WEIGHT_RANGE.max;
 }
 
 /** Save is live with a valid weight or a rating (Log weight: a valid weight only). */
@@ -129,7 +137,7 @@ export function checkInBody(form: CheckInForm): HealthCheckInBody {
   if (weightKg === null) return body;
   body.weightKg = weightKg;
   const cm = form.showHeightField ? parseInteger(form.heightText) : null;
-  if (cm !== null && cm >= BODY_HEIGHT_RANGE.min && cm <= BODY_HEIGHT_RANGE.max) {
+  if (cm !== null && cm >= CHECKIN_HEIGHT_RANGE.min && cm <= CHECKIN_HEIGHT_RANGE.max) {
     body.heightCm = cm;
   } else if (form.heightConfirmed) {
     body.heightConfirmed = true;

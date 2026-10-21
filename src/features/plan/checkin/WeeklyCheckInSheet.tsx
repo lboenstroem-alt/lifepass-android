@@ -59,11 +59,12 @@ import { useReduceMotion } from '../../../hooks/useReduceMotion';
 import { useT } from '../../../i18n';
 import { track } from '../../../lib/analytics';
 import { colors, hairline, radius } from '../../../theme';
-import { BODY_HEIGHT_RANGE, BODY_WEIGHT_RANGE } from '../../body/sheets';
 import WeeklyReviewCard from '../review/WeeklyReviewCard';
 
 import { postWeeklyCheckIn, WEEK_RATINGS, type WeekRating } from './api';
 import {
+  CHECKIN_HEIGHT_RANGE,
+  CHECKIN_WEIGHT_RANGE,
   canSaveCheckIn,
   checkInBody,
   checkInWeight,
@@ -293,8 +294,8 @@ function CheckInPresentation({
               text={form.weightText}
               onChangeText={(text) => update({ weightText: text, weightSkipped: false })}
               step={0.1}
-              min={BODY_WEIGHT_RANGE.min}
-              max={BODY_WEIGHT_RANGE.max}
+              min={CHECKIN_WEIGHT_RANGE.min}
+              max={CHECKIN_WEIGHT_RANGE.max}
               fallback={stepFallbackKg(weighIn)}
               maxFractionDigits={1}
               unit="kg"
@@ -424,8 +425,8 @@ function HeightRow({
           text={form.heightText}
           onChangeText={onChangeText}
           step={1}
-          min={BODY_HEIGHT_RANGE.min}
-          max={BODY_HEIGHT_RANGE.max}
+          min={CHECKIN_HEIGHT_RANGE.min}
+          max={CHECKIN_HEIGHT_RANGE.max}
           fallback={cm}
           integer
           unit="cm"
