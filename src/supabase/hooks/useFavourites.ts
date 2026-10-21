@@ -1,63 +1,62 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+/* eslint lifepass/no-literal-copy: "error" */
+/**
+ * @deprecated The first build's favourites hook, kept for the legacy screens
+ * (Home, Bookings' Saved tab, the Coach, the old venue page) until their
+ * owners move to `useFavourites()` / `useFavourite(venueId)` from
+ * src/features/favourites.
+ *
+ * It no longer keeps a list of its own: it reads the shared favourites store,
+ * so every legacy screen and every new one show the same hearts, a tap flips
+ * at once, a double tap while the request is in flight is ignored, and a
+ * failure flips back with the "Heads up" alert (iOS VenueDetailViewModel).
+ * Like the first build, it reads the list when it mounts (joining a read
+ * already on its way).
+ */
+import { useEffect, useMemo } from 'react';
+import { useStore } from 'zustand';
+
+import { favouritesStore } from '../../features/favourites';
 import type { LegacyVenue as AppVenue } from '../../types/venue';
-import {
-  fetchFavouriteVenues,
-  addFavouriteVenue,
-  removeFavouriteByVenue,
-} from '../services/favourites';
+import { adaptFavouriteVenue } from '../services/favourites';
 
 type FavouritesState = {
   savedVenues: AppVenue[];
   savedVenueIds: string[];
   loading: boolean;
+  /** The last read's failure in the language on screen, or null. */
   error: string | null;
   toggle: (venueId: string) => Promise<void>;
   refetch: () => void;
 };
 
-export function useFavouriteVenues(): FavouritesState {
-  const [savedVenues, setSavedVenues] = useState<AppVenue[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const hasLoaded = useRef(false);
+const toggle = async (venueId: string) => {
+  await favouritesStore.getState().toggle(venueId);
+};
+const refetch = () => {
+  void favouritesStore.getState().load();
+};
 
-  const load = useCallback(() => {
-    // Only the first load shows the spinner. Focus-triggered refetches
-    // refresh in place so tabbing back into the screen doesn't flash a
-    // full-screen loader over the list that's already there.
-    if (!hasLoaded.current) setLoading(true);
-    setError(null);
-    fetchFavouriteVenues()
-      .then(setSavedVenues)
-      .catch((e) => setError(e.message))
-      .finally(() => {
-        hasLoaded.current = true;
-        setLoading(false);
-      });
+export function useFavouriteVenues(): FavouritesState {
+  const venues = useStore(favouritesStore, (s) => s.venues);
+  const savedIds = useStore(favouritesStore, (s) => s.savedIds);
+  const loaded = useStore(favouritesStore, (s) => s.loaded);
+  const status = useStore(favouritesStore, (s) => s.status);
+  const error = useStore(favouritesStore, (s) => s.error);
+
+  useEffect(() => {
+    void favouritesStore.getState().load();
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const savedVenues = useMemo(() => venues.map(adaptFavouriteVenue), [venues]);
+  const savedVenueIds = useMemo(() => [...savedIds], [savedIds]);
 
-  async function toggle(venueId: string) {
-    // The loaded list already tells us the state — no probe round-trip.
-    const already = savedVenues.some((v) => v.id === venueId);
-    try {
-      if (already) {
-        await removeFavouriteByVenue(venueId);
-        setSavedVenues((prev) => prev.filter((v) => v.id !== venueId));
-      } else {
-        await addFavouriteVenue(venueId);
-        load(); // refetch to get the full adapted row
-      }
-    } catch (e) {
-      // Surface instead of vanishing as an unhandled rejection — a silent
-      // failure here is exactly what hid the broken-backend bug.
-      console.warn('[Favourites] toggle failed:', e);
-      setError(e instanceof Error ? e.message : 'Could not update favourites');
-    }
-  }
-
-  const savedVenueIds = useMemo(() => savedVenues.map((v) => v.id), [savedVenues]);
-
-  return { savedVenues, savedVenueIds, loading, error, toggle, refetch: load };
+  return {
+    savedVenues,
+    savedVenueIds,
+    // Only the first read shows a spinner; a refetch refreshes in place.
+    loading: !loaded && status !== 'failed',
+    error,
+    toggle,
+    refetch,
+  };
 }

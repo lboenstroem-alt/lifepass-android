@@ -1,18 +1,8 @@
-import type { Venue, Activity } from './venue';
-
-export type Favourite = {
-  id: string;
-  user_id: string | null;
-  venue_id: string | null;
-  activity_id: string | null;
-  created_at: string | null;
-  // Joined data — present when selected with venue:venues(*) or activity:activities(*)
-  venue?: Venue | null;
-  activity?: Activity | null;
-};
-
-export type FavouriteInsert = {
-  user_id: string;
-  venue_id: string | null;
-  activity_id: string | null;
-};
+/**
+ * @deprecated The first build read favourites straight from a Supabase table,
+ * which the v1 backend refuses; they come from the LifePass API now
+ * (`GET /favourites`, src/features/favourites/api.ts). Nothing imports the old
+ * table row shapes any more; the API's shapes are re-exported here for any
+ * legacy import that is left.
+ */
+export type { FavouriteActivity, FavouriteVenue, FavouritesPayload } from '../../features/favourites/api';
