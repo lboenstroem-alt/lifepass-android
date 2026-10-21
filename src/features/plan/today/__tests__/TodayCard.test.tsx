@@ -371,7 +371,7 @@ describe('the rows above the session', () => {
     await fireEvent.press(screen.getByTestId('plan.resumeWorkout'));
     await act(async () => settle());
     expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: SESSION }), 'today');
-    runner.useRunnerProgress.setState({ summary: null });
+    await act(async () => runner.useRunnerProgress.setState({ summary: null }));
   });
 
   it("another day's workout in progress is named, with Resume", async () => {
@@ -381,7 +381,7 @@ describe('the rows above the session', () => {
     expect(screen.getByText(en('runner.in_progress_other', { title: 'Legs', n: 1, total: 3 }))).toBeOnTheScreen();
     expect(screen.getByTestId('plan.resumeOtherWorkout')).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: en('plan.start') })).toBeOnTheScreen();
-    runner.useRunnerProgress.setState({ summary: null });
+    await act(async () => runner.useRunnerProgress.setState({ summary: null }));
   });
 
   it('a session moved away, with Undo on the session it moved', async () => {
@@ -570,6 +570,29 @@ describe('rest days, extras and other dates', () => {
     // Refused: the button goes, with the "changed" toast.
     expect(screen.queryByRole('button', { name: en('plan.do_today') })).toBeNull();
     expect(useHealthStore.getState().toastKey).toBe('health.err.changed');
+  });
+});
+
+describe('a class on a later date', () => {
+  it('reads as the plan has it, even when it is booked (only the planned row names the booking)', async () => {
+    const later = addServerDays(TODAY, 2)!;
+    seed(
+      {
+        ...dayJSON(later),
+        day: {
+          date: later,
+          relative: 'future',
+          session: { id: 's-later', scheduledFor: later, kind: 'class', title: 'Yoga', classLabel: 'yoga', minutes: 60, status: 'planned' },
+          booking: { bookingId: 'b-1', activityTitle: 'Hot yoga', venueName: 'Yoga Shala', startsAt: '2026-10-18T18:00:00Z' },
+        },
+      },
+      { selected: later },
+    );
+    await renderToday();
+    expect(screen.getByText(en('plan.class.line', { class: 'yoga', minutes: 60 }))).toBeOnTheScreen();
+    expect(screen.queryByText(/^Booked:/)).toBeNull();
+    expect(screen.queryByRole('button', { name: en('plan.class.view_booking') })).toBeNull();
+    expect(screen.getByRole('button', { name: en('plan.preview') })).toBeOnTheScreen();
   });
 });
 

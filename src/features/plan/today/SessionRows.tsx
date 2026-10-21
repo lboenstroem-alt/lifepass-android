@@ -82,21 +82,25 @@ function PlannedRows({ session, hasRunnerProgress }: { session: SessionView; has
           {t('plan.pulled.line', { day: shortDay(session.movedFrom, language) })}
         </LPText>
       ) : null}
-      <SessionLines session={session} lines={plannedLines(session.kind)} />
+      <SessionLines session={session} lines={plannedLines(session.kind)} showsBooking />
       {session.lighter === true ? <TodayChip text={t('plan.lighter_chip')} tone="soft" testID="plan.today.lighter" /> : null}
       {!readOnly ? <PlannedActions session={session} hasRunnerProgress={hasRunnerProgress} /> : null}
     </>
   );
 }
 
-/** The lines a session shows for its kind (planned and future rows alike). */
-function SessionLines({ session, lines }: { session: SessionView; lines: PlannedLines }) {
+/**
+ * The lines a session shows for its kind (planned and future rows alike).
+ * Only the planned row names a class's booking (`showsBooking`): a future
+ * day always reads "A yoga class, 60 min", as iOS `futureRows` does.
+ */
+function SessionLines({ session, lines, showsBooking = false }: { session: SessionView; lines: PlannedLines; showsBooking?: boolean }) {
   const { t, day } = useTodayCard();
   switch (lines) {
     case 'exercises':
       return <ExerciseLines session={session} />;
     case 'class': {
-      const booking = day.day?.booking;
+      const booking = showsBooking ? day.day?.booking : null;
       const text = booking
         ? t('plan.class.booked', {
             activity: booking.activityTitle ?? session.title ?? '',
@@ -585,13 +589,15 @@ function DoneRows({ session }: { session: SessionView }) {
 function FeelingChips({ session }: { session: SessionView }) {
   const { t, busy, isOffline, post } = useTodayCard();
   const disabled = busy !== null || isOffline;
-  const question = t('plan.feeling.q');
   return (
     <>
       <LPText size={14} color={colors.paper}>
-        {question}
+        {t('plan.feeling.q')}
       </LPText>
-      <View style={styles.feelings} accessibilityLabel={question} testID="plan.today.feelings">
+      {/* No label on the row: the question is read just above it, and a
+          contentDescription on a plain View is a second stop for TalkBack
+          saying it again (iOS's labelled container has no Android twin). */}
+      <View style={styles.feelings} testID="plan.today.feelings">
         {FEELINGS.map((feeling) => (
           <Pressable
             key={feeling}
