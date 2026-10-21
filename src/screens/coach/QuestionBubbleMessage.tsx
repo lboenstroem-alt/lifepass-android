@@ -8,8 +8,11 @@
 // - "Other" opens an inline field. Where the answer travels to a server with
 //   its own limit (`maxLength`, UTF-16 units), the text is cut to it AS IT IS
 //   TYPED, so the answer the member sees is the answer that is sent.
+// - The bubble only reports the tap. Whether it still answers anything is the
+//   flow's call: only the last open question of the flow that asked it may
+//   (src/features/coach/flows/venueWizard.ts, iOS `selectOption`).
 //
-// Owned by COACH-1 until COACH-2 lands (plan 3.0.1).
+// Owned by COACH-2 (plan 3.0.1).
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';

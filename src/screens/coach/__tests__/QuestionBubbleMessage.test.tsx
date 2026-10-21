@@ -57,6 +57,18 @@ it('"Other" opens a field that stops at the limit as it is typed, and sends the 
   expect(onSelect).toHaveBeenCalledWith('aerial y', 'aerial y');
 });
 
+it('answered with the member’s own words ("Other"), no chip is marked and every chip closes', async () => {
+  const onSelect = jest.fn();
+  await render(
+    <QuestionBubbleMessage question="Which class?" options={OPTIONS} answered selectedAnswer="aerial yoga" onSelect={onSelect} />,
+  );
+  for (const name of ['Near me', 'Downtown', 'Other']) {
+    const chip = screen.getByRole('button', { name });
+    expect(chip).not.toBeSelected();
+    expect(chip).toBeDisabled();
+  }
+});
+
 it('"Other" with nothing typed sends nothing', async () => {
   const onSelect = jest.fn();
   await render(<QuestionBubbleMessage question="Which class?" options={OPTIONS} answered={false} onSelect={onSelect} />);
