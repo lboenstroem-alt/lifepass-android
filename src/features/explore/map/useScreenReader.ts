@@ -3,11 +3,16 @@
 // VoiceOver or Switch Control), since a card that says "Tap again" is a step
 // a screen reader user cannot see.
 //
+// This is the FALLBACK. The pin hears the activation itself (TalkBack's
+// double tap and Switch Access's select both arrive as its `activate`
+// accessibility action, VenuePin `onAssistiveActivate`), which covers Switch
+// Access as iOS covers Switch Control. This check catches a TalkBack tap that
+// arrives as a plain touch instead.
+//
 // TalkBack only, not "any accessibility service": Android counts password
 // managers, launchers and automation apps as accessibility services too, and
 // taking the card away from everyone running one would cost sighted members
-// the preview. Switch Access users see the card and its "Open venue" button,
-// so the two steps work for them as they are.
+// the preview.
 import { useEffect, useState } from 'react';
 import { AccessibilityInfo } from 'react-native';
 

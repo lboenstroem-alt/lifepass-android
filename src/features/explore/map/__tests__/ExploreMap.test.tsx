@@ -3,8 +3,9 @@
  * what TalkBack hears, the two taps and everything that closes the card, the
  * card's lines in both languages, the reveal of a pin pinned under its card,
  * the legend, the camera it opens on, the dot and the locate button, and the
- * overlay stack with "Location is off". The native map is stood in for
- * (./mapboxStandIn), so these hold what the map is asked to do.
+ * overlay stack with "Location is off", a sight opened from search, the
+ * sights' controls seam, and a build with no Mapbox token. The native map is
+ * stood in for (./mapboxStandIn), so these hold what the map is asked to do.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { AccessibilityInfo, BackHandler, DeviceEventEmitter, Dimensions } from 'react-native';
@@ -14,8 +15,17 @@ import { setCurrentLanguage } from '../../../../i18n';
 import { createBrowseSession } from '../../../../stores/browseSession';
 import { createLocationStore, type LocationStore, type PermissionSnapshot } from '../../../../stores/locationStore';
 import type { Venue } from '../../../../types/venue';
-import ExploreMap, { CARD_GAP_ABOVE_BAR, LOCATE_ZOOM, venueCardBottom, type ExploreMapProps } from '../ExploreMap';
+import ExploreMap, {
+  CARD_GAP_ABOVE_BAR,
+  LOCATE_ZOOM,
+  openedSightRegion,
+  SIGHT_CAMERA_MS,
+  venueCardBottom,
+  type ExploreMapProps,
+} from '../ExploreMap';
 import { MAP_TAP_HOLD_MS } from '../pinPreview';
+import type { SightsMapControls, SightsMapControlsInput } from '../sightsControls';
+import { CARD_TRANSITION_MS } from '../VenuePinCard';
 import { ICELAND_REGION, regionBounds, REYKJAVIK_REGION } from '../regions';
 import { mapboxStandIn } from './mapboxStandIn';
 
@@ -37,6 +47,18 @@ jest.mock('../../../attractions/map/SightsLayer', () => {
         </MockPressable>
       );
     },
+  };
+});
+
+// The sights' controls are ATTR-2's to fill (../sightsControls); a test can
+// hand the map its own to check where they go and what they can switch.
+const mockSightsControls: { impl: ((input: SightsMapControlsInput) => SightsMapControls) | null } = { impl: null };
+jest.mock('../sightsControls', () => {
+  const actual = jest.requireActual('../sightsControls');
+  return {
+    ...actual,
+    useSightsMapControls: (input: SightsMapControlsInput) =>
+      mockSightsControls.impl ? mockSightsControls.impl(input) : actual.useSightsMapControls(input),
   };
 });
 /* eslint-enable @typescript-eslint/no-require-imports */
@@ -121,6 +143,7 @@ async function flush() {
 beforeEach(() => {
   mapboxStandIn.reset();
   mockSightsProps.length = 0;
+  mockSightsControls.impl = null;
   setCurrentLanguage('en');
   setWindowWidth(390);
   store = newStore();
@@ -159,15 +182,16 @@ describe('the pins', () => {
     expect(pin('v1').props.accessibilityHint).toBe('Opnar staðinn');
   });
 
-  it('draws the pinned pin last, grown, selected and haloed', async () => {
+  it('raises the pinned pin by selecting it, grown and haloed, never by reordering the markers', async () => {
     await renderMap();
     await tapPin('v1');
+    // A reordered marker is a native view torn down and added again: the order stays the list's.
     const order = screen.getAllByTestId(/^explore\.map\.pin\./).map((element) => element.props.testID);
-    expect(order).toEqual(['explore.map.pin.v2', 'explore.map.pin.v3', 'explore.map.pin.v1']);
+    expect(order).toEqual(['explore.map.pin.v1', 'explore.map.pin.v2', 'explore.map.pin.v3']);
     expect(screen.getAllByTestId('markerView').map((element) => element.props.markerProps.isSelected)).toEqual([
-      false,
-      false,
       true,
+      false,
+      false,
     ]);
     expect(pin('v1').props.accessibilityState).toEqual({ selected: true });
     expect(screen.getAllByTestId('venuePin.halo', { includeHiddenElements: true })).toHaveLength(1);
@@ -305,6 +329,17 @@ describe('two taps', () => {
     exitApp.mockRestore();
   });
 
+  it('an accessibility activation (TalkBack, Switch Access) opens the venue at once', async () => {
+    await renderMap();
+    await fireEvent(pin('v2'), 'accessibilityAction', { nativeEvent: { actionName: 'activate' } });
+    expect(onOpenVenue).toHaveBeenCalledWith(sky);
+    expect(screen.queryByTestId('explore.venueCard', { includeHiddenElements: true })).toBeNull();
+    // A finger's tap is still the first of two.
+    await tapPin('v1');
+    expect(onOpenVenue).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('explore.venueCard')).toBeTruthy();
+  });
+
   it('with TalkBack on, one activation opens the venue', async () => {
     jest.mocked(AccessibilityInfo.isScreenReaderEnabled).mockResolvedValueOnce(true);
     await renderMap();
@@ -346,6 +381,30 @@ describe('the card', () => {
     expect(screen.queryByTestId('explore.venueCard.summary')).toBeNull();
     expect(screen.getByText('Opna stað')).toBeTruthy();
     expect(screen.getByLabelText('Loka')).toBeTruthy();
+  });
+
+  it('slides away when closed, taking no touch on its way, then is gone', async () => {
+    jest.useFakeTimers();
+    await renderMap();
+    await tapPin('v1');
+    await fireEvent(screen.getByTestId('explore.venueCard'), 'layout', {
+      nativeEvent: { layout: { x: 20, y: 0, width: 350, height: 140 } },
+    });
+    await act(async () => jest.advanceTimersByTime(CARD_TRANSITION_MS));
+    await fireEvent.press(screen.getByLabelText('Close'));
+    const leaving = screen.getByTestId('explore.venueCard', { includeHiddenElements: true });
+    expect(leaving.props.pointerEvents).toBe('none');
+    expect(screen.queryByTestId('explore.venueCard')).toBeNull();
+    await act(async () => jest.advanceTimersByTime(CARD_TRANSITION_MS));
+    expect(screen.queryByTestId('explore.venueCard', { includeHiddenElements: true })).toBeNull();
+  });
+
+  it('moving to another pin keeps the one card up, with the new venue', async () => {
+    await renderMap();
+    await tapPin('v1');
+    await tapPin('v3');
+    expect(screen.getAllByTestId('explore.venueCard', { includeHiddenElements: true })).toHaveLength(1);
+    expect(screen.getByTestId('explore.venueCard.type')).toHaveTextContent('Spa & recovery · Coming soon');
   });
 
   it('sits 44 dp above the tab bar', async () => {
@@ -530,6 +589,18 @@ describe('location', () => {
     expect(mapboxStandIn.setCamera).toHaveBeenCalledWith(expect.objectContaining({ centerCoordinate: [-18.09, 65.68] }));
   });
 
+  it('drops the dot while the map is covered, so location updates stop, and brings it back with the map', async () => {
+    store.setState({ permission: 'granted', permissionKnown: true });
+    const view = await renderMap();
+    expect(screen.getByTestId('locationPuck')).toBeTruthy();
+    await view.rerender(
+      <ExploreMap venues={all} onOpenVenue={onOpenVenue} onOpenSight={onOpenSight} locationStore={store} active={false} />,
+    );
+    expect(screen.queryByTestId('locationPuck')).toBeNull();
+    await view.rerender(<ExploreMap venues={all} onOpenVenue={onOpenVenue} onOpenSight={onOpenSight} locationStore={store} active />);
+    expect(screen.getByTestId('locationPuck')).toBeTruthy();
+  });
+
   it('with location off: no dot, no locate button, and the banner under the legend', async () => {
     store.setState({ permission: 'denied', permissionKnown: true, servicesEnabled: true });
     await renderMap();
@@ -538,6 +609,125 @@ describe('location', () => {
     const overlay = screen.getByTestId('explore.map.overlay');
     expect(overlay).toContainElement(screen.getByTestId('explore.locationOff'));
     expect(screen.getByText('Location is off')).toBeTruthy();
+  });
+});
+
+describe('a sight opened from search (iOS openSearchedSight)', () => {
+  const gullfoss = { latitude: 64.3271, longitude: -20.1199 };
+
+  function withSight(openedSight: ExploreMapProps['openedSight'], extra: Partial<ExploreMapProps> = {}) {
+    return (
+      <ExploreMap
+        venues={all}
+        onOpenVenue={onOpenVenue}
+        onOpenSight={onOpenSight}
+        locationStore={store}
+        openedSight={openedSight}
+        {...extra}
+      />
+    );
+  }
+
+  it('closes the venue’s card and brings the sight into view with the sights on', async () => {
+    const view = await renderMap();
+    await tapPin('v1');
+    await view.rerender(withSight({ slug: 'gullfoss', coordinate: gullfoss, key: 1 }));
+    expect(screen.queryByTestId('explore.venueCard')).toBeNull();
+    expect(mapboxStandIn.setCamera).toHaveBeenCalledWith({
+      bounds: regionBounds(openedSightRegion(gullfoss)),
+      animationDuration: SIGHT_CAMERA_MS,
+      animationMode: 'easeTo',
+    });
+    expect(openedSightRegion(gullfoss)).toEqual({ center: gullfoss, latitudeDelta: 0.25, longitudeDelta: 0.5 });
+    expect(mockSightsProps.at(-1)?.visible).toBe(true);
+    // The map does not open the sight's card itself: the search group did.
+    expect(onOpenSight).not.toHaveBeenCalled();
+  });
+
+  it('counts each opening once, and the same sight opened again as a new one', async () => {
+    const view = await renderMap();
+    await view.rerender(withSight({ slug: 'gullfoss', coordinate: gullfoss, key: 1 }));
+    await view.rerender(withSight({ slug: 'gullfoss', coordinate: gullfoss, key: 1 }, { bottomInset: 80 }));
+    expect(mapboxStandIn.setCamera).toHaveBeenCalledTimes(1);
+    await view.rerender(withSight({ slug: 'gullfoss', coordinate: gullfoss, key: 2 }));
+    expect(mapboxStandIn.setCamera).toHaveBeenCalledTimes(2);
+  });
+
+  it('the opening the map mounts with is not a new one', async () => {
+    await renderMap({ openedSight: { slug: 'gullfoss', coordinate: gullfoss, key: 7 } });
+    expect(mapboxStandIn.setCamera).not.toHaveBeenCalled();
+  });
+
+  it('under the list it closes the card but leaves the camera; with no position, the card only', async () => {
+    const view = await renderMap();
+    await tapPin('v1');
+    await view.rerender(withSight({ slug: 'gullfoss', coordinate: null, key: 1 }));
+    expect(screen.queryByTestId('explore.venueCard')).toBeNull();
+    expect(mapboxStandIn.setCamera).not.toHaveBeenCalled();
+    await view.rerender(withSight({ slug: 'gullfoss', coordinate: gullfoss, key: 2 }, { active: false }));
+    expect(mapboxStandIn.setCamera).not.toHaveBeenCalled();
+  });
+});
+
+describe('the sights’ controls (ATTR-2’s seam, ../sightsControls)', () => {
+  it('by default puts nothing over the map and keeps the legend’s sight entries off', async () => {
+    setWindowWidth(800);
+    await renderMap();
+    expect(screen.queryByTestId('explore.legend.sights')).toBeNull();
+    expect(screen.queryByTestId('explore.legend.trails')).toBeNull();
+  });
+
+  it('places what they return and lets the toggle switch the layer', async () => {
+    setWindowWidth(800);
+    const { Pressable, Text } = jest.requireActual<typeof import('react-native')>('react-native');
+    const seen: SightsMapControlsInput[] = [];
+    mockSightsControls.impl = (input) => {
+      seen.push(input);
+      return {
+        toggle: (
+          <Pressable testID="sightsToggle" onPress={() => input.setShowSights(!input.showSights)}>
+            <Text>Sights</Text>
+          </Pressable>
+        ),
+        belowLegend: <Text>Map data OpenStreetMap</Text>,
+        legendShowsSights: input.showSights,
+        legendShowsTrails: input.showSights && input.zoom >= 12,
+      };
+    };
+    await renderMap();
+    const overlay = screen.getByTestId('explore.map.overlay');
+    expect(overlay).toContainElement(screen.getByTestId('sightsToggle'));
+    expect(overlay).toContainElement(screen.getByText('Map data OpenStreetMap'));
+    expect(screen.getByTestId('explore.legend.sights')).toBeTruthy();
+    expect(seen.at(-1)?.showSights).toBe(true);
+
+    await fireEvent.press(screen.getByTestId('sightsToggle'));
+    expect(mockSightsProps.at(-1)?.visible).toBe(false);
+    expect(screen.queryByTestId('explore.legend.sights')).toBeNull();
+
+    await fireEvent.press(screen.getByTestId('sightsToggle'));
+    await act(async () =>
+      (mapboxStandIn.mapProps?.onMapIdle as (state: object) => void)({ properties: { zoom: 13 }, gestures: {} }),
+    );
+    expect(seen.at(-1)?.zoom).toBe(13);
+    expect(screen.getByTestId('explore.legend.trails')).toBeTruthy();
+  });
+});
+
+describe('a build without a Mapbox token', () => {
+  const original = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
+  afterEach(() => {
+    process.env.EXPO_PUBLIC_MAPBOX_TOKEN = original;
+  });
+
+  it('draws a plain area and never builds a Mapbox map (which would throw without one)', async () => {
+    process.env.EXPO_PUBLIC_MAPBOX_TOKEN = '';
+    await renderMap();
+    expect(screen.getByTestId('explore.map.unavailable')).toBeTruthy();
+    expect(screen.queryByTestId('explore.map.view')).toBeNull();
+    expect(mapboxStandIn.mapProps).toBeNull();
+    expect(screen.queryByTestId('markerView')).toBeNull();
+    expect(screen.queryByTestId('locationPuck')).toBeNull();
   });
 });
 

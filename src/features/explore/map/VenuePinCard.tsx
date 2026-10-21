@@ -9,11 +9,16 @@
 // this card); the compact price pill; and a close button. A tap anywhere on
 // the card opens the venue too.
 //
-// It sits a fixed distance above the bottom of the map and slides in when a
-// pin is pinned (still under Remove animations). Its height is reported so
-// the map can slide a pin pinned under it clear (`revealMove`).
+// It sits a fixed distance above the bottom of the map. It moves up its own
+// height and fades in when a pin is pinned, and goes back the same way when
+// the card closes, over 0.18 s (iOS `.transition(.move(edge: .bottom)
+// .combined(with: .opacity))` under `.easeOut(duration: 0.18)`); under Remove
+// animations it simply appears and goes. While it leaves (`visible` false)
+// it takes no touches and TalkBack skips it; `onHidden` says it has gone. A
+// pin moving the card to another venue keeps it in place. Its height is
+// reported so the map can slide a pin pinned under it clear (`revealMove`).
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import PricePill from '../../../components/PricePill';
@@ -27,6 +32,10 @@ import VenueRing from './VenueRing';
 export interface VenuePinCardProps {
   readonly venue: Venue;
   readonly ring: Classification;
+  /** False while the card leaves (its venue is no longer pinned). */
+  readonly visible: boolean;
+  /** The card has finished leaving: the map can drop it. */
+  readonly onHidden: () => void;
   /** "Tap again to open" shows (not while the pin is still under the card). */
   readonly showsTapAgain: boolean;
   /** A tap on the card or on "Open venue". */
@@ -63,9 +72,14 @@ export function cardRating(venue: Pick<Venue, 'averageRating'>): string | null {
   return typeof rating === 'number' && rating > 0 ? rating.toFixed(1) : null;
 }
 
+/** The card's move in and out (iOS `.easeOut(duration: 0.18)`). */
+export const CARD_TRANSITION_MS = 180;
+
 export default function VenuePinCard({
   venue,
   ring,
+  visible,
+  onHidden,
   showsTapAgain,
   onOpen,
   onClose,
@@ -78,32 +92,53 @@ export default function VenuePinCard({
   const summary = cardSummary(venue, language);
   const rating = cardRating(venue);
 
-  // Slides in when it appears; a pin moving the card to another venue keeps it in place.
+  // 0 below its place and clear, 1 in place. It waits for the first layout
+  // to move in, since the distance is the card's own height.
   const appear = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
+  const [height, setHeight] = useState(0);
+  const measured = height > 0;
+  const onHiddenRef = useRef(onHidden);
+  onHiddenRef.current = onHidden;
   useEffect(() => {
+    const target = visible ? 1 : 0;
     if (reduceMotion) {
-      appear.setValue(1);
+      appear.setValue(target);
+      if (!visible) onHiddenRef.current();
       return undefined;
     }
+    if (visible && !measured) return undefined;
+    // Only this run's own end counts: a card pinned again on its way out
+    // must not be dropped by the exit it interrupted.
+    let current = true;
     const animation = Animated.timing(appear, {
-      toValue: 1,
-      duration: 180,
+      toValue: target,
+      duration: CARD_TRANSITION_MS,
       easing: Easing.out(Easing.ease),
       useNativeDriver: true,
     });
-    animation.start();
-    return () => animation.stop();
-  }, [appear, reduceMotion]);
-  const translateY = appear.interpolate({ inputRange: [0, 1], outputRange: [24, 0] });
+    animation.start(({ finished }) => {
+      if (current && finished && !visible) onHiddenRef.current();
+    });
+    return () => {
+      current = false;
+      animation.stop();
+    };
+  }, [appear, visible, measured, reduceMotion]);
+  const translateY = appear.interpolate({ inputRange: [0, 1], outputRange: [height, 0] });
 
-  const onLayout = (event: LayoutChangeEvent) => onHeight(event.nativeEvent.layout.height);
+  const onLayout = (event: LayoutChangeEvent) => {
+    const next = event.nativeEvent.layout.height;
+    setHeight(next);
+    onHeight(next);
+  };
   const infoLabel = [venue.name, typeLine, summary, rating].filter((part): part is string => !!part).join(', ');
 
   return (
     <Animated.View
       style={[styles.wrap, { bottom, opacity: appear, transform: [{ translateY }] }]}
       onLayout={onLayout}
-      pointerEvents="box-none"
+      pointerEvents={visible ? 'box-none' : 'none'}
+      {...(visible ? {} : hiddenFromAccessibility)}
       testID="explore.venueCard"
     >
       <Pressable onPress={onOpen} accessible={false} style={styles.card} testID="explore.venueCard.body">

@@ -10,12 +10,19 @@
 // TalkBack hears "{name}, {type}" (", coming soon"), "Opens the venue", and
 // the selected state while pinned: the type is said, not only drawn.
 //
+// An accessibility activation (TalkBack's double tap, Switch Access's
+// select, both the node's click action) arrives as `onAssistiveActivate`, not
+// `onPress`: the map opens the venue on it at once, as iOS does under
+// VoiceOver or Switch Control (`accessibilityActivate`). A finger's tap is
+// still `onPress`. This reads the activation itself, so no other
+// accessibility service (a password manager, say) takes the card away.
+//
 // No photo (or not yet, or a failed one): the grey stand-in with a white pin
 // glyph, never another picture.
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { memo, useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, View } from 'react-native';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, View, type AccessibilityActionEvent } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
 import { hiddenFromAccessibility, normaliseImageUrl } from '../../../components/ui';
@@ -35,6 +42,8 @@ const HALO = RING_DIAMETER.pin + 8;
 export const PIN_BOX = 60;
 /** The tap target inside the box (Android's 48 dp, the 44 pt pin and a margin). */
 const HIT = 48;
+/** The node's click action, taken over so an accessibility activation is told from a tap. */
+const ACTIVATE_ACTION = [{ name: 'activate' }] as const;
 
 export interface VenuePinProps {
   readonly imageUrl: string | null;
@@ -45,6 +54,8 @@ export interface VenuePinProps {
   /** "Opens the venue". */
   readonly accessibilityHint: string;
   readonly onPress: () => void;
+  /** An accessibility service activated the pin (TalkBack, Switch Access). */
+  readonly onAssistiveActivate: () => void;
   readonly reduceMotion: boolean;
   readonly testID?: string;
 }
@@ -56,9 +67,16 @@ function VenuePin({
   accessibilityLabel,
   accessibilityHint,
   onPress,
+  onAssistiveActivate,
   reduceMotion,
   testID,
 }: VenuePinProps) {
+  const onAccessibilityAction = useCallback(
+    (event: AccessibilityActionEvent) => {
+      if (event.nativeEvent.actionName === 'activate') onAssistiveActivate();
+    },
+    [onAssistiveActivate],
+  );
   const scale = useRef(new Animated.Value(pinned ? PINNED_SCALE : 1)).current;
   useEffect(() => {
     const target = pinned ? PINNED_SCALE : 1;
@@ -84,6 +102,8 @@ function VenuePin({
         accessibilityLabel={accessibilityLabel}
         accessibilityHint={accessibilityHint}
         accessibilityState={{ selected: pinned }}
+        accessibilityActions={ACTIVATE_ACTION}
+        onAccessibilityAction={onAccessibilityAction}
         style={styles.hit}
         testID={testID}
       >

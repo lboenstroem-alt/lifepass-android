@@ -4,7 +4,7 @@
  * (solid, split, double, framed, dashed), the insets, and the pin around it
  * (the halo, the photo and its grey stand-in).
  */
-import { render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen } from '@testing-library/react-native';
 import { Platform } from 'react-native';
 
 import { classify } from '../../../../lib/venueMarkerType';
@@ -149,6 +149,35 @@ describe('the ring and the pin', () => {
     }
   });
 
+  it('an accessibility activation is told from a tap: TalkBack or Switch Access open, a finger pins', async () => {
+    const onPress = jest.fn();
+    const onAssistiveActivate = jest.fn();
+    await render(
+      <VenuePin
+        imageUrl={null}
+        ring={classify({ primaryCategory: 'gym' })}
+        pinned={false}
+        accessibilityLabel="Laugar, Gym"
+        accessibilityHint="Opens the venue"
+        onPress={onPress}
+        onAssistiveActivate={onAssistiveActivate}
+        reduceMotion
+        testID="pin"
+      />,
+    );
+    const button = screen.getByTestId('pin');
+    // The node's click action, taken over (TalkBack's double tap, Switch Access's select).
+    expect(button.props.accessibilityActions).toEqual([{ name: 'activate' }]);
+    await fireEvent(button, 'accessibilityAction', { nativeEvent: { actionName: 'activate' } });
+    expect(onAssistiveActivate).toHaveBeenCalledTimes(1);
+    expect(onPress).not.toHaveBeenCalled();
+    await fireEvent(button, 'accessibilityAction', { nativeEvent: { actionName: 'longpress' } });
+    expect(onAssistiveActivate).toHaveBeenCalledTimes(1);
+    await fireEvent.press(button);
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(onAssistiveActivate).toHaveBeenCalledTimes(1);
+  });
+
   it('a pin is one button in a box with room for its grown halo', async () => {
     expect(PIN_BOX).toBeGreaterThanOrEqual(52 * PINNED_SCALE);
     const onPress = jest.fn();
@@ -160,6 +189,7 @@ describe('the ring and the pin', () => {
         accessibilityLabel="Laugar, Gym & pool"
         accessibilityHint="Opens the venue"
         onPress={onPress}
+        onAssistiveActivate={jest.fn()}
         reduceMotion
         testID="pin"
       />,
@@ -179,6 +209,7 @@ describe('the ring and the pin', () => {
         accessibilityLabel="Sky Lagoon, Lagoon"
         accessibilityHint="Opens the venue"
         onPress={jest.fn()}
+        onAssistiveActivate={jest.fn()}
         reduceMotion
       />,
     );

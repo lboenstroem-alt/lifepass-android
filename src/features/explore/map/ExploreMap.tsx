@@ -17,13 +17,16 @@
 //
 // TWO TAPS (`pinPreview`, iOS `VenuePinPreview`). The first tap on a pin pins
 // its card, the second (or a tap on the card) opens the venue; another pin
-// moves the card; the map, the close button, a sight, a filter or search that
-// takes the venue off the map, the Map/List switch and a Venues/Classes
-// change (both arrive as `active` turning false) close it, and so does
-// Android's back button while the card is up. With TalkBack on, one
-// activation opens the venue: "Tap again" is a step a screen reader user
-// cannot see. A map tap is held 80 ms, and a pin tap on the same touch wins.
-// The pinned pin is drawn on top of its neighbours.
+// moves the card; the map, the close button, a sight (on the map or from the
+// search group, `openedSight`), a filter or search that takes the venue off
+// the map, the Map/List switch and a Venues/Classes change (both arrive as
+// `active` turning false) close it, and so does Android's back button while
+// the card is up. An accessibility activation (TalkBack's double tap, Switch
+// Access's select) opens the venue at once, as VoiceOver and Switch Control
+// do on iOS: "Tap again" is a step such a member cannot see. A map tap is
+// held 80 ms, and a pin tap on the same touch wins. The pinned pin is
+// selected, which Mapbox draws on top of its neighbours. The card slides in
+// from below and out again (not under Remove animations).
 //
 // THE REVEAL (`revealMove`, iOS `VenuePinReveal`). A pin pinned in about the
 // lower third of the map would sit under its own card, so once the card has
@@ -34,16 +37,25 @@
 // animations.
 //
 // The member's precise position never leaves the phone: Mapbox's telemetry
-// is off (./mapbox.ts) and the dot is drawn on the phone.
-import { NavigationContext } from '@react-navigation/native';
+// is off (./mapbox.ts) and the dot is drawn on the phone, only while the map
+// is on screen (iOS drops `UserAnnotation` with the map under the list or the
+// classes feed), so location updates stop while the map is covered.
+//
+// NO TOKEN, NO MAP. A build without the Mapbox token (`hasMapboxToken`)
+// draws a plain area instead: a Mapbox view without a token throws on the UI
+// thread, so the Mapbox component is never rendered then.
+//
+// CONTRACTS. `openedSight` (for EXPL-1's search group, iOS
+// `openSearchedSight`) and the sights' controls (`useSightsMapControls`,
+// ./sightsControls, ATTR-2's on merge).
 import { Camera, LocationPuck, MapView, MarkerView } from '@rnmapbox/maps';
-import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
-import { BackHandler, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
+import { StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 
 import { fixtureArg, hasFixture } from '../../../dev/fixtures';
 import { useReduceMotion } from '../../../hooks/useReduceMotion';
 import { useT } from '../../../i18n';
-import { coordinateOf } from '../../../lib/geo';
+import { coordinateOf, type Coordinate } from '../../../lib/geo';
 import {
   accessibilityLabel as pinLabel,
   classifyAll,
@@ -51,10 +63,12 @@ import {
   legendEntries,
   type Classification,
 } from '../../../lib/venueMarkerType';
+import { useHardwareBack } from '../../../navigation/guards';
 import { locationStore, selectGrantedLocation, useLocationStore, type LocationStore } from '../../../stores/locationStore';
+import { colors } from '../../../theme';
 import type { Venue } from '../../../types/venue';
 import SightsLayer from '../../attractions/map/SightsLayer';
-import { MAP_STYLE_URL } from './mapbox';
+import { hasMapboxToken, MAP_STYLE_URL } from './mapbox';
 import MapTopOverlay from './MapTopOverlay';
 import { LEGEND_FOLD_BELOW_WIDTH } from './MapLegend';
 import {
@@ -67,7 +81,8 @@ import {
   type PinPreviewState,
 } from './pinPreview';
 import { revealMove, venueNameHeight } from './pinReveal';
-import { ICELAND_REGION, regionBounds, regionZoom, REYKJAVIK_REGION } from './regions';
+import { ICELAND_REGION, regionBounds, regionZoom, REYKJAVIK_REGION, type MapRegion } from './regions';
+import { useSightsMapControls } from './sightsControls';
 import { useScreenReaderOn } from './useScreenReader';
 import VenueNamesLayer from './VenueNamesLayer';
 import VenuePin from './VenuePin';
@@ -90,9 +105,36 @@ export interface ExploreMapProps {
    * does on the Map/List switch and on a Venues/Classes change. Default true.
    */
   readonly active?: boolean;
+  /**
+   * A sight opened from outside the map: the search group's sights (iOS
+   * `openSearchedSight`). Each new `key` closes the venue's card (one thing
+   * open at a time, iOS `.onChange(of: selectedAttractionSlug)`) and, while
+   * the map is on screen and the opener knows where the sight is, turns the
+   * sights layer on and brings the sight into view, so closing its page
+   * leaves the member looking at it. The value the map mounts with is not a
+   * new opening.
+   */
+  readonly openedSight?: OpenedSight | null;
   /** The location store (tests pass their own). */
   readonly locationStore?: LocationStore;
 }
+
+/** One opening of a sight from outside the map (`ExploreMapProps.openedSight`). */
+export interface OpenedSight {
+  readonly slug: string;
+  /** Where the sight is; null when the opener does not know (the card still closes). */
+  readonly coordinate: Coordinate | null;
+  /** New for every opening, so the same sight opened twice counts twice. */
+  readonly key: number;
+}
+
+/** What the map shows of a sight opened from search (iOS span 0.25 by 0.5 around it). */
+export function openedSightRegion(coordinate: Coordinate): MapRegion {
+  return { center: coordinate, latitudeDelta: 0.25, longitudeDelta: 0.5 };
+}
+
+/** The camera's move to an opened sight (iOS animates it 0.3 s; none under Remove animations). */
+export const SIGHT_CAMERA_MS = 300;
 
 /**
  * The card's gap above the tab bar. iOS keeps the card 120 pt above the
@@ -110,23 +152,31 @@ export function venueCardBottom(bottomInset: number): number {
   return Math.max(0, bottomInset) + CARD_GAP_ABOVE_BAR;
 }
 
-export default function ExploreMap({
+export default function ExploreMap(props: ExploreMapProps) {
+  // Read per render, but fixed for the build: the same branch every time.
+  if (!hasMapboxToken()) return <View style={[styles.area, styles.noMap]} testID="explore.map.unavailable" />;
+  return <LiveExploreMap {...props} />;
+}
+
+function LiveExploreMap({
   venues,
   onOpenVenue,
   onOpenSight,
   showSightsOnOpen = false,
   bottomInset = 0,
   active = true,
+  openedSight = null,
   locationStore: store = locationStore,
 }: ExploreMapProps) {
   const { t, language } = useT();
   const [debugAids] = useState(readDebugAids);
   const reduceMotion = useReduceMotion();
-  // TalkBack on: one activation opens a pin's venue. A development build can
-  // act as if it were on (`debugAssistiveTech`, iOS -LPDebugAssistiveTech).
+  // An accessibility activation opens a pin's venue at once (the pin's
+  // `onAssistiveActivate`). TalkBack on is the fallback for a tap that
+  // arrives as a touch instead. A development build can act as if it were on
+  // (`debugAssistiveTech`, iOS -LPDebugAssistiveTech).
   const screenReaderOn = useScreenReaderOn() || debugAids.assistiveTech;
   const { width: windowWidth } = useWindowDimensions();
-  const navigation = useContext(NavigationContext);
 
   const mapRef = useRef<MapView>(null);
   const cameraRef = useRef<ComponentRef<typeof Camera>>(null);
@@ -148,19 +198,20 @@ export default function ExploreMap({
   // Applied once, when the map is made (the camera's default stop).
   const [cameraDefaults] = useState(() => ({ bounds: regionBounds(initialRegion), animationDuration: 0 }));
   // The sights layer starts ON (D8); ATTR-2's toggle switches it.
-  const [showSights] = useState(true);
+  const [showSights, setShowSights] = useState(true);
   const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
   const [reportedZoom, setReportedZoom] = useState<number | null>(null);
   const zoom = reportedZoom ?? regionZoom(initialRegion, mapSize.width, mapSize.height);
-  // The legend's sight entries, while the sights layer draws. ATTR-2 turns
-  // these on with its layer (iOS passes `showSights` and trails-at-this-zoom).
-  const sightsInLegend = false;
-  const trailsInLegend = false;
+  // The toggle, the legend's sight entries and what hangs under the legend
+  // (ATTR-2's, through ./sightsControls).
+  const sights = useSightsMapControls({ showSights, setShowSights, zoom });
 
   // MARK: Location
 
   const permission = useLocationStore((state) => state.permission, store);
-  const showsDot = permission === 'granted';
+  // Only while the map is what the member sees: the dot asks for continuous
+  // fixes (and lights Android's location indicator) while it is drawn.
+  const showsDot = permission === 'granted' && active;
   const showsLocate = permission !== 'denied';
 
   // MARK: The two taps
@@ -219,6 +270,9 @@ export default function ExploreMap({
     },
     [dispatch, screenReaderOn],
   );
+
+  /** An accessibility activation (TalkBack, Switch Access): opens the venue at once. */
+  const onPinActivate = useCallback((id: string) => dispatch({ kind: 'assistiveActivate', id }), [dispatch]);
 
   /** A pin's tap: the first pins the card, the second opens the venue. */
   const onPinPress = useCallback(
@@ -279,21 +333,53 @@ export default function ExploreMap({
     [dispatch, onOpenSight],
   );
 
-  // Android's back closes the card first, while Explore is the screen in front.
-  const pinnedId = preview.pinnedId;
+  // A sight opened from the search group: the same rule, and the map brings
+  // it into view with the sights showing (iOS `openSearchedSight`).
+  const openedKey = openedSight?.key ?? null;
+  const openedSightRef = useRef(openedSight);
+  openedSightRef.current = openedSight;
+  const handledOpening = useRef(openedKey);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
   useEffect(() => {
-    if (pinnedId === null || !active) return undefined;
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (navigation && !navigation.isFocused()) return false;
-      dispatch({ kind: 'close' });
-      return true;
+    if (openedKey === null || openedKey === handledOpening.current) return;
+    handledOpening.current = openedKey;
+    dispatch({ kind: 'sightOpened' });
+    const coordinate = openedSightRef.current?.coordinate ?? null;
+    if (!coordinate || !activeRef.current) return;
+    setShowSights(true);
+    const still = reduceMotionRef.current;
+    cameraRef.current?.setCamera({
+      bounds: regionBounds(openedSightRegion(coordinate)),
+      animationDuration: still ? 0 : SIGHT_CAMERA_MS,
+      animationMode: still ? 'none' : 'easeTo',
     });
-    return () => subscription.remove();
-  }, [pinnedId, active, navigation, dispatch]);
+  }, [openedKey, dispatch]);
+
+  // Android's back closes the card first, while Explore is the screen in front
+  // (F4's guard asks the newest focused subscriber first).
+  const pinnedId = preview.pinnedId;
+  useHardwareBack(() => {
+    dispatch({ kind: 'close' });
+    return true;
+  }, pinnedId !== null && active);
 
   // MARK: The card and the reveal
 
   const pinnedVenue = pinnedId === null ? null : (located.find((venue) => venue.id === pinnedId) ?? null);
+  // The card on screen: the pinned venue's, or the last one's while it slides
+  // away (iOS animates removal too). Settled during render, so the card is
+  // never dropped for a frame between the two.
+  const [lastPinned, setLastPinned] = useState<Venue | null>(null);
+  const [leaving, setLeaving] = useState<Venue | null>(null);
+  if (pinnedVenue !== lastPinned) {
+    setLastPinned(pinnedVenue);
+    setLeaving(pinnedVenue === null && !reduceMotion ? lastPinned : null);
+  }
+  const cardVenue = pinnedVenue ?? leaving;
+  const onCardHidden = useCallback(() => setLeaving(null), []);
   const cardBottom = venueCardBottom(bottomInset);
   const [cardHeight, setCardHeight] = useState(0);
   const [mapTop, setMapTop] = useState(0);
@@ -381,13 +467,6 @@ export default function ExploreMap({
     setMapSize((current) => (current.width === width && current.height === height ? current : { width, height }));
   };
 
-  // The pinned pin last, so it is drawn above its neighbours (and selected,
-  // which Mapbox also stacks on top).
-  const drawn = useMemo(() => {
-    const pinned = located.find((venue) => venue.id === pinnedId);
-    return pinned ? [...located.filter((venue) => venue !== pinned), pinned] : located;
-  }, [located, pinnedId]);
-
   return (
     <View style={styles.area} onLayout={onLayout} testID="explore.map.area">
       <MapView
@@ -405,7 +484,10 @@ export default function ExploreMap({
         <Camera ref={cameraRef} defaultSettings={cameraDefaults} />
         <SightsLayer visible={showSights} zoom={zoom} onSelectSight={onSelectSight} />
         <VenueNamesLayer venues={located} pinnedId={pinnedId} />
-        {drawn.map((venue) => {
+        {/* In the list's order, always: a reordered marker is a native view
+            torn down and added again. The pinned one is `isSelected`, which
+            Mapbox stacks above the rest. */}
+        {located.map((venue) => {
           const ring = ringOf(venue);
           return (
             <VenueMarker
@@ -416,6 +498,7 @@ export default function ExploreMap({
               label={pinLabel(ring.type, venue.name, ring.comingSoon, language)}
               hint={t('map.pin_hint')}
               onPressVenue={onPinPress}
+              onActivateVenue={onPinActivate}
               reduceMotion={reduceMotion}
             />
           );
@@ -426,8 +509,10 @@ export default function ExploreMap({
       <MapTopOverlay
         legendEntries={legend}
         legendFolds={windowWidth < LEGEND_FOLD_BELOW_WIDTH}
-        showsSights={sightsInLegend}
-        showsTrails={trailsInLegend}
+        showsSights={sights.legendShowsSights}
+        showsTrails={sights.legendShowsTrails}
+        sightsToggle={sights.toggle}
+        belowLegend={sights.belowLegend}
         showsLocate={showsLocate}
         onLocate={() => void onLocate()}
         onBottom={setMapTop}
@@ -435,10 +520,12 @@ export default function ExploreMap({
         locationStore={store}
       />
 
-      {pinnedVenue ? (
+      {cardVenue ? (
         <VenuePinCard
-          venue={pinnedVenue}
-          ring={ringOf(pinnedVenue)}
+          venue={cardVenue}
+          ring={ringOf(cardVenue)}
+          visible={pinnedVenue !== null}
+          onHidden={onCardHidden}
           showsTapAgain={!pinCovered}
           onOpen={() => dispatch({ kind: 'cardTap' })}
           onClose={() => dispatch({ kind: 'close' })}
@@ -476,6 +563,7 @@ interface VenueMarkerProps {
   readonly label: string;
   readonly hint: string;
   readonly onPressVenue: (id: string) => void;
+  readonly onActivateVenue: (id: string) => void;
   readonly reduceMotion: boolean;
 }
 
@@ -483,10 +571,20 @@ interface VenueMarkerProps {
  * One venue's marker, memoised so a camera that settles (or a card that
  * opens elsewhere) sends nothing new to the other native markers.
  */
-const VenueMarker = memo(function VenueMarker({ venue, ring, pinned, label, hint, onPressVenue, reduceMotion }: VenueMarkerProps) {
+const VenueMarker = memo(function VenueMarker({
+  venue,
+  ring,
+  pinned,
+  label,
+  hint,
+  onPressVenue,
+  onActivateVenue,
+  reduceMotion,
+}: VenueMarkerProps) {
   const { id, latitude, longitude } = venue;
   const coordinate = useMemo<[number, number]>(() => [longitude ?? 0, latitude ?? 0], [latitude, longitude]);
   const onPress = useCallback(() => onPressVenue(id), [onPressVenue, id]);
+  const onAssistiveActivate = useCallback(() => onActivateVenue(id), [onActivateVenue, id]);
   return (
     <MarkerView coordinate={coordinate} anchor={CENTRE_ANCHOR} allowOverlap allowOverlapWithPuck isSelected={pinned}>
       <VenuePin
@@ -496,6 +594,7 @@ const VenueMarker = memo(function VenueMarker({ venue, ring, pinned, label, hint
         accessibilityLabel={label}
         accessibilityHint={hint}
         onPress={onPress}
+        onAssistiveActivate={onAssistiveActivate}
         reduceMotion={reduceMotion}
         testID={`explore.map.pin.${venue.slug}`}
       />
@@ -505,4 +604,6 @@ const VenueMarker = memo(function VenueMarker({ venue, ring, pinned, label, hint
 
 const styles = StyleSheet.create({
   area: { flex: 1 },
+  // No token, no map: a plain area where the map would be.
+  noMap: { backgroundColor: colors.ink2 },
 });
