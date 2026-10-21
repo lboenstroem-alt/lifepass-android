@@ -37,7 +37,7 @@
 // is off (./mapbox.ts) and the dot is drawn on the phone.
 import { NavigationContext } from '@react-navigation/native';
 import { Camera, LocationPuck, MapView, MarkerView } from '@rnmapbox/maps';
-import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import { BackHandler, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 
 import { useReduceMotion } from '../../../hooks/useReduceMotion';
@@ -141,7 +141,8 @@ export default function ExploreMap({
   // Where the map opens, fixed for this map's life (the screen remounts it
   // for Home's "See all on the map").
   const [initialRegion] = useState(() => (showSightsOnOpen ? ICELAND_REGION : REYKJAVIK_REGION));
-  const [initialBounds] = useState(() => regionBounds(initialRegion));
+  // Applied once, when the map is made (the camera's default stop).
+  const [cameraDefaults] = useState(() => ({ bounds: regionBounds(initialRegion), animationDuration: 0 }));
   // The sights layer starts ON (D8); ATTR-2's toggle switches it.
   const [showSights] = useState(true);
   const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
@@ -184,10 +185,10 @@ export default function ExploreMap({
   }, []);
 
   const onPinPress = useCallback(
-    (venue: Venue) => {
+    (id: string) => {
       const at = Date.now();
       lastPinTapAt.current = at;
-      dispatch(screenReaderOn ? { kind: 'assistiveActivate', id: venue.id } : { kind: 'pinTap', id: venue.id }, at);
+      dispatch(screenReaderOn ? { kind: 'assistiveActivate', id } : { kind: 'pinTap', id }, at);
     },
     [dispatch, screenReaderOn],
   );
@@ -361,34 +362,22 @@ export default function ExploreMap({
         onMapIdle={(state) => setReportedZoom(state.properties.zoom)}
         testID="explore.map.view"
       >
-        <Camera ref={cameraRef} defaultSettings={{ bounds: initialBounds, animationDuration: 0 }} />
+        <Camera ref={cameraRef} defaultSettings={cameraDefaults} />
         <SightsLayer visible={showSights} zoom={zoom} onSelectSight={onSelectSight} />
         <VenueNamesLayer venues={located} pinnedId={pinnedId} />
         {drawn.map((venue) => {
-          const position = coordinateOf(venue);
-          if (!position) return null;
           const ring = ringOf(venue);
-          const pinned = venue.id === pinnedId;
           return (
-            <MarkerView
+            <VenueMarker
               key={venue.id}
-              coordinate={[position.longitude, position.latitude]}
-              anchor={{ x: 0.5, y: 0.5 }}
-              allowOverlap
-              allowOverlapWithPuck
-              isSelected={pinned}
-            >
-              <VenuePin
-                imageUrl={venue.imageUrl}
-                ring={ring}
-                pinned={pinned}
-                accessibilityLabel={pinLabel(ring.type, venue.name, ring.comingSoon, language)}
-                accessibilityHint={t('map.pin_hint')}
-                onPress={() => onPinPress(venue)}
-                reduceMotion={reduceMotion}
-                testID={`explore.map.pin.${venue.slug}`}
-              />
-            </MarkerView>
+              venue={venue}
+              ring={ring}
+              pinned={venue.id === pinnedId}
+              label={pinLabel(ring.type, venue.name, ring.comingSoon, language)}
+              hint={t('map.pin_hint')}
+              onPressVenue={onPinPress}
+              reduceMotion={reduceMotion}
+            />
           );
         })}
         {showsDot ? <LocationPuck puckBearingEnabled={false} pulsing={{ isEnabled: !reduceMotion }} /> : null}
@@ -420,6 +409,43 @@ export default function ExploreMap({
     </View>
   );
 }
+
+/** A pin's anchor: the ring's centre on the venue's coordinate. */
+const CENTRE_ANCHOR = { x: 0.5, y: 0.5 };
+
+interface VenueMarkerProps {
+  readonly venue: Venue;
+  readonly ring: Classification;
+  readonly pinned: boolean;
+  readonly label: string;
+  readonly hint: string;
+  readonly onPressVenue: (id: string) => void;
+  readonly reduceMotion: boolean;
+}
+
+/**
+ * One venue's marker, memoised so a camera that settles (or a card that
+ * opens elsewhere) sends nothing new to the other native markers.
+ */
+const VenueMarker = memo(function VenueMarker({ venue, ring, pinned, label, hint, onPressVenue, reduceMotion }: VenueMarkerProps) {
+  const { id, latitude, longitude } = venue;
+  const coordinate = useMemo<[number, number]>(() => [longitude ?? 0, latitude ?? 0], [latitude, longitude]);
+  const onPress = useCallback(() => onPressVenue(id), [onPressVenue, id]);
+  return (
+    <MarkerView coordinate={coordinate} anchor={CENTRE_ANCHOR} allowOverlap allowOverlapWithPuck isSelected={pinned}>
+      <VenuePin
+        imageUrl={venue.imageUrl}
+        ring={ring}
+        pinned={pinned}
+        accessibilityLabel={label}
+        accessibilityHint={hint}
+        onPress={onPress}
+        reduceMotion={reduceMotion}
+        testID={`explore.map.pin.${venue.slug}`}
+      />
+    </MarkerView>
+  );
+});
 
 const styles = StyleSheet.create({
   area: { flex: 1 },

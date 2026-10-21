@@ -25,8 +25,6 @@ interface StandInState {
   center: Position;
   /** Where a screen point is on the map. */
   coordinateFromView: (point: Position) => Position;
-  /** The props each MarkerView was rendered with, in render order. */
-  markers: { coordinate: Position; isSelected?: boolean; allowOverlap?: boolean }[];
   /** The last ShapeSource's shape, by id. */
   shapes: Record<string, unknown>;
   /** The last SymbolLayer style, by id. */
@@ -43,7 +41,6 @@ function freshState(): StandInState {
     pointInView: () => [0, 0],
     center: [-21.9426, 64.1466],
     coordinateFromView: ([x, y]) => [x, y],
-    markers: [],
     shapes: {},
     symbolStyles: {},
     setTelemetryEnabled: jest.fn(),
@@ -62,7 +59,6 @@ export const mapboxStandIn: StandInState & { reset(): void } = Object.assign(fre
 
 const MapView = forwardRef(function MapView(props: Record<string, unknown> & { children?: ReactNode }, ref) {
   mapboxStandIn.mapProps = props;
-  mapboxStandIn.markers = [];
   useImperativeHandle(ref, () => ({
     getPointInView: async (coordinate: Position) => mapboxStandIn.pointInView(coordinate),
     getCenter: async () => mapboxStandIn.center,
@@ -77,9 +73,21 @@ const Camera = forwardRef(function Camera(props: { defaultSettings?: unknown }, 
   return null;
 });
 
-function MarkerView(props: { coordinate: Position; isSelected?: boolean; allowOverlap?: boolean; children: ReactNode }) {
-  mapboxStandIn.markers.push({ coordinate: props.coordinate, isSelected: props.isSelected, allowOverlap: props.allowOverlap });
-  return <View testID="markerView">{props.children}</View>;
+/** A marker: its props are kept on the view, so a test reads them in drawing order (`getAllByTestId('markerView')`). */
+function MarkerView(props: {
+  coordinate: Position;
+  anchor?: unknown;
+  isSelected?: boolean;
+  allowOverlap?: boolean;
+  allowOverlapWithPuck?: boolean;
+  children: ReactNode;
+}) {
+  const { children, ...rest } = props;
+  return (
+    <View testID="markerView" {...{ markerProps: rest }}>
+      {children}
+    </View>
+  );
 }
 
 function LocationPuck() {

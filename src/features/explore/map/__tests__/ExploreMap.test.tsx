@@ -142,7 +142,13 @@ describe('the pins', () => {
     expect(pin('v3').props.accessibilityLabel).toBe('Threk, Spa & recovery, coming soon');
     expect(pin('v1').props.accessibilityHint).toBe('Opens the venue');
     expect(pin('v1').props.accessibilityState).toEqual({ selected: false });
-    expect(mapboxStandIn.markers.every((marker) => marker.allowOverlap)).toBe(true);
+    const markers = screen.getAllByTestId('markerView').map((element) => element.props.markerProps);
+    expect(markers.every((marker) => marker.allowOverlap && marker.allowOverlapWithPuck)).toBe(true);
+    // Mapbox order: longitude, then latitude.
+    expect(markers.map((marker) => marker.coordinate)).toEqual(
+      [laugar, sky, threk].map((item) => [item.longitude, item.latitude]),
+    );
+    expect(markers[0].anchor).toEqual({ x: 0.5, y: 0.5 });
   });
 
   it('says it in Icelandic too', async () => {
@@ -158,7 +164,11 @@ describe('the pins', () => {
     await tapPin('v1');
     const order = screen.getAllByTestId(/^explore\.map\.pin\./).map((element) => element.props.testID);
     expect(order).toEqual(['explore.map.pin.v2', 'explore.map.pin.v3', 'explore.map.pin.v1']);
-    expect(mapboxStandIn.markers.map((marker) => marker.isSelected)).toEqual([false, false, true]);
+    expect(screen.getAllByTestId('markerView').map((element) => element.props.markerProps.isSelected)).toEqual([
+      false,
+      false,
+      true,
+    ]);
     expect(pin('v1').props.accessibilityState).toEqual({ selected: true });
     expect(screen.getAllByTestId('venuePin.halo', { includeHiddenElements: true })).toHaveLength(1);
   });
