@@ -188,7 +188,7 @@ export default function ExploreMap({
     }
   }, []);
 
-  /** Runs `work` after `ms`, unless the map goes first. */
+  /** Runs `work` after `ms`, unless the map is gone by then. */
   const later = useCallback((ms: number, work: () => void) => {
     const timer = setTimeout(() => {
       timers.current.delete(timer);
