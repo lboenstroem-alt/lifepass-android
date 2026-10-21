@@ -4,9 +4,10 @@
  * `WorkoutOutbox` (Views/Workout/FinishWorkoutSheet.swift).
  *
  * A FINISHED WORKOUT IS NEVER LOST. A Save that meets no network is queued
- * here (`enqueueWorkout`), with its body, its Idempotency-Key and the moment
- * it was finished, and the runner file goes only after the queue's write was
- * asked for (both writes run in order on the health file store's queue).
+ * here (`queueWorkoutSave`), with its body, its Idempotency-Key and the
+ * moment it was finished, and it answers `queued` only once the queue is on
+ * disk: the runner file goes after that, never before. A queue that could
+ * not be written (or read) answers `notSaved`, and the runner file stays.
  * It is sent again:
  *
  * - when a member's profile loads and whenever the app comes back to the
@@ -22,8 +23,15 @@
  * arrives twice is counted once anyway.
  *
  * A queue whose file could not be read is NOT adopted (src/health/localStore.ts
- * `mergeOutbox`): nothing is written over the file, Saves queued meanwhile
- * wait in memory, and the next activation reads it again and merges.
+ * `mergeOutbox`): nothing is written over the file, and the next activation
+ * reads it again. A Save meanwhile is refused rather than kept in memory
+ * only (iOS keeps it there, for a phone that unlocks; on Android an
+ * unreadable file is a storage fault, and the runner file is the safer
+ * place for the workout until the queue can be read).
+ *
+ * THE LOCAL WIPE (../persistence/fence.ts, ./localWipe.ts): every
+ * continuation below reads the wipe epoch back after its await, so work
+ * begun before a wipe sends, applies and writes nothing more.
  */
 import { create } from 'zustand';
 
@@ -35,6 +43,7 @@ import type { SessionActionResponse } from '../../../health/models';
 import { useAppStore } from '../../../stores/appStore';
 import { RunnerAnalytics, type WorkoutOutboxFlushedOutcome } from '../model/analytics';
 import type { WorkoutDoneBody } from '../model/performed';
+import { runnerWipeEpoch, wipedSince } from '../persistence/fence';
 import { readRunnerFailure, type RunnerCallFailure } from '../saveRules';
 
 import { decodeWorkoutOutbox, encodeWorkoutOutbox } from './codec';
@@ -71,6 +80,13 @@ export const useWorkoutOutbox = create<WorkoutOutboxState>()(() => initialState(
 
 /** True while a flush runs: a second one asked for meanwhile returns at once. */
 let isFlushing = false;
+
+/**
+ * The failed items whose "Save as extra" is being sent: a second tap on the
+ * banner meanwhile does nothing. Without it two quick taps sent two
+ * conversions under two keys, and the server logged the workout twice.
+ */
+const savingAsExtra = new Set<string>();
 
 function state(): WorkoutOutboxState {
   return useWorkoutOutbox.getState();
@@ -193,10 +209,12 @@ async function attempt(
 export async function activateWorkoutOutbox(memberId: string, options: { readonly flushNow?: boolean } = {}): Promise<void> {
   // Ids are compared as the folder names them (lower case).
   const profileId = memberId.toLowerCase();
+  const epoch = runnerWipeEpoch();
   useWorkoutOutbox.setState({ profileId });
   if (state().loadedProfileId !== profileId) {
     const outcome = await readQueue(profileId);
-    if (state().profileId !== profileId) return;
+    // Another member, or the local wipe, while the file was read.
+    if (state().profileId !== profileId || wipedSince(epoch)) return;
     // A Save queued while the read was in flight has already read the file
     // itself (`enqueueWorkout`); this older read must not replace it.
     if (state().loadedProfileId !== profileId) adopt(outcome, profileId);
@@ -237,29 +255,49 @@ export function failedWorkoutItems(): FailedOutboxItem[] {
 // Writing
 
 /**
- * Queue a Save. False when five are already waiting: the caller keeps
- * `runner.json` and says so ("runner.err.outbox_full") rather than drop
- * anything. The queue's write is asked for before this resolves, so a
- * runner file deleted after it is deleted after the queue is on disk.
+ * What became of a Save handed to the queue:
+ * - `queued`: on disk. The runner file may go ("Saved on this phone").
+ * - `full`: five already wait. The runner file stays: "runner.err.outbox_full".
+ * - `notSaved`: the queue could not be read or written. The runner file
+ *   stays: "runner.err.not_saved" (nothing is held in memory only).
+ * - `discarded`: the local wipe ran since the runner opened (`since`), or
+ *   while the queue was read or written. Nothing of it is kept; the runner
+ *   was told to close.
  */
-export async function enqueueWorkout(options: {
+export type WorkoutQueueOutcome = 'queued' | 'full' | 'notSaved' | 'discarded';
+
+export interface QueueWorkoutOptions {
   readonly sessionId: string;
   readonly body: WorkoutDoneBody;
   readonly key: string;
   readonly profileId: string;
   readonly now?: Date;
-}): Promise<boolean> {
+  /** The wipe epoch the runner opened in (`runnerWipeEpoch()`); defaults to now. */
+  readonly since?: number;
+}
+
+/**
+ * Queue a Save (iOS `WorkoutOutbox.enqueue`). Resolves once the queue's write
+ * has run and says what became of it (above), so a runner file deleted after
+ * `queued` is deleted after the workout is on disk.
+ */
+export async function queueWorkoutSave(options: QueueWorkoutOptions): Promise<WorkoutQueueOutcome> {
   const profileId = options.profileId.toLowerCase();
+  const epoch = options.since ?? runnerWipeEpoch();
+  if (wipedSince(epoch)) return 'discarded';
   if (state().loadedProfileId !== profileId) {
     // Never mix two accounts' queues: read what is on disk first.
     useWorkoutOutbox.setState({ profileId });
     const outcome = await readQueue(profileId);
+    if (wipedSince(epoch)) return 'discarded';
     if (state().loadedProfileId !== profileId) {
       useWorkoutOutbox.setState({ profileId });
       adopt(outcome, profileId);
     }
   }
-  if (state().items.length >= WORKOUT_OUTBOX_CAPACITY) return false;
+  // Not adopted: nothing may be written over a file that could not be read.
+  if (state().loadedProfileId !== profileId) return 'notSaved';
+  if (state().items.length >= WORKOUT_OUTBOX_CAPACITY) return 'full';
   const item: WorkoutOutboxItem = {
     id: newIdempotencyKey(),
     sessionId: options.sessionId,
@@ -269,8 +307,26 @@ export async function enqueueWorkout(options: {
     state: 'pending',
     converted: false,
   };
-  setItems([...state().items, item]);
-  return true;
+  const items = [...state().items, item];
+  useWorkoutOutbox.setState({ items });
+  const written = await localStore.write(encodeWorkoutOutbox(items), 'workoutOutbox', profileId);
+  if (wipedSince(epoch)) return 'discarded';
+  if (!written) {
+    // Not on disk: it must not wait in memory only while the runner file
+    // stays too (two copies of one workout). The queue goes back to the
+    // disk's.
+    if (state().loadedProfileId === profileId) remove(item.id);
+    return 'notSaved';
+  }
+  return 'queued';
+}
+
+/**
+ * Queue a Save; true only when it is on disk (`queueWorkoutSave` says why
+ * not, which the finish sheet needs to pick its message).
+ */
+export async function enqueueWorkout(options: QueueWorkoutOptions): Promise<boolean> {
+  return (await queueWorkoutSave(options)) === 'queued';
 }
 
 /** Throw an item away (Plan asks first: "Discard what was saved on this phone?"). */
@@ -279,39 +335,49 @@ export function discardWorkoutItem(itemId: string): void {
   remove(itemId);
 }
 
-/** Plan's "Save as extra" on a failed item: a new key, `asExtra`, once. */
+/**
+ * Plan's "Save as extra" on a failed item: a new key, `asExtra`, once. A tap
+ * while the same item's is being sent does nothing.
+ */
 export async function saveFailedWorkoutAsExtra(itemId: string): Promise<void> {
+  if (savingAsExtra.has(itemId)) return;
   const found = state().items.find((item) => item.id === itemId);
   if (!found) return;
-  const { profileId } = state();
-  const item = convertedItem(found, newIdempotencyKey());
-  update(item.id, () => item);
-  const { response, failure } = await attempt(item);
-  // Wiped while it was sent: nothing of it is kept or shown.
-  if (state().profileId !== profileId) return;
-  switch (outboxStep(failure?.kind ?? null, item, { entitled: true, foreground: true })) {
-    case 'sent':
-    case 'sentAsExtra':
-      remove(item.id);
-      track('extra');
-      apply(response);
-      break;
-    case 'stop':
-      // No network: it waits, as an extra, for the next flush.
-      update(item.id, (current) => ({ ...current, state: 'pending' }));
-      toast('health.saved_offline');
-      break;
-    case 'dropChanged':
-      remove(item.id);
-      toast('health.err.changed');
-      break;
-    case 'reconcile':
-      handleProblem(failure, false);
-      break;
-    case 'convertToExtra':
-    case 'markFailed':
-      toast('runner.err.not_saved');
-      break;
+  savingAsExtra.add(itemId);
+  try {
+    const { profileId } = state();
+    const epoch = runnerWipeEpoch();
+    const item = convertedItem(found, newIdempotencyKey());
+    update(item.id, () => item);
+    const { response, failure } = await attempt(item);
+    // Wiped (or another member) while it was sent: nothing of it is kept or shown.
+    if (state().profileId !== profileId || wipedSince(epoch)) return;
+    switch (outboxStep(failure?.kind ?? null, item, { entitled: true, foreground: true })) {
+      case 'sent':
+      case 'sentAsExtra':
+        remove(item.id);
+        track('extra');
+        apply(response);
+        break;
+      case 'stop':
+        // No network: it waits, as an extra, for the next flush.
+        update(item.id, (current) => ({ ...current, state: 'pending' }));
+        toast('health.saved_offline');
+        break;
+      case 'dropChanged':
+        remove(item.id);
+        toast('health.err.changed');
+        break;
+      case 'reconcile':
+        handleProblem(failure, false);
+        break;
+      case 'convertToExtra':
+      case 'markFailed':
+        toast('runner.err.not_saved');
+        break;
+    }
+  } finally {
+    savingAsExtra.delete(itemId);
   }
 }
 
@@ -328,6 +394,9 @@ export async function flushWorkoutOutbox(options: { readonly foreground: boolean
   const now = options.now ?? new Date();
   const { profileId, loadedProfileId } = state();
   if (isFlushing || !profileId || loadedProfileId !== profileId) return;
+  const epoch = runnerWipeEpoch();
+  /** The local wipe ran (or another member signed in) since this flush began. */
+  const discarded = (): boolean => state().profileId !== profileId || wipedSince(epoch);
   isFlushing = true;
   try {
     if (state().items.some((item) => isTooOld(item, now))) {
@@ -341,23 +410,24 @@ export async function flushWorkoutOutbox(options: { readonly foreground: boolean
       .map((item) => item.id);
     for (const id of pendingIds) {
       const found = state().items.find((item) => item.id === id);
-      // A wipe or another member's sign-in while the last item was sent.
-      if (state().profileId !== profileId || !found || found.state !== 'pending') continue;
+      if (discarded()) return;
+      if (!found || found.state !== 'pending') continue;
       let item = found;
-      const entitled = isEntitled();
       let { response, failure } = await attempt(item);
       // The local wipe ran (or another member signed in) while it was sent:
-      // that member's queue is gone, and nothing more is sent or applied for
-      // it, not even the conversion. (iOS sends the conversion anyway; a
-      // workout must not outlive a withdrawal on this phone.)
-      if (state().profileId !== profileId) return;
-      let step = outboxStep(failure?.kind ?? null, item, { entitled, foreground });
+      // that member's queue is gone, and nothing more is sent, applied or
+      // written for it, not even the conversion. (iOS sends the conversion
+      // anyway; a workout must not outlive a withdrawal on this phone.)
+      if (discarded()) return;
+      // Read after the answer, as iOS's computed `entitled` is: a Today read
+      // or an access change that landed meanwhile decides the consent split.
+      let step = outboxStep(failure?.kind ?? null, item, { entitled: isEntitled(), foreground });
       if (step === 'convertToExtra') {
         item = convertedItem(item, newIdempotencyKey());
         const converted = item;
         update(item.id, () => converted);
         ({ response, failure } = await attempt(item));
-        if (state().profileId !== profileId) return;
+        if (discarded()) return;
         step = outboxStep(failure?.kind ?? null, item, { entitled: isEntitled(), foreground });
       }
       if (step === 'stop') break;
@@ -390,7 +460,7 @@ export async function flushWorkoutOutbox(options: { readonly foreground: boolean
     // A FINISHED WORKOUT MUST STILL LOOK FINISHED once it leaves the queue:
     // the answer's session went onto Today above, and a flush Plan did not
     // ask for is followed by a Today read. Plan's own is followed by Plan's.
-    if (sentAny && !foreground) await reloadToday();
+    if (sentAny && !foreground && !discarded()) await reloadToday();
   } finally {
     isFlushing = false;
   }
@@ -399,6 +469,7 @@ export async function flushWorkoutOutbox(options: { readonly foreground: boolean
 /** Tests: back to a fresh launch (nothing stored is touched). */
 export function resetWorkoutOutboxForTests(): void {
   isFlushing = false;
+  savingAsExtra.clear();
   forgetWorkoutOutbox();
 }
 
@@ -406,6 +477,7 @@ export function resetWorkoutOutboxForTests(): void {
 export const WorkoutOutbox = {
   activate: activateWorkoutOutbox,
   enqueue: enqueueWorkout,
+  queue: queueWorkoutSave,
   hasPending: hasPendingWorkoutNow,
   failedItems: failedWorkoutItems,
   discard: discardWorkoutItem,

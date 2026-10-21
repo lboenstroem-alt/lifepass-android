@@ -28,7 +28,9 @@ export {
   readRunnerOutcome,
   refreshRunnerProgress,
   saveRunner,
+  type RunnerSaveOptions,
 } from './persistence/runnerStore';
+export { runnerWipeEpoch, wipedSince } from './persistence/fence';
 export {
   progressSummaryOf,
   RunnerProgressIndex,
@@ -72,12 +74,15 @@ export {
   failedWorkoutItems,
   flushWorkoutOutbox,
   hasPendingWorkoutNow,
+  queueWorkoutSave,
   saveFailedWorkoutAsExtra,
   selectHasPendingWorkout,
   useWorkoutOutbox,
   WorkoutOutbox,
   type FailedOutboxItem,
+  type QueueWorkoutOptions,
   type WorkoutOutboxState,
+  type WorkoutQueueOutcome,
 } from './outbox/workoutOutbox';
 export { activateWorkoutRunnerSupport } from './outbox/support';
 export {

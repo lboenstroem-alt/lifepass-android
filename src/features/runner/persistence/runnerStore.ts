@@ -21,6 +21,7 @@ import { decodeRunnerState, encodeRunnerState } from '../model/codec';
 import { isExpired } from '../model/state';
 import { RUNNER_STATE_VERSION, type RunnerState } from '../model/types';
 
+import { runnerWipeEpoch, wipedSince } from './fence';
 import { RunnerProgressIndex, useRunnerProgress } from './progressIndex';
 
 /** How often a running clock is written down when nothing else changed. */
@@ -38,12 +39,23 @@ export async function loadRunner(profileId: string): Promise<RunnerState | null>
   return outcome.value;
 }
 
+export interface RunnerSaveOptions {
+  /**
+   * The wipe epoch the runner screen opened in (`runnerWipeEpoch()`, ./fence.ts).
+   * When a local wipe has run since, the workout was discarded: nothing is
+   * written and the Resume row is not noted. The screen passes it on every
+   * save; the wipe also tells it to close (`onRunnerWiped`).
+   */
+  readonly since?: number;
+}
+
 /**
  * Queues the write of `state` and notes it for Plan's Resume row. Resolves
  * to whether it was written; the runner need not wait (writes run in the
  * order they were asked for).
  */
-export function saveRunner(state: RunnerState, profileId: string): Promise<boolean> {
+export function saveRunner(state: RunnerState, profileId: string, options: RunnerSaveOptions = {}): Promise<boolean> {
+  if (options.since !== undefined && wipedSince(options.since)) return Promise.resolve(false);
   const written = localStore.write(encodeRunnerState(state), 'runner', profileId);
   RunnerProgressIndex.note(state, profileId.toLowerCase());
   return written;
@@ -54,9 +66,14 @@ export function saveRunner(state: RunnerState, profileId: string): Promise<boole
  * is stamped as seen now, then the state is saved. Returns the stamped state
  * for the screen to keep.
  */
-export function persistRunner(state: RunnerState, profileId: string, now: Date = new Date()): RunnerState {
+export function persistRunner(
+  state: RunnerState,
+  profileId: string,
+  now: Date = new Date(),
+  options: RunnerSaveOptions = {},
+): RunnerState {
   const stamped = state.clockRunningSince ? { ...state, lastSeenAt: now } : state;
-  void saveRunner(stamped, profileId);
+  void saveRunner(stamped, profileId, options);
   return stamped;
 }
 
@@ -78,8 +95,11 @@ export function deleteRunner(profileId: string): Promise<void> {
  */
 export async function refreshRunnerProgress(memberId: string, today: string = todayServerDay()): Promise<void> {
   const profileId = memberId.toLowerCase();
+  const epoch = runnerWipeEpoch();
   useRunnerProgress.setState({ profileId });
   const state = await loadRunner(profileId);
+  // The local wipe ran while the file was read: what was read is gone.
+  if (wipedSince(epoch)) return;
   if (!state) {
     if (useRunnerProgress.getState().profileId === profileId) RunnerProgressIndex.clear();
     return;

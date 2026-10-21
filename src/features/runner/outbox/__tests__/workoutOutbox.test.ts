@@ -11,18 +11,20 @@ import { api, Reply, type StubRequest } from '@test/server';
 
 import { stubApiClientPerTest, expectSentToMatchContract } from '../../../../api/testing';
 import { decodeProfile, type Profile } from '../../../../api/profile';
-import { runActivationHooks } from '../../../../app/signOut';
+import { registerSignOutCleaner, runActivationHooks, runSignOutCleaners } from '../../../../app/signOut';
 import * as localStore from '../../../../health/localStore';
 import { decodeHealthDay, type SessionActionResponse } from '../../../../health/models';
 import { resetHealthStoreForTests, useHealthStore } from '../../../../health/store';
 import { todayServerDay } from '../../../../i18n/format';
 import { setAnalyticsObserver, type AnalyticsParams } from '../../../../lib/analytics';
+import * as notificationCleanup from '../../../../notifications/cleanup';
 import { resetAppStoreForTests, useAppStore } from '../../../../stores/appStore';
 import { hasPendingWorkout, onRunnerWiped, RunnerProgressIndex, useRunnerProgress } from '../../index';
 import { fresh, session, t0 } from '../../model/__tests__/fixtures';
 import { workoutDoneBody, type WorkoutDoneBody } from '../../model/performed';
 import { startRunnerState } from '../../model/state';
-import { saveRunner } from '../../persistence/runnerStore';
+import { raiseRunnerWipeFence, runnerWipeEpoch } from '../../persistence/fence';
+import { persistRunner, saveRunner } from '../../persistence/runnerStore';
 import '../../register';
 import { encodeWorkoutOutbox } from '../codec';
 import { workoutPlanOutboxSource } from '../planSource';
@@ -35,6 +37,7 @@ import {
   failedWorkoutItems,
   flushWorkoutOutbox,
   hasPendingWorkoutNow,
+  queueWorkoutSave,
   resetWorkoutOutboxForTests,
   saveFailedWorkoutAsExtra,
   selectHasPendingWorkout,
@@ -48,6 +51,8 @@ const OTHER = '3c4c1b36-2a7e-4b1f-9e0e-2f1c4f0a9c22';
 const SESSION = '0d6f7a52-6c1e-4c38-9a51-6a3b7f1e2a01';
 const SESSION_2 = '0d6f7a52-6c1e-4c38-9a51-6a3b7f1e2a02';
 const OUTBOX = `health/${MEMBER}/outbox.json`;
+const RUNNER = `health/${MEMBER}/runner.json`;
+const FOLDER = `health/${MEMBER}`;
 const TODAY = todayServerDay();
 const DAY_MS = 86_400_000;
 
@@ -224,6 +229,43 @@ describe('queueing a Save', () => {
     expect(hasPendingWorkoutNow(SESSION_2)).toBe(false);
   });
 
+  it('answers only once the queue is on disk; a write that fails is refused, and nothing waits in memory only', async () => {
+    await activateWorkoutOutbox(MEMBER);
+    const write = jest.spyOn(localStore, 'write').mockResolvedValueOnce(false);
+    await expect(queueWorkoutSave({ sessionId: SESSION, body: body(), key: 'k-1', profileId: MEMBER })).resolves.toBe(
+      'notSaved',
+    );
+    write.mockRestore();
+    // The finish sheet keeps runner.json and says "couldn't be saved".
+    expect(store().items).toEqual([]);
+    expect(hasPendingWorkoutNow(SESSION)).toBe(false);
+    await localStore.settled();
+    expect(fileSystemState.exists(OUTBOX)).toBe(false);
+
+    await expect(enqueueWorkout({ sessionId: SESSION, body: body(), key: 'k-2', profileId: MEMBER })).resolves.toBe(true);
+    // On disk by the time it answered: no wait on the file queue needed.
+    expect(onDisk()!.map((item) => item.key)).toEqual(['k-2']);
+  });
+
+  it('the sixth Save says the queue is full', async () => {
+    seedQueue(['a', 'b', 'c', 'd', 'e'].map((id) => queued(id)));
+    await expect(queueWorkoutSave({ sessionId: SESSION_2, body: body(), key: 'k-6', profileId: MEMBER })).resolves.toBe(
+      'full',
+    );
+  });
+
+  it('a Save for a workout the local wipe discarded is not queued', async () => {
+    await activateWorkoutOutbox(MEMBER);
+    const since = runnerWipeEpoch();
+    await useHealthStore.getState().wipeLocal({ profileId: MEMBER, reason: 'withdrawn' });
+    await expect(
+      queueWorkoutSave({ sessionId: SESSION, body: body(), key: 'k-1', profileId: MEMBER, since }),
+    ).resolves.toBe('discarded');
+    await localStore.settled();
+    expect(fileSystemState.exists(OUTBOX)).toBe(false);
+    expect(store().items).toEqual([]);
+  });
+
   it('two members on one phone never mix queues: a Save reads its member\'s file first', async () => {
     await enqueueWorkout({ sessionId: SESSION, body: body(), key: 'a-1', profileId: MEMBER });
     await enqueueWorkout({ sessionId: SESSION, body: body(), key: 'a-2', profileId: MEMBER });
@@ -257,35 +299,49 @@ describe('queueing a Save', () => {
 // OutboxAdoptionTests, for the workout queue
 
 describe('a queue that cannot be read is not adopted', () => {
-  it('a workout queued while the file is unreadable does not overwrite it, and is merged on the next read', async () => {
+  it('a Save while the file is unreadable never overwrites it and is refused, so the runner file stays', async () => {
     seedQueue([queued('a'), queued('b')]);
     const before = fileSystemState.read(OUTBOX);
     const text = jest.spyOn(File.prototype, 'text').mockRejectedValueOnce(new Error('EIO'));
 
-    await expect(enqueueWorkout({ sessionId: SESSION_2, body: body(), key: 'k-c', profileId: MEMBER })).resolves.toBe(
-      true,
+    await expect(queueWorkoutSave({ sessionId: SESSION_2, body: body(), key: 'k-c', profileId: MEMBER })).resolves.toBe(
+      'notSaved',
     );
     text.mockRestore();
-    expect(store().items).toHaveLength(1); // only the new one is in memory
+    // Nothing waits in memory only: the workout is still in runner.json.
+    expect(store().items).toEqual([]);
     expect(store().loadedProfileId).toBeNull();
+    expect(store().unadoptedProfileId).toBe(MEMBER);
     await localStore.settled();
     expect(fileSystemState.read(OUTBOX)).toBe(before);
 
     // A flush never runs on a queue that was not adopted.
     await flushWorkoutOutbox({ foreground: true });
-    expect(sentTo(SESSION_2)).toHaveLength(0);
+    expect(sentTo()).toHaveLength(0);
 
-    // Readable again: the disk queue first, nothing doubled, written through.
+    // Readable again: the disk queue is adopted as it was, and a Save is queued behind it.
     await activateWorkoutOutbox(MEMBER);
-    expect(store().items.map((item) => item.id).slice(0, 2)).toEqual(['a', 'b']);
-    expect(store().items).toHaveLength(3);
-    await localStore.settled();
+    expect(store().items.map((item) => item.id)).toEqual(['a', 'b']);
+    await expect(queueWorkoutSave({ sessionId: SESSION_2, body: body(), key: 'k-c', profileId: MEMBER })).resolves.toBe(
+      'queued',
+    );
     expect(onDisk()!.map((item) => item.key)).toEqual(['key-a-0001', 'key-b-0001', 'k-c']);
 
     // Emptied, the queue's file goes.
     for (const item of [...store().items]) discardWorkoutItem(item.id);
     await localStore.settled();
     expect(fileSystemState.exists(OUTBOX)).toBe(false);
+  });
+
+  it('a queue read while the file was unreadable is merged, disk first, once it can be read', async () => {
+    seedQueue([queued('a')]);
+    const text = jest.spyOn(File.prototype, 'text').mockRejectedValueOnce(new Error('EIO'));
+    await activateWorkoutOutbox(MEMBER);
+    text.mockRestore();
+    expect(store()).toMatchObject({ items: [], loadedProfileId: null, unadoptedProfileId: MEMBER });
+    await activateWorkoutOutbox(MEMBER);
+    expect(store()).toMatchObject({ loadedProfileId: MEMBER, unadoptedProfileId: null });
+    expect(store().items.map((item) => item.id)).toEqual(['a']);
   });
 
   it('an absent file is an empty queue, adopted', async () => {
@@ -462,6 +518,26 @@ describe('a withdrawn consent', () => {
     expect(api.sentAll('/profile', 'GET')).toHaveLength(0);
   });
 
+  it('entitlement is read when the answer lands, not when the send began (iOS reads it in `step`)', async () => {
+    seedToday('planned');
+    seedQueue([queued('a')]);
+    let release: () => void = () => undefined;
+    api.on(
+      'POST',
+      '/health/sessions/:id',
+      () => new Promise((resolve) => (release = () => resolve(Reply.problem(409, 'health_consent_required')))),
+    );
+    await activateWorkoutOutbox(MEMBER);
+    const flushing = flushWorkoutOutbox({ foreground: true });
+    await settle();
+    // A Today read landed while it was sent: the member is no longer entitled.
+    seedToday('planned', 'not_entitled');
+    release();
+    await flushing;
+    // The reconcile's path, not the banner's.
+    expect(store().items).toMatchObject([{ id: 'a', state: 'pending' }]);
+  });
+
   it('on Plan, for a member who is not entitled, reconciles too', async () => {
     seedToday('planned', 'not_entitled');
     seedQueue([queued('a')]);
@@ -521,6 +597,15 @@ describe('a failed item on Plan\'s banner', () => {
     expect(store().items).toEqual([]);
     expect(flushed()).toEqual(['extra']);
     expect(useHealthStore.getState().today?.day?.session?.status).toBe('done');
+  });
+
+  it('two quick taps send ONE Save as extra (one key, one extra on the server)', async () => {
+    api.on('POST', '/health/sessions/:id', Reply.ok(doneAnswer()));
+    await activateWorkoutOutbox(MEMBER);
+    await Promise.all([saveFailedWorkoutAsExtra('a'), saveFailedWorkoutAsExtra('a')]);
+    expect(sentTo()).toHaveLength(1);
+    expect(store().items).toEqual([]);
+    expect(flushed()).toEqual(['extra']);
   });
 
   it('Save as extra with no network: it waits, as an extra, for the next flush', async () => {
@@ -602,6 +687,84 @@ describe('the local wipe', () => {
     expect(told).toHaveBeenCalledWith({ profileId: MEMBER, reason: 'withdrawn' });
   });
 
+  it('what lands while the wipe is still running does not outlive it: no outbox.json, no runner.json, no folder', async () => {
+    seedToday('planned');
+    seedQueue([queued('a')]);
+    await activateWorkoutOutbox(MEMBER);
+    await saveRunner(fresh(), MEMBER);
+    let answer: () => void = () => undefined;
+    api.on(
+      'POST',
+      '/health/sessions/:id',
+      () =>
+        new Promise((resolve) => {
+          answer = () => resolve(Reply.problem(409, 'session_action_not_allowed', { reason: 'no_session_on_date' }));
+        }),
+    );
+    // The wipe waits on its other cleanup (here the notifications) between
+    // queueing the folder's delete and running its hooks.
+    let finishCleanup: () => void = () => undefined;
+    const cleanup = jest
+      .spyOn(notificationCleanup, 'removeAllHealthNotifications')
+      .mockImplementationOnce(() => new Promise<void>((resolve) => (finishCleanup = resolve)));
+
+    const flushing = flushWorkoutOutbox({ foreground: true });
+    await settle();
+    const wiping = useHealthStore.getState().wipeLocal({ profileId: MEMBER, reason: 'withdrawn' });
+    await localStore.settled();
+    expect(fileSystemState.exists(FOLDER)).toBe(false);
+
+    // In that window: the answer lands (the item is marked failed and its
+    // queue written), and the open runner's clock write comes due.
+    answer();
+    await flushing;
+    persistRunner(fresh(), MEMBER, t0);
+    finishCleanup();
+    await wiping;
+    cleanup.mockRestore();
+
+    expect(fileSystemState.exists(OUTBOX)).toBe(false);
+    expect(fileSystemState.exists(RUNNER)).toBe(false);
+    expect(fileSystemState.exists(FOLDER)).toBe(false);
+    expect(store()).toMatchObject({ items: [], profileId: null, loadedProfileId: null });
+    // The member's next sign-in finds nothing to send or resume.
+    await activateWorkoutOutbox(MEMBER);
+    expect(store().items).toEqual([]);
+  });
+
+  it('work begun before the fence went up sends no conversion and writes nothing', async () => {
+    seedToday('planned');
+    seedQueue([queued('a')]);
+    const before = fileSystemState.read(OUTBOX);
+    let answer: () => void = () => undefined;
+    api.on(
+      'POST',
+      '/health/sessions/:id',
+      () => new Promise((resolve) => (answer = () => resolve(Reply.problem(404, 'health_session_not_found')))),
+    );
+    await activateWorkoutOutbox(MEMBER);
+    const flushing = flushWorkoutOutbox({ foreground: true });
+    await settle();
+    // What a wipe hook run in the delete's own turn does (iOS's order).
+    raiseRunnerWipeFence();
+    answer();
+    await flushing;
+    await localStore.settled();
+    expect(sentTo()).toHaveLength(1);
+    expect(fileSystemState.read(OUTBOX)).toBe(before);
+    expect(flushed()).toEqual([]);
+  });
+
+  it('a runner opened before a wipe writes nothing after it, and the Resume row stays empty', async () => {
+    const since = runnerWipeEpoch();
+    await useHealthStore.getState().wipeLocal({ profileId: MEMBER, reason: 'withdrawn' });
+    await expect(saveRunner(fresh(), MEMBER, { since })).resolves.toBe(false);
+    persistRunner(fresh(), MEMBER, t0, { since });
+    await localStore.settled();
+    expect(fileSystemState.exists(RUNNER)).toBe(false);
+    expect(useRunnerProgress.getState().summary).toBeNull();
+  });
+
   it('a send that lands after the wipe writes nothing back, and nothing more is sent', async () => {
     seedToday('planned');
     seedQueue([queued('a'), queued('b', { sessionId: SESSION_2 })]);
@@ -628,6 +791,47 @@ describe('the local wipe', () => {
   });
 });
 
+describe('a sign-out', () => {
+  async function seedMemberData(): Promise<void> {
+    seedQueue([queued('a')]);
+    await activateWorkoutOutbox(MEMBER);
+    await saveRunner(fresh(), MEMBER);
+  }
+
+  it('takes the runner\'s two files and its memory, even when no health wipe runs', async () => {
+    await seedMemberData();
+    const told = jest.fn();
+    onRunnerWiped(told);
+    await runSignOutCleaners({ memberId: MEMBER });
+    expect(fileSystemState.exists(OUTBOX)).toBe(false);
+    expect(fileSystemState.exists(RUNNER)).toBe(false);
+    expect(store()).toMatchObject({ items: [], profileId: null, loadedProfileId: null });
+    expect(useRunnerProgress.getState()).toEqual({ summary: null, profileId: null });
+    expect(told).toHaveBeenCalledTimes(1);
+    expect(told).toHaveBeenCalledWith({ profileId: MEMBER, reason: 'signout' });
+  });
+
+  it('naming nobody, it clears the member the queue was read for', async () => {
+    await seedMemberData();
+    await runSignOutCleaners({ memberId: null });
+    expect(fileSystemState.exists(OUTBOX)).toBe(false);
+    expect(fileSystemState.exists(RUNNER)).toBe(false);
+  });
+
+  it('with the health wipe running too, the folder goes and an open runner is told once', async () => {
+    await seedMemberData();
+    const off = registerSignOutCleaner('test.health-wipe', ({ memberId }) =>
+      useHealthStore.getState().wipeLocal({ profileId: memberId, reason: 'signout' }),
+    );
+    const told = jest.fn();
+    onRunnerWiped(told);
+    await runSignOutCleaners({ memberId: MEMBER });
+    off();
+    expect(told).toHaveBeenCalledTimes(1);
+    expect(fileSystemState.exists(FOLDER)).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // PLAN-1's bridge
 
@@ -650,6 +854,20 @@ describe('the workout half of Plan\'s outbox bridge', () => {
     // Foreground and entitled: the banner, not a reconcile.
     expect(workoutPlanOutboxSource.failedItems()).toEqual([{ id: 'a', kind: 'workout' }]);
     expect(api.sentAll('/health', 'GET')).toHaveLength(0);
+  });
+
+  it('activate (Plan\'s appearance, before any consent guard): the Resume row and the queue are read, nothing is sent', async () => {
+    seedQueue([queued('a')]);
+    await saveRunner(
+      startRunnerState({ session: session({ scheduledFor: TODAY }), origin: 'today', now: t0, today: TODAY }),
+      MEMBER,
+    );
+    RunnerProgressIndex.reset();
+    await workoutPlanOutboxSource.activate();
+    expect(useRunnerProgress.getState().summary?.sessionId).toBe('sess-1');
+    expect(store().loadedProfileId).toBe(MEMBER);
+    expect(hasPendingWorkoutNow(SESSION)).toBe(true);
+    expect(sentTo()).toHaveLength(0);
   });
 
   it('acts only on its own items, and tells Plan when the queue changes', async () => {
