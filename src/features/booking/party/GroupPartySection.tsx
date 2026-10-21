@@ -18,10 +18,17 @@
  * (BOOK-1's mount does), the rows are the session's own seats and a menu
  * changes exactly that seat, as iOS `changeGuestAgeBand(at:to:)` does.
  *
- * ANDROID LAYOUT. The timetable below is the screen's flexible part, so nine
- * guest rows at a large font size would squeeze it (and Back and Next) off
- * the screen: past a third of the window the rows scroll inside the card.
- * The stepper and the note always stay in view.
+ * ANDROID LAYOUT. The section sits above the timetable, the step's flexible
+ * part, so nine guest rows at a large font size would push the times (and
+ * Back and Next) off the screen. The section takes at most half of the
+ * step's own height (a percentage of the space the step really has, not of
+ * the window) and gives way in the guest rows, which then scroll inside the
+ * card; the stepper and the note stay in view.
+ *
+ * TOUCH. The minus and plus circles are 32 dp, as iOS draws them, inside
+ * 48 dp touch targets (their real bounds, not a hit slop, so Play's
+ * Accessibility Scanner measures 48); the age menus likewise wrap a 36 dp
+ * pill in a 48 dp target.
  *
  * TALKBACK. The count is one adjustable element ("Number of people, 3"): a
  * swipe up or down is one step, the same as the buttons. The buttons carry
@@ -29,7 +36,7 @@
  * is ("Person 2") and its current band.
  */
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type AccessibilityActionEvent } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View, type AccessibilityActionEvent } from 'react-native';
 
 import type { AgeBandOffer } from '../../../api/bookings';
 import { LPText, MenuPicker } from '../../../components/ui';
@@ -81,7 +88,6 @@ export default function GroupPartySection({
   onChangeGuestBand,
 }: GroupPartySectionProps) {
   const { t, language } = useT();
-  const window = useWindowDimensions();
 
   // The session's own seats when the screen passes them; else the counts,
   // in the venue's band order.
@@ -112,11 +118,15 @@ export default function GroupPartySection({
     if (event.nativeEvent.actionName === 'decrement') step(-1);
   };
 
+  // Only the bands the venue sells, as iOS lists them. A seat whose band is
+  // not among them (a guest who starts as an adult where only child and
+  // infant tickets are sold) shows its band on the trigger alone.
   const options = ageBands.map((offer) => ({
     value: offer.band,
     label: bandOptionLabel(offer.band, offer.rangeLabel, language),
     testID: `booking.party.band.${offer.band}`,
   }));
+  const offered = new Set(ageBands.map((offer) => offer.band));
 
   return (
     <View style={styles.section} testID="booking.party">
@@ -172,33 +182,37 @@ export default function GroupPartySection({
             {t('booking.guest_ages_label')}
           </LPText>
           <ScrollView
-            style={{ maxHeight: Math.max(160, window.height / 3) }}
-            contentContainerStyle={styles.rows}
+            style={styles.rowsScroll}
             nestedScrollEnabled
             bounces={false}
           >
             {seats.map((band, index) => {
               // +2: index 0 is the SECOND person in the party.
               const person = t('booking.guest_ordinal', { n: `${index + 2}` });
+              const bandLabel = selectedBandLabel(band, ageBands, language);
               return (
                 <View key={index} style={styles.row} testID={`booking.party.guest.${index + 2}`}>
                   <LPText size={14} color={colors.mutedTextStrong} style={styles.flex} {...hiddenFromAccessibility}>
                     {person}
                   </LPText>
                   <MenuPicker
-                    label={person}
+                    // MenuPicker says the current option as the trigger's
+                    // value; a band the venue does not list is no option, so
+                    // the label names it instead (contract request to F5: an
+                    // optional value label for a value outside the options).
+                    label={offered.has(band) ? person : `${person}, ${bandLabel}`}
                     value={band}
-                    options={withCurrent(options, band, selectedBandLabel(band, ageBands, language))}
+                    options={options}
                     onChange={(next) => changeBand(index, next)}
                     disabled={disabled}
-                    style={styles.menu}
+                    style={styles.menuTarget}
                     renderTrigger={() => (
-                      <>
+                      <View style={styles.menu}>
                         <LPText size={14} weight="medium" numberOfLines={1} style={styles.menuText}>
-                          {selectedBandLabel(band, ageBands, language)}
+                          {bandLabel}
                         </LPText>
-                        <Ionicons name="chevron-expand" size={12} color={colors.paper} />
-                      </>
+                        <Ionicons name="chevron-expand" size={10} color={colors.paper} />
+                      </View>
                     )}
                     testID={`booking.party.guest.${index + 2}.band`}
                   />
@@ -213,23 +227,6 @@ export default function GroupPartySection({
       ) : null}
     </View>
   );
-}
-
-/**
- * The menu's choices with the seat's current band in them. A band the venue
- * does not list (a guest who starts as an adult where only child and infant
- * tickets are sold) stays named as the request carries it, never shown as
- * another band: it is listed last so the menu can mark it and TalkBack can
- * say it, and choosing it changes nothing (MenuPicker reports only a new
- * value). iOS draws the same label on the trigger and leaves it out of the
- * menu; nothing new can be sent either way.
- */
-function withCurrent<T extends { value: string; label: string; testID?: string }>(
-  options: readonly T[],
-  band: string,
-  label: string,
-): { value: string; label: string; testID?: string }[] {
-  return options.some((option) => option.value === band) ? [...options] : [...options, { value: band, label }];
 }
 
 function RoundButton({
@@ -255,12 +252,13 @@ function RoundButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: !enabled }}
-      // A 32 dp circle, as iOS draws it, with Android's 48 dp to touch.
-      hitSlop={8}
-      style={({ pressed }) => [styles.round, atBound && styles.faded, pressed && styles.pressed]}
+      // A 32 dp circle, as iOS draws it, in Android's 48 dp to touch.
+      style={({ pressed }) => [styles.roundTarget, atBound && styles.faded, pressed && styles.pressed]}
       testID={testID}
     >
-      <Ionicons name={icon} size={16} color={colors.paper} />
+      <View style={styles.round} testID={`${testID}.circle`}>
+        <Ionicons name={icon} size={13} color={colors.paper} />
+      </View>
     </Pressable>
   );
 }
@@ -268,6 +266,10 @@ function RoundButton({
 const styles = StyleSheet.create({
   section: {
     gap: 16,
+    // Half of the step at most, giving way before the times and the buttons
+    // do (see ANDROID LAYOUT above).
+    maxHeight: '50%',
+    flexShrink: 1,
   },
   card: {
     flexDirection: 'row',
@@ -287,10 +289,21 @@ const styles = StyleSheet.create({
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    // iOS spaces the circles 14 apart and 14 from the card's edge; the 8 dp
+    // of touch target around each circle is taken out of both, so the card
+    // keeps the iOS height and the circles their places.
+    gap: 6,
+    marginVertical: -8,
+    marginRight: -8,
   },
   count: {
     minWidth: 22,
+  },
+  roundTarget: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   round: {
     width: 32,
@@ -298,7 +311,8 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.ink,
+    // iOS lpMuted, the card's own colour: only the glyph shows.
+    backgroundColor: colors.ink2,
   },
   faded: {
     opacity: 0.35,
@@ -310,20 +324,30 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     alignItems: 'stretch',
     gap: 10,
+    flexShrink: 1,
   },
-  rows: {
-    gap: 10,
+  rowsScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
+    // One row always shows, so the ages can still be scrolled to.
+    minHeight: 48,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
+  menuTarget: {
+    // Rows touch: the 48 dp targets leave 12 dp between the pills (iOS
+    // spaces its rows 10 apart).
+    flexShrink: 1,
+    minHeight: 48,
+    justifyContent: 'center',
+  },
   menu: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    flexShrink: 1,
     minHeight: 36,
     paddingHorizontal: 12,
     paddingVertical: 8,

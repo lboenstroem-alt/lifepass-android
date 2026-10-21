@@ -9,6 +9,7 @@ import { useState } from 'react';
 
 import type { AgeBandOffer } from '../../../../api/bookings';
 import { lookup, setCurrentLanguage } from '../../../../i18n';
+import { colors } from '../../../../theme';
 import GroupPartySection, { type GuestCounts } from '../GroupPartySection';
 import { countsFromBands } from '../partyModel';
 
@@ -74,6 +75,18 @@ function Party({
 }
 
 describe('the stepper', () => {
+  it('draws 32 dp circles in the card colour inside 48 dp touch targets, as iOS draws them', async () => {
+    await render(<Party />);
+    for (const id of ['booking.party.fewer', 'booking.party.more']) {
+      const target = screen.getByTestId(id);
+      // The target's own bounds, not a hit slop, so the Accessibility Scanner measures 48 dp.
+      expect(target).toHaveStyle({ width: 48, height: 48 });
+      expect(target.props.hitSlop).toBeUndefined();
+      // iOS lpMuted, the card's own colour: only the glyph shows.
+      expect(screen.getByTestId(`${id}.circle`)).toHaveStyle({ width: 32, height: 32, backgroundColor: colors.ink2 });
+    }
+  });
+
   it('starts with the member alone: minus off and faded, plus adds an adult guest', async () => {
     const onGuests = jest.fn();
     await render(<Party onGuests={onGuests} />);
@@ -179,9 +192,31 @@ describe('the guest ages', () => {
     expect(screen.getByRole('button', { name: 'Person 2' })).toHaveAccessibilityValue({ text: 'Adult (16+)' });
   });
 
-  it('a seat whose band the venue no longer lists keeps its own name, never shown as another band', async () => {
+  it('a seat whose band the venue does not list keeps its own name on the trigger; the menu lists only what the venue sells', async () => {
+    // A guest starts as an adult; this venue sells child and infant tickets only.
+    const onBand = jest.fn();
+    await render(<Party ageBands={[BANDS[1], BANDS[2]]} initial={['adult']} onBand={onBand} />);
+    // TalkBack hears the band in the label, since it is no option to say as the value.
+    const trigger = screen.getByRole('button', { name: 'Person 2, Adult' });
+    expect(screen.getByText('Adult')).toBeOnTheScreen();
+
+    await fireEvent.press(trigger);
+    // As iOS: the venue's bands and nothing else, none of them checked.
+    expect(screen.getAllByRole('menuitem').map((item) => item.props.accessibilityLabel)).toEqual([
+      'Child (6-15)',
+      'Infant (0-5)',
+    ]);
+    expect(screen.getByRole('menuitem', { name: 'Child (6-15)' })).not.toBeSelected();
+    await fireEvent.press(screen.getByRole('menuitem', { name: 'Child (6-15)' }));
+    expect(onBand).toHaveBeenCalledWith(0, 'child');
+    // A listed band again: the plain label, with the band as its value.
+    expect(screen.getByRole('button', { name: 'Person 2' })).toHaveAccessibilityValue({ text: 'Child (6-15)' });
+  });
+
+  it('a seat whose band the venue no longer lists is never shown as another band', async () => {
     await render(<Party ageBands={[BANDS[0], BANDS[2]]} initial={['child']} />);
-    expect(screen.getByRole('button', { name: 'Person 2' })).toHaveAccessibilityValue({ text: 'Child' });
+    expect(screen.getByRole('button', { name: 'Person 2, Child' })).toBeOnTheScreen();
+    expect(screen.getByText('Child')).toBeOnTheScreen();
   });
 
   it('reads in Icelandic', async () => {
