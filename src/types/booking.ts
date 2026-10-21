@@ -5,12 +5,13 @@
  * /bookings` row with its RAW status, which My bookings (Profile, LIB-1)
  * draws ("Pending" in amber, "Checked in", "Confirmed") and cancels by.
  *
- * `Booking` below is the first Android build's folded shape, kept only for
- * the screens not yet rebuilt that still read it through the old service
- * (the Coach heading, src/coach/deriveTags.ts, src/utils/activityHeading.ts).
- * Its 3-state status folds `pending` into "confirmed", so it must never be
- * used to say whether a booking is held: new code reads `MemberBooking`.
- * QA-1 deletes it with its last reader.
+ * `Booking` below is the first Android build's folded shape. Its one
+ * remaining reader is the legacy service src/supabase/services/bookings.ts
+ * (BOOK-1's `fetchBookings`, `fetchUpcomingBookings` and `cancelBooking`,
+ * which no screen calls any more). Its 3-state status folds `pending` into
+ * "confirmed", so it must never be used to say whether a booking is held:
+ * new code reads `MemberBooking`. It goes when those legacy functions do
+ * (BOOK-1 or QA-1).
  */
 export type { BookingRange, MemberBooking } from '../api/bookingsList';
 
