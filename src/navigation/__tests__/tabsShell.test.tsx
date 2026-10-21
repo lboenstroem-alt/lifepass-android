@@ -390,6 +390,10 @@ describe('every route of plan 3.0.2', () => {
     expect(SHARED_ROUTE_NAMES).toEqual(sharedRoutes);
   });
 
+  // 21 routes in 5 tabs, each back to the tab's first screen: on Plan that is
+  // the real Plan screen appearing again every time (PLAN-1). About 1.5 s on
+  // an idle machine, but over 20 s on one loaded by parallel suites, so the
+  // default five seconds (and even twenty) fails a correct run.
   it('every shared route opens in every tab, on top of that tab’s own first screen', async () => {
     signedIn('Home');
     await renderShell();
@@ -407,7 +411,7 @@ describe('every route of plan 3.0.2', () => {
         expect(currentRouteName()).toBe(TAB_ROOT_SCREEN[tab]);
       }
     }
-  });
+  }, 60_000);
 
   it('every root modal opens over the tabs', async () => {
     signedIn();
