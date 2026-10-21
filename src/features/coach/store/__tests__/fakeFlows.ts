@@ -32,6 +32,8 @@ export interface FakeFlow extends CoachFlow {
   takesTyped: boolean;
   /** The id of this flow's open question bubble, if any. */
   openQuestionId: string | null;
+  /** In progress with no question open (a programme summary or sheet up). */
+  active: boolean;
   /** Back to fresh (between tests). */
   clear(): void;
 }
@@ -66,6 +68,7 @@ export function fakeFlow(id: CoachFlowId): FakeFlow {
     startsOn: null,
     takesTyped: true,
     openQuestionId: null,
+    active: false,
     renderers: {},
     clear() {
       flow.calls.length = 0;
@@ -74,7 +77,9 @@ export function fakeFlow(id: CoachFlowId): FakeFlow {
       flow.startsOn = null;
       flow.takesTyped = true;
       flow.openQuestionId = null;
+      flow.active = false;
     },
+    isActive: () => flow.active || flow.openQuestionId !== null,
     hasOpenQuestion: () => flow.openQuestionId !== null,
     takeTyped(text: string) {
       flow.calls.push(`takeTyped:${text}`);
@@ -96,10 +101,12 @@ export function fakeFlow(id: CoachFlowId): FakeFlow {
     abandon() {
       flow.calls.push('abandon');
       flow.openQuestionId = null;
+      flow.active = false;
     },
     reset() {
       flow.calls.push('reset');
       flow.openQuestionId = null;
+      flow.active = false;
     },
     enter(entry: CoachFlowEntry) {
       flow.calls.push('enter');
@@ -116,7 +123,10 @@ export function fakeFlow(id: CoachFlowId): FakeFlow {
     },
     healthWiped() {
       flow.calls.push('healthWiped');
-      if (isHealth) flow.openQuestionId = null;
+      if (isHealth) {
+        flow.openQuestionId = null;
+        flow.active = false;
+      }
     },
   };
   flows.set(id, flow);
