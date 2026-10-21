@@ -1,36 +1,35 @@
-// @f4-stub (plan 3.0.3): the class booking sheet, filled by CLASS-2; used by CLASS-1 and COACH-3.
+// The class booking sheet (CLASS-2, plan 3.0.3): one class session's sheet,
+// opened over whatever is showing. Used by the classes feed (CLASS-1) and the
+// Coach's plan cards (COACH-3).
 //
-// iOS `ClassBookingSheet(occurrence:onBooked:)`: one class session's sheet
-// (book, other times, card-less class pay). Opened imperatively; the host is
-// CLASS-2's to mount.
-// Keep the exported names and signatures; replace the bodies (and this marker).
-// `ClassSheetHost` is mounted once by F4's tabs shell.
+//   openClassSheet(occurrence, {
+//     onBooked: () => { bookedHere = true; },
+//     onDismiss: () => { if (bookedHere) reload(); },
+//   });
 //
-// CLASS-1 (contract): the occurrence is the feed's own session type,
-// `ClassOccurrence` (../model/occurrence.ts, iOS ClassOccurrence.swift), as
-// the stub anticipated, and `onDismiss` lets the feed re-read once the sheet
-// has gone after a booking (iOS `.sheet(item:onDismiss:)`).
-import type { ClassOccurrence } from '../model/occurrence';
-
+// iOS `ClassBookingSheet(occurrence:onBooked:)` in a `.sheet(item:onDismiss:)`.
+// The sheet books THAT session (the Abler event, or the first-party slot's
+// times), with the charge disclosure, the price above Confirm, consent, the
+// pay-and-save-card page for a member with no saved card, and every refusal
+// and outcome the full flow has. A session that started, left the schedule
+// or can't be booked says so and offers "See other times" (the full flow on
+// that day). `ClassSheetHost` is mounted once by F4's tabs shell.
+//
+// THE COACH. A plan's class step books through `bookCoachClass(session,
+// { navigation })` (../coachLookup.ts, re-exported here because another
+// feature reaches this one only through an index): the plan's own handle,
+// else the same class found in the feed, else the venue's page.
 export { default as ClassSheetHost } from './ClassSheetHost';
-
-/** What the sheet needs to identify a session: the feed's (or a Coach plan's) `ClassOccurrence`. */
-export type ClassSheetOccurrence = ClassOccurrence;
-
-export interface OpenClassSheetOptions {
-  /** A booking landed (confirmed, or accepted and pending): the screen underneath refreshes. */
-  readonly onBooked?: () => void;
-  /**
-   * The sheet has gone, however it closed: called exactly once per opening,
-   * on EVERY close path (its close button, hardware back, a swipe down, and
-   * before a page it opens), and after any `onBooked`. The feed re-reads here
-   * after a booking (iOS `.sheet(item:onDismiss:)`).
-   */
-  readonly onDismiss?: () => void;
-}
-
-/** Opens the class sheet over whatever is showing. A no-op until CLASS-2 lands. */
-export function openClassSheet(occurrence: ClassSheetOccurrence, options: OpenClassSheetOptions = {}): void {
-  void occurrence;
-  void options;
-}
+export { openClassSheet, type ClassSheetOccurrence, type OpenClassSheetOptions } from './open';
+export {
+  bookCoachClass,
+  coachClassOccurrence,
+  COACH_CLASS_LOOKUP_PAGES,
+  COACH_CLASS_START_TOLERANCE_MS,
+  feedOccurrenceMatching,
+  resolveCoachClassOccurrence,
+  type BookCoachClassOptions,
+  type CoachClassBooking,
+  type CoachClassLookupDeps,
+  type CoachPlanClass,
+} from '../coachLookup';
