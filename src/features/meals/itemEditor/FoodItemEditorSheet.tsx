@@ -125,19 +125,55 @@ const KCAL_UNIT = 'kcal';
 const GRAM_UNIT = 'g';
 const MACROS: readonly MealNutrientField[] = ['protein', 'carbs', 'fat'];
 
+/**
+ * Which item a presentation is for. A caller may hand a fresh draft of the
+ * same food on every render (`draftFromChoice(choice)` inline mints a new
+ * local id each time); that is still the same opening, and the member's
+ * changes must not be thrown away under them.
+ */
+function identityOf(item: MealItemDraft): string {
+  return item.storedId ?? item.choiceKey ?? item.localId;
+}
+
+interface Shown {
+  readonly item: MealItemDraft;
+  /** One per opening: a new key is a fresh sheet with fresh fields. */
+  readonly key: number;
+}
+
 export default function FoodItemEditorSheet(props: FoodItemEditorSheetProps) {
-  // The item on screen, kept while the sheet slides away after `item` went null.
-  const [shown, setShown] = useState<MealItemDraft | null>(props.item);
+  const [shown, setShownState] = useState<Shown | null>(() => (props.item ? { item: props.item, key: 0 } : null));
+  const shownRef = useRef(shown);
+  const setShown = useCallback((next: Shown | null) => {
+    shownRef.current = next;
+    setShownState(next);
+  }, []);
+  const opening = useRef(0);
+  /** The parent closed it (`item` went null): the next item is a new opening, even the same food. */
+  const closed = useRef(props.item === null);
   const latest = useRef(props.item);
   latest.current = props.item;
+
   useEffect(() => {
-    if (props.item) setShown(props.item);
-  }, [props.item]);
+    const item = props.item;
+    if (!item) {
+      closed.current = true;
+      return;
+    }
+    const current = shownRef.current;
+    if (current && !closed.current && identityOf(current.item) === identityOf(item)) return;
+    closed.current = false;
+    opening.current += 1;
+    setShown({ item, key: opening.current });
+  }, [props.item, setShown]);
+
+  // The content stays while the sheet slides away, then goes.
   const onClosed = useCallback(() => {
     if (latest.current === null) setShown(null);
-  }, []);
+  }, [setShown]);
+
   if (!shown) return null;
-  return <ItemEditorPresentation key={shown.localId} {...props} initial={shown} visible={props.item !== null} onClosed={onClosed} />;
+  return <ItemEditorPresentation key={shown.key} {...props} initial={shown.item} visible={props.item !== null} onClosed={onClosed} />;
 }
 
 interface PresentationProps extends FoodItemEditorSheetProps {

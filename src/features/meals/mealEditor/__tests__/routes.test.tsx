@@ -23,11 +23,11 @@ import { navigationRef as appNavigationRef } from '../../../../navigation/naviga
 import { resetAppStoreForTests, useAppStore } from '../../../../stores/appStore';
 import { setMealApi } from '../../api/mealApi';
 import { fakeMealApi } from '../../api/testing';
-import { mealRecord, newSkyr, photoItemJson, skyrItemJson } from '../../itemEditor/__tests__/fixtures';
+import { mealRecord, newSkyr, photoItemJson, skyrChoice, skyrItemJson } from '../../itemEditor/__tests__/fixtures';
 import ItemEditorHost from '../../itemEditor/ItemEditorHost';
 import { dismissItemEditor, presentStoredItemEditor } from '../../itemEditor/itemEditorPresenter';
 import NewItemEditorSheet from '../../itemEditor/NewItemEditorSheet';
-import { draftFromRecord } from '../../types/draftFactory';
+import { draftFromChoice, draftFromRecord } from '../../types/draftFactory';
 import type { MealRecord } from '../../types/models';
 import { openAddFoodPage, takeAddFoodHandoff, dropAddFoodHandoff } from '../addFood';
 import { attachMealCaptureLink, pageKeyOf, resetMealCaptureLinksForTests, type MealCaptureLink, type MealCaptureLinkState } from '../captureLink';
@@ -255,6 +255,18 @@ describe('the item editor for other meal screens', () => {
     await act(async () => fireEvent.press(screen.getByRole('button', { name: en('food.editor.add') })));
     expect(onAdd.mock.calls[0][0].amount).toBe(2);
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('keeps the member’s changes when the page hands a fresh draft of the same food on every render', async () => {
+    const onAdd = jest.fn();
+    // MEAL-2's search draws the slot with `draftFromChoice(choice)` inline: a new local id each render.
+    const page = () => <NewItemEditorSheet visible item={draftFromChoice(skyrChoice())} offBarcode={null} onAdd={onAdd} onClose={jest.fn()} />;
+    const view = await render(page());
+    await act(async () => fireEvent.press(screen.getByRole('button', { name: en('a11y.portion_times', { value: '2' }) })));
+    await act(async () => view.rerender(page()));
+    expect(screen.getByLabelText('Calories, kcal')).toHaveDisplayValue('211');
+    await act(async () => fireEvent.press(screen.getByRole('button', { name: en('food.editor.add') })));
+    expect(onAdd.mock.calls[0][0].amount).toBe(2);
   });
 
   it('the diary’s stored item opens through the host, and not without one', async () => {
