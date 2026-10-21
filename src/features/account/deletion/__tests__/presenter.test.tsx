@@ -12,7 +12,8 @@ import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMo
 import { takeRefusalStep } from '../../../../navigation/refusalSteps';
 import type { SharedRouteNavigation } from '../../../../navigation/sharedSheet';
 import { resetAppStoreForTests } from '../../../../stores/appStore';
-import { AccountDeletionHost, isAccountDeletionHostMounted, openAccountDeletion } from '..';
+import { isAccountDeletionHostMounted, openAccountDeletion } from '..';
+import { AccountDeletionHost } from '../ui';
 import { resetAccountDeletionPresenterForTests, useAccountDeletionPresenter } from '../presenter';
 
 jest.mock('@gorhom/bottom-sheet', () =>
