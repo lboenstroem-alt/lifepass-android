@@ -17,11 +17,9 @@
 // who never opens the Scan tab must still be covered, as iOS's sign-out calls every wipe by name, so it is called
 // here at startup.
 //
-// The slot's F4 stub (./walkin/index.ts) does not export it yet; it arrives with CHECKIN-2. It is read as optional so
-// this file is right on either side of that merge. Once both packages are in, this can be a plain named import.
-import * as walkIn from './walkin';
+// It is imported from ./walkin/register, not the ./walkin barrel: the barrel also carries the walk-in's screens, and
+// this file loads at startup with every other register file (src/app/registrations.ts), where a UI module that fails
+// to load (a font or icon set on one phone) would cost the walk-in its sign-out cleaner and its payment presenter.
+import { registerWalkInHooks } from './walkin/register';
 
-/** CHECKIN-2's hook registration, where the walk-in package has landed. */
-type WalkInHooks = { readonly registerWalkInHooks?: () => void };
-
-(walkIn as WalkInHooks).registerWalkInHooks?.();
+registerWalkInHooks();
