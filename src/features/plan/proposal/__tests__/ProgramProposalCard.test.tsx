@@ -16,7 +16,7 @@ import { api, Reply } from '@test/server';
 import { Text } from 'react-native';
 
 import { expectSentToMatchContract, stubApiClientPerTest } from '../../../../api/testing';
-import { UiKitProvider } from '../../../../components/ui';
+import { resetUiKit, UiKitProvider } from '../../../../components/ui';
 import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
 import { decodeHealthDay, decodeHealthProposal, ReminderKeys, useHealthStore } from '../../../../health';
 import { translate } from '../../../../i18n';
@@ -107,6 +107,7 @@ beforeEach(() => {
   resetProposalBridges();
   resetSessionPreviewForTests();
   bottomSheetMock.reset();
+  resetUiKit();
   notificationsState.reset();
   signIn();
   api.on('GET', '/health', Reply.ok(dayJSON(TODAY, { program: null, proposal: null })));
