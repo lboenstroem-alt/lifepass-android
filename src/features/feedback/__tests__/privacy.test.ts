@@ -18,10 +18,10 @@ import { decodeFeedbackSummary } from '../../../api/feedback';
 import { stubApiClientPerTest } from '../../../api/testing';
 import { registeredHookIds, runActivationHooks, runPreSignOutHooks, runSignOutCleaners } from '../../../app/signOut';
 import { FeedbackKeys } from '../../../health/localKeys';
-import type { HealthWipeReason } from '../../../health/models';
+import { HealthServerFeature, type HealthWipeReason } from '../../../health/models';
 import { useHealthStore } from '../../../health/store';
-import { refusedParams } from '../../../lib/analytics';
-import { NOTIFICATION_ROUTES } from '../../../app/notificationRouter';
+import { ANALYTICS_EVENTS, refusedParams } from '../../../lib/analytics';
+import { NOTIFICATION_ANALYTICS_KIND, NOTIFICATION_ROUTES } from '../../../app/notificationRouter';
 import { useAppStore } from '../../../stores/appStore';
 import { useIntentStore } from '../../../stores/intentStore';
 import { usePlanBridges } from '../../plan/shell';
@@ -32,6 +32,8 @@ import {
   turnsOffFeedbackFoodOnRefusal,
   useFeedbackStore,
 } from '..';
+import type { ShownFeedbackAction } from '../actions';
+import { supportsFeedback } from '../feedbackStore';
 import { planFeedbackBridge } from '../register';
 
 import { freshApp, MEMBER, memberProfile, settingsAnswer, settle, signIn, summaryJSON } from './feedbackFixtures';
@@ -87,6 +89,17 @@ describe('analytics', () => {
       { kind: 'feedback_note' },
     ];
     for (const param of params) expect(refusedParams(param)).toEqual([]);
+    expect(ANALYTICS_EVENTS).toEqual(
+      expect.arrayContaining([
+        'feedback_opened',
+        'feedback_setting_changed',
+        'feedback_note_dismissed',
+        'feedback_action_tapped',
+        'feedback_intro_closed',
+      ]),
+    );
+    expect(NOTIFICATION_ANALYTICS_KIND['plan.feedback']).toBe('feedback_monthly');
+    expect(NOTIFICATION_ANALYTICS_KIND['plan.feedback_note']).toBe('feedback_note');
   });
 
   it('a report word is never an analytics value', () => {
@@ -95,6 +108,23 @@ describe('analytics', () => {
     expect(refusedParams({ topic: 'sleep' })).toEqual(['topic']);
     expect(refusedParams({ key: 'sleep.avg_short' })).toEqual(['key']);
     expect(refusedParams({ setting: 'pregnant' })).toEqual(['setting']);
+    // `feedback_action_tapped` sends the action itself (./actions.ts `tapFeedbackAction`).
+    const actions: ShownFeedbackAction[] = ['adjust_plan', 'change_days', 'log_meal'];
+    for (const action of actions) expect(refusedParams({ action })).toEqual([]);
+  });
+});
+
+describe('the flag (FeedbackDecodeTests)', () => {
+  it('without health_feedback in the features the feature is off', () => {
+    const app = useAppStore.getState();
+    app.noteServerFeatures(['target_weight', 'plan_revision']);
+    expect(supportsFeedback()).toBe(false);
+    // An older server's answer without the key.
+    app.noteServerFeatures(null);
+    expect(supportsFeedback()).toBe(false);
+    app.noteServerFeatures(['target_weight', 'plan_revision', 'health_feedback']);
+    expect(supportsFeedback()).toBe(true);
+    expect(HealthServerFeature.feedback).toBe('health_feedback');
   });
 });
 
