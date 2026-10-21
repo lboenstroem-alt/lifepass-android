@@ -5,8 +5,10 @@
  * the paused dimming; the progress line; the drawn marks hidden from
  * TalkBack.
  */
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { StyleSheet } from 'react-native';
+import { State } from 'react-native-gesture-handler';
+import { fireGestureHandler, getByGestureTestId } from 'react-native-gesture-handler/jest-utils';
 
 import { decodeWeekView, type WeekView } from '../../../../health';
 import { setCurrentLanguage, translate } from '../../../../i18n';
@@ -93,6 +95,27 @@ describe('the week strip', () => {
     await fireEvent.press(back);
     await fireEvent.press(forward);
     expect(moves).toEqual([-1]);
+  });
+
+  it('keeps one swipe across re-renders, answering with the week and the handler of the moment', async () => {
+    const first: number[] = [];
+    const latest: number[] = [];
+    const props = { selectedDate: '2026-09-17', todayDate: '2026-09-17', isPaused: false, onSelect: () => undefined };
+    await render(<PlanWeekStrip {...props} week={week()} onMoveWeek={(delta) => first.push(delta)} />);
+    const swipe = getByGestureTestId('plan.week.swipe');
+    // The page re-renders mid-drag (the read lands): a new handler, a week
+    // that now allows going forward. A rebuilt gesture would lose the drag.
+    await screen.rerender(<PlanWeekStrip {...props} week={week({ canGoForward: true })} onMoveWeek={(delta) => latest.push(delta)} />);
+    expect(getByGestureTestId('plan.week.swipe')).toBe(swipe);
+    await act(async () => {
+      fireGestureHandler(swipe, [
+        { state: State.BEGAN, translationX: 0, translationY: 0 },
+        { state: State.ACTIVE, translationX: -40, translationY: 2 },
+        { state: State.END, translationX: -80, translationY: 4 },
+      ]);
+    });
+    expect(first).toEqual([]);
+    expect(latest).toEqual([1]);
   });
 
   it('dims a paused plan and says how the week is going', async () => {

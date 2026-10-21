@@ -15,7 +15,7 @@
  * status as a WORD ("Wed 17 Sept, Full body, done"), never colour alone.
  */
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
@@ -56,6 +56,14 @@ export default function PlanWeekStrip({
   const canGoBack = week.canGoBack ?? false;
   const canGoForward = week.canGoForward ?? false;
 
+  // THE GESTURE IS BUILT ONCE. A new Pan on a re-render (the read landing,
+  // a toast, the outbox) gets a new handler tag, and GestureDetector drops
+  // the one the member is dragging: the swipe is lost and the week does not
+  // move. So the swipe reads the week's limits and the handler of the moment.
+  const latest = useRef({ canGoBack, canGoForward, onMoveWeek });
+  useEffect(() => {
+    latest.current = { canGoBack, canGoForward, onMoveWeek };
+  }, [canGoBack, canGoForward, onMoveWeek]);
   const swipe = useMemo(
     () =>
       Gesture.Pan()
@@ -63,10 +71,12 @@ export default function PlanWeekStrip({
         .activeOffsetX([-24, 24])
         .failOffsetY([-24, 24])
         .onEnd((event) => {
-          const delta = swipeWeekDelta(event.translationX, event.translationY, canGoBack, canGoForward);
-          if (delta !== 0) onMoveWeek(delta);
-        }),
-    [canGoBack, canGoForward, onMoveWeek],
+          const now = latest.current;
+          const delta = swipeWeekDelta(event.translationX, event.translationY, now.canGoBack, now.canGoForward);
+          if (delta !== 0) now.onMoveWeek(delta);
+        })
+        .withTestId(`${testID}.swipe`),
+    [testID],
   );
 
   return (
