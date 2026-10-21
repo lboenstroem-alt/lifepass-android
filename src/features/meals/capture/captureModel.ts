@@ -97,6 +97,11 @@ export function resolveSlot(choice: MealSlotChoice, now: Date = new Date()): Mea
   return isEditableSlot(slot) ? slot : 'snack';
 }
 
+/** The in-page toast sits clear of the tray bar (iOS `mealToastOverlay(bottomPadding: tray.isEmpty ? 40 : 100)`). */
+export function pageToastOffset(trayCount: number): number {
+  return trayCount === 0 ? 40 : 100;
+}
+
 /** What Save led to (iOS `SaveOutcome`). */
 export type SaveOutcome = { readonly kind: 'saved'; readonly meal: MealRecord } | { readonly kind: 'queued' } | { readonly kind: 'failed' };
 

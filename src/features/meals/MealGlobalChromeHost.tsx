@@ -1,17 +1,34 @@
-// @f4-stub (plan 3.0.3, added in F4's fix round): the meal chrome over every tab, filled by MEAL-1 or MEAL-2.
-//
-// iOS `MainTabView` applies `.mealGlobalChrome()` (Views/Meals/MealCaptureView.swift
-// `MealGlobalChrome`) over whichever tab is showing: the meal toasts ("Saved",
-// "Your photo estimate is ready", with their "Food diary", "Undo" or "Check"
-// action, drawn above the tab bar) and the membership gate (`MealGateSheet`)
-// after a refusal. F4's tabs shell mounts this host once, next to the other
-// app-wide sheet hosts, so the meal packages never edit the shell.
-//
-// Keep the default export (no props); replace the body (and this marker).
-// The host sits outside any screen: a page it opens goes through
-// `openSharedRoute(navigation, ...)` (src/navigation/sharedSheet.ts). Renders
-// nothing until then.
+/**
+ * The meal chrome over every tab (iOS `MealGlobalChrome`,
+ * Views/Meals/MealCaptureView.swift), mounted once by F4's tabs shell.
+ *
+ * iOS draws two things over whichever tab is showing:
+ *
+ * - the meal toasts ("Saved. About 1,460 kcal today." with Food diary,
+ *   "Saved on this phone...", "Added" with Undo): on Android these are the UI
+ *   kit's meal toasts (`showToast(..., { kind: 'meal' })`), drawn by the one
+ *   ToastHost the app shell already mounts above the tab bar, so nothing more
+ *   is needed here;
+ * - the membership gate after a refusal, and the consent sheet a meal entry
+ *   asks for: F7's presenters (`presentMealGate`, `openHealthConsent`) draw
+ *   through the health host, which nothing else mounts yet (F7's own header
+ *   asks F4 to). It is mounted here, with where its buttons lead: the Plans
+ *   sheet, and Account on the current tab (or over a root modal).
+ *
+ * If the app shell ever mounts `HealthHost` itself, this must stop doing so,
+ * or each presentation would be drawn twice.
+ */
+import { HealthHost } from '../../health/ui';
+import { navigateInCurrentTab, openRootModal } from '../../navigation/navigationRef';
+
+function seeMemberships(): void {
+  openRootModal('Plans');
+}
+
+function openAccount(): void {
+  navigateInCurrentTab('Account');
+}
 
 export default function MealGlobalChromeHost() {
-  return null;
+  return <HealthHost onSeeMemberships={seeMemberships} onOpenAccount={openAccount} />;
 }

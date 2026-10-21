@@ -22,6 +22,7 @@
 import { NavigationContext, StackActions } from '@react-navigation/native';
 import { useContext } from 'react';
 import { useStore } from 'zustand';
+import { createStore } from 'zustand/vanilla';
 
 import { navigationRef } from '../../../navigation/navigationRef';
 import type { MealCaptureParams, MealSlot } from '../../../navigation/types';
@@ -67,6 +68,26 @@ export function useCaptureModel(): MealCaptureModel | null {
 /** A slice of a page's state, redrawn when it changes. */
 export function useCapture<T>(model: MealCaptureModel, selector: (state: CaptureState) => T): T {
   return useStore(model.store, selector);
+}
+
+/** Stands in when there is no page (a sheet a meal editor opened): an empty tray that never changes. */
+const NO_PAGE = createStore<CaptureState>()(() => ({
+  mode: 'search',
+  slot: 'snack',
+  date: '',
+  tray: [],
+  traySource: null,
+  chosenLoggedAt: null,
+  isSaving: false,
+  saveErrorKey: null,
+  drafts: {},
+  torchAvailable: false,
+  torchOn: false,
+}));
+
+/** `useCapture` for a page that may not be there. */
+export function useCaptureIfAny<T>(model: MealCaptureModel | null, selector: (state: CaptureState) => T): T {
+  return useStore(model?.store ?? NO_PAGE, selector);
 }
 
 // ---------------------------------------------------------------------------
