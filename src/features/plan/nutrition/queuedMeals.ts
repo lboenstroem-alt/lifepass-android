@@ -18,6 +18,11 @@
  *
  * Until it does, nothing is queued, which is the truth on a build without
  * the outbox.
+ *
+ * MERGE GATE: ./__tests__/queuedMealsMergeGate.test.tsx is skipped while
+ * the outbox is not on the branch; once it is, the test runs against the
+ * real outbox and fails until the meal package's register.ts makes the
+ * install above.
  */
 import { useMemo } from 'react';
 import { create } from 'zustand';
