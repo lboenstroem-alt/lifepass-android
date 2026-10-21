@@ -153,7 +153,8 @@ export default function BodyAndGoalsScreen({ navigation, route }: SharedRoutePro
   // ---------------------------------------------------------------------
   // Appearing (iOS `.task(id: language)` and `.onAppear`)
 
-  const entry = bodyGoalsEntry(previousRouteName(navigation.getState()), anchor);
+  // Where the member came from, read once: the route under this one when it opened.
+  const [entry] = useState(() => bodyGoalsEntry(previousRouteName(navigation.getState(), route.key), anchor));
   const load = reads.load;
   const reloadReminders = reminders.reload;
   const refreshPermission = reminders.refreshPermission;
@@ -445,10 +446,13 @@ export default function BodyAndGoalsScreen({ navigation, route }: SharedRoutePro
   );
 }
 
-/** The route under this one in the stack (Account, or one of Plan's screens). */
-function previousRouteName(state: { readonly index: number; readonly routes: readonly { readonly name: string }[] } | undefined): string | null {
-  if (!state || state.index < 1) return null;
-  return state.routes[state.index - 1]?.name ?? null;
+/** The route under `key` in the stack (Account, or one of Plan's screens). */
+function previousRouteName(
+  state: { readonly routes: readonly { readonly name: string; readonly key: string }[] } | undefined,
+  key: string,
+): string | null {
+  const index = state?.routes.findIndex((route) => route.key === key) ?? -1;
+  return index > 0 ? (state?.routes[index - 1]?.name ?? null) : null;
 }
 
 /** One section, the gap above it unless it is the first. */

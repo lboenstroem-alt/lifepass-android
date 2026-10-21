@@ -127,6 +127,8 @@ export function RowMenu<T extends string>({
 /**
  * A row with a title on the left and one or more menus on the right (iOS
  * `menuRow`, and the check-in's "Day and time"), drawn at 45 % while off.
+ * The menus dim themselves when disabled (the kit's MenuPicker), so only the
+ * title is dimmed here: dimming the row as well would draw them at a fifth.
  */
 export function CardMenuRow({
   title,
@@ -142,8 +144,8 @@ export function CardMenuRow({
   return (
     <View>
       <AccountRowDivider />
-      <View style={[styles.menuRow, !enabled && styles.disabled]} testID={testID}>
-        <LPText size={14} weight="medium" color={colors.paper} style={styles.menuRowTitle}>
+      <View style={styles.menuRow} testID={testID}>
+        <LPText size={14} weight="medium" color={colors.paper} style={[styles.menuRowTitle, !enabled && styles.disabled]}>
           {title}
         </LPText>
         <View style={styles.menus}>{children}</View>
