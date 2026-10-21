@@ -40,6 +40,7 @@ import { Camera, LocationPuck, MapView, MarkerView } from '@rnmapbox/maps';
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import { BackHandler, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 
+import { fixtureArg, hasFixture } from '../../../dev/fixtures';
 import { useReduceMotion } from '../../../hooks/useReduceMotion';
 import { useT } from '../../../i18n';
 import { coordinateOf } from '../../../lib/geo';
@@ -119,8 +120,11 @@ export default function ExploreMap({
   locationStore: store = locationStore,
 }: ExploreMapProps) {
   const { t, language } = useT();
+  const [debugAids] = useState(readDebugAids);
   const reduceMotion = useReduceMotion();
-  const screenReaderOn = useScreenReaderOn();
+  // TalkBack on: one activation opens a pin's venue. A development build can
+  // act as if it were on (`debugAssistiveTech`, iOS -LPDebugAssistiveTech).
+  const screenReaderOn = useScreenReaderOn() || debugAids.assistiveTech;
   const { width: windowWidth } = useWindowDimensions();
   const navigation = useContext(NavigationContext);
 
@@ -184,14 +188,14 @@ export default function ExploreMap({
     }
   }, []);
 
-  const onPinPress = useCallback(
-    (id: string) => {
-      const at = Date.now();
-      lastPinTapAt.current = at;
-      dispatch(screenReaderOn ? { kind: 'assistiveActivate', id } : { kind: 'pinTap', id }, at);
-    },
-    [dispatch, screenReaderOn],
-  );
+  /** Runs `work` after `ms`, unless the map goes first. */
+  const later = useCallback((ms: number, work: () => void) => {
+    const timer = setTimeout(() => {
+      timers.current.delete(timer);
+      work();
+    }, ms);
+    timers.current.add(timer);
+  }, []);
 
   /**
    * A tap on the map, held a moment so a pin's tap on the same touch that
@@ -201,13 +205,49 @@ export default function ExploreMap({
    */
   const onMapPress = useCallback(() => {
     const at = Date.now();
-    const timer = setTimeout(() => {
-      timers.current.delete(timer);
+    later(MAP_TAP_HOLD_MS, () => {
       if (!deliversMapTap(at, lastPinTapAt.current)) return;
       dispatch({ kind: 'mapTap' }, at);
-    }, MAP_TAP_HOLD_MS);
-    timers.current.add(timer);
-  }, [dispatch]);
+    });
+  }, [dispatch, later]);
+
+  const handlePinTap = useCallback(
+    (id: string) => {
+      const at = Date.now();
+      lastPinTapAt.current = at;
+      dispatch(screenReaderOn ? { kind: 'assistiveActivate', id } : { kind: 'pinTap', id }, at);
+    },
+    [dispatch, screenReaderOn],
+  );
+
+  /** A pin's tap: the first pins the card, the second opens the venue. */
+  const onPinPress = useCallback(
+    (id: string) => {
+      // `debugMapTapFirst=<seconds>` (iOS -LPDebugMapTapFirst): the pin's
+      // touch reaches the map's own tap handler first and the pin's action
+      // lands that much later, as it may on some phones.
+      const mapFirst = debugAids.mapTapFirstMs;
+      if (mapFirst !== null) {
+        onMapPress();
+        later(mapFirst, () => handlePinTap(id));
+        return;
+      }
+      handlePinTap(id);
+    },
+    [debugAids, handlePinTap, later, onMapPress],
+  );
+
+  // `mapPinned=<slug>` (iOS -LPScreenshotMapPinned): a development build pins
+  // that venue's card once it is on the map, to check the card and the reveal.
+  const pinnedAtLaunch = useRef(false);
+  useEffect(() => {
+    const slug = debugAids.pinnedSlug;
+    if (pinnedAtLaunch.current || slug === null) return;
+    const venue = located.find((item) => item.slug === slug);
+    if (!venue) return;
+    pinnedAtLaunch.current = true;
+    later(400, () => dispatch({ kind: 'pinTap', id: venue.id }));
+  }, [debugAids, located, dispatch, later]);
 
   useEffect(() => {
     const pending = timers.current;
@@ -391,6 +431,7 @@ export default function ExploreMap({
         showsLocate={showsLocate}
         onLocate={() => void onLocate()}
         onBottom={setMapTop}
+        initialLegendOpen={debugAids.legendOpen}
         locationStore={store}
       />
 
@@ -408,6 +449,21 @@ export default function ExploreMap({
       ) : null}
     </View>
   );
+}
+
+/**
+ * The map's development aids, the Android twins of iOS's DEBUG launch
+ * arguments (src/dev/fixtures.ts): read once when the map mounts, and all
+ * empty in a release build.
+ */
+function readDebugAids() {
+  const late = Number.parseFloat(fixtureArg('debugMapTapFirst') ?? '');
+  return {
+    assistiveTech: hasFixture('debugAssistiveTech'),
+    mapTapFirstMs: Number.isFinite(late) && late >= 0 ? late * 1000 : null,
+    pinnedSlug: fixtureArg('mapPinned') || null,
+    legendOpen: hasFixture('mapLegendOpen'),
+  };
 }
 
 /** A pin's anchor: the ring's centre on the venue's coordinate. */

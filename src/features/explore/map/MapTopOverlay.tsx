@@ -33,6 +33,8 @@ export interface MapTopOverlayProps {
   readonly sightsToggle?: ReactNode;
   /** Under the legend: the sights' credit plate and retry notice (ATTR-2). */
   readonly belowLegend?: ReactNode;
+  /** The phone legend's type list starts open (a development aid, `mapLegendOpen`). */
+  readonly initialLegendOpen?: boolean;
   /** The location store (tests pass their own). */
   readonly locationStore?: LocationStore;
 }
@@ -47,10 +49,11 @@ export default function MapTopOverlay({
   onBottom,
   sightsToggle,
   belowLegend,
+  initialLegendOpen = false,
   locationStore: store = locationStore,
 }: MapTopOverlayProps) {
   // The phone legend's type list is open (screen state only, as iOS).
-  const [legendOpen, setLegendOpen] = useState(false);
+  const [legendOpen, setLegendOpen] = useState(initialLegendOpen);
   const locationOff = useLocationStore(selectLocationOffReason, store) !== null;
   const showsLegend = showsSights || showsTrails || legendEntries.length > 0;
 

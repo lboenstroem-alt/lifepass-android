@@ -540,3 +540,45 @@ describe('location', () => {
     expect(screen.getByText('Location is off')).toBeTruthy();
   });
 });
+
+describe('development aids (iOS DEBUG launch arguments)', () => {
+  const original = process.env.EXPO_PUBLIC_FIXTURE;
+  afterEach(() => {
+    process.env.EXPO_PUBLIC_FIXTURE = original;
+  });
+
+  it('mapPinned pins that venue’s card once it is on the map', async () => {
+    jest.useFakeTimers();
+    process.env.EXPO_PUBLIC_FIXTURE = 'mapPinned=v2';
+    await renderMap();
+    expect(screen.queryByTestId('explore.venueCard')).toBeNull();
+    await act(async () => jest.advanceTimersByTime(400));
+    expect(screen.getByTestId('explore.venueCard.type')).toHaveTextContent('Lagoon · Kópavogur');
+  });
+
+  it('mapLegendOpen opens the phone legend’s type list', async () => {
+    process.env.EXPO_PUBLIC_FIXTURE = 'mapLegendOpen';
+    await renderMap();
+    expect(screen.getByText('Ring colour shows the type of venue')).toBeTruthy();
+  });
+
+  it('debugAssistiveTech opens a venue in one activation', async () => {
+    process.env.EXPO_PUBLIC_FIXTURE = 'debugAssistiveTech';
+    await renderMap();
+    await tapPin('v1');
+    expect(onOpenVenue).toHaveBeenCalledWith(laugar);
+  });
+
+  it('debugMapTapFirst: the map hears the touch first and the pin late, and the second tap still opens', async () => {
+    jest.useFakeTimers();
+    process.env.EXPO_PUBLIC_FIXTURE = 'debugMapTapFirst=0.2';
+    await renderMap();
+    await tapPin('v1');
+    await act(async () => jest.advanceTimersByTime(250));
+    expect(screen.getByTestId('explore.venueCard')).toBeTruthy();
+    jest.setSystemTime(Date.now() + 3_000);
+    await tapPin('v1');
+    await act(async () => jest.advanceTimersByTime(250));
+    expect(onOpenVenue).toHaveBeenCalledWith(laugar);
+  });
+});
