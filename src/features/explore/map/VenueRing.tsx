@@ -5,13 +5,14 @@
 //
 // Coming soon also washes the content out: grey, a little flatter and a
 // little brighter, but OPAQUE, so the dashes do not show through it (the
-// web's grayscale(1) contrast(.85) brightness(1.1)). Android draws the
-// filter on Android 12 and later; an older phone keeps the photo's colour,
-// and the dashed grey ring still says coming soon.
+// web's grayscale(1) contrast(.85) brightness(1.1); iOS `SoonPhotoFilter`).
+// Android draws grayscale and contrast only on Android 12 (API 31) and later,
+// so an older phone lays a translucent grey wash over the photo instead: it
+// still reads as not yet open, and stays opaque (`needsSoonWash`).
 //
 // Decorative: the pin or legend entry it sits in says what it means.
 import { memo, useMemo, type ReactNode } from 'react';
-import { StyleSheet, View, type ViewStyle } from 'react-native';
+import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 
 import { hiddenFromAccessibility } from '../../../components/ui';
@@ -37,6 +38,18 @@ const SHADOW: Readonly<Record<RingSize, ViewStyle | null>> = {
 
 /** grayscale(1) contrast(.85) brightness(1.1). */
 const SOON_FILTER: ViewStyle = { filter: [{ grayscale: 1 }, { contrast: 0.85 }, { brightness: 1.1 }] };
+
+/** The first Android that draws `grayscale` and `contrast` (Android 12). */
+export const SOON_FILTER_MIN_API = 31;
+
+/**
+ * A coming-soon photo needs the grey wash: Android below 12, where the
+ * filter's grayscale and contrast are not drawn. `version` is Android's API
+ * level (`Platform.Version`); unknown counts as new enough.
+ */
+export function needsSoonWash(comingSoon: boolean, version: unknown = Platform.Version): boolean {
+  return comingSoon && typeof version === 'number' && version < SOON_FILTER_MIN_API;
+}
 
 function VenueRing({ type, comingSoon, size, children, testID }: VenueRingProps) {
   const geometry = useMemo(() => ringGeometry(type, comingSoon, size), [type, comingSoon, size]);
@@ -67,6 +80,9 @@ function VenueRing({ type, comingSoon, size, children, testID }: VenueRingProps)
         testID={testID ? `${testID}.content` : undefined}
       >
         {children ?? <View style={styles.swatch} />}
+        {needsSoonWash(comingSoon) ? (
+          <View style={styles.soonWash} testID={testID ? `${testID}.soonWash` : undefined} />
+        ) : null}
       </View>
     </View>
   );
@@ -77,4 +93,7 @@ export default memo(VenueRing);
 const styles = StyleSheet.create({
   content: { position: 'absolute', overflow: 'hidden' },
   swatch: { flex: 1, backgroundColor: mapRing.swatchFill },
+  // The coming-soon ring's own grey over most of the photo's colour: what
+  // little shows through is too faint to read as an open venue.
+  soonWash: { ...StyleSheet.absoluteFillObject, backgroundColor: mapRing.soon, opacity: 0.6 },
 });

@@ -5,12 +5,13 @@
  * (the halo, the photo and its grey stand-in).
  */
 import { render, screen } from '@testing-library/react-native';
+import { Platform } from 'react-native';
 
 import { classify } from '../../../../lib/venueMarkerType';
 import { mapRing } from '../../../../theme';
 import { ringGeometry, wedgePath, type DiscLayer, type WedgeLayer } from '../ringGeometry';
 import VenuePin, { PIN_BOX, PINNED_SCALE } from '../VenuePin';
-import VenueRing from '../VenueRing';
+import VenueRing, { needsSoonWash, SOON_FILTER_MIN_API } from '../VenueRing';
 
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 
@@ -122,6 +123,30 @@ describe('the ring and the pin', () => {
     expect(screen.getByTestId('soon.content', { includeHiddenElements: true })).toHaveStyle({
       filter: [{ grayscale: 1 }, { contrast: 0.85 }, { brightness: 1.1 }],
     });
+  });
+
+  it('before Android 12 a coming-soon photo gets a grey wash instead, as the filter is not drawn there', async () => {
+    expect(SOON_FILTER_MIN_API).toBe(31);
+    expect(needsSoonWash(true, 30)).toBe(true);
+    expect(needsSoonWash(true, 26)).toBe(true);
+    expect(needsSoonWash(true, 31)).toBe(false);
+    expect(needsSoonWash(true, 35)).toBe(false);
+    expect(needsSoonWash(false, 26)).toBe(false);
+    expect(needsSoonWash(true, undefined)).toBe(false);
+
+    const version = Object.getOwnPropertyDescriptor(Platform, 'Version');
+    Object.defineProperty(Platform, 'Version', { configurable: true, get: () => 29 });
+    try {
+      const view = await render(<VenueRing type="gym" comingSoon size="pin" testID="soon" />);
+      expect(screen.getByTestId('soon.soonWash', { includeHiddenElements: true })).toHaveStyle({ backgroundColor: mapRing.soon });
+      await view.rerender(<VenueRing type="gym" comingSoon={false} size="pin" testID="soon" />);
+      expect(screen.queryByTestId('soon.soonWash', { includeHiddenElements: true })).toBeNull();
+      Object.defineProperty(Platform, 'Version', { configurable: true, get: () => 34 });
+      await view.rerender(<VenueRing type="gym" comingSoon size="pin" testID="soon" />);
+      expect(screen.queryByTestId('soon.soonWash', { includeHiddenElements: true })).toBeNull();
+    } finally {
+      if (version) Object.defineProperty(Platform, 'Version', version);
+    }
   });
 
   it('a pin is one button in a box with room for its grown halo', async () => {
