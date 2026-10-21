@@ -1,16 +1,21 @@
-// Session hooks for the Account screen: what this phone must forget when the member
-// signs out, claim when they sign in, or flush when the app comes back.
+// Session hooks for the Account screen: what this phone must forget when the
+// member signs out.
 //
-// Pre-created by F3 (plan 3.0, rule 7); ACCT-1 fills it in. Imported once at
-// startup by src/app/registrations.ts, so a hook registered here is in place
-// before any sign-in or sign-out can happen. The helpers and their rules are
-// in src/app/signOut.ts, for example:
+// Pre-created by F3 (plan 3.0, rule 7) and imported once at startup by
+// src/app/registrations.ts, so the hook is in place before any sign-in or
+// sign-out can happen.
 //
-//   import { registerSignOutCleaner } from '../../app/signOut';
-//
-//   registerSignOutCleaner('account.cache', async ({ memberId }) => {
-//     await AsyncStorage.removeItem(`account.cache.${memberId}`);
-//   });
-//
-// Nothing is registered yet.
-export {};
+// The Account screen keeps one thing per member outside the screen itself:
+// the company-plan context (./companyContext.ts), which names the member's
+// employer and the plan it pays for. The next person to sign in on this
+// phone must never see it, even for the moment before their own read
+// answers. Everything else Account shows is the app store's (F3 clears it)
+// or lives and dies with the screen (the referral link, the language
+// dialog). The cached account language is F3's own cleaner.
+import { registerSignOutCleaner } from '../../app/signOut';
+
+import { resetCompanyContext } from './companyContext';
+
+registerSignOutCleaner('account.companyContext', () => {
+  resetCompanyContext();
+});
