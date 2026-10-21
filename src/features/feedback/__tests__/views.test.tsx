@@ -9,11 +9,14 @@ import { api, Reply } from '@test/server';
 
 import { decodeFeedbackNote, decodeFeedbackReportSummary, decodeFeedbackSummary } from '../../../api/feedback';
 import { stubApiClientPerTest } from '../../../api/testing';
+import { useHealthStore } from '../../../health/store';
 import { translate } from '../../../i18n';
 import { EMPTY_CARD_STATE, type FeedbackCardState } from '../cardState';
 import FeedbackCard, { type FeedbackCardProps } from '../FeedbackCard';
+import FeedbackHistoryScreen from '../FeedbackHistoryScreen';
 import FeedbackHistorySheet from '../FeedbackHistorySheet';
 import FeedbackHistoryView from '../FeedbackHistoryView';
+import FeedbackReportScreen from '../FeedbackReportScreen';
 import FeedbackReportView from '../FeedbackReportView';
 import { useFeedbackStore } from '../feedbackStore';
 
@@ -348,3 +351,76 @@ describe("Body and goals' history sheet", () => {
   });
 });
 
+
+describe('the routes', () => {
+  function fakeNavigation() {
+    const calls: { kind: string; name?: string; params?: object }[] = [];
+    const navigation = {
+      navigate: (name: string, params?: object) => calls.push({ kind: 'navigate', name, params }),
+      push: (name: string, params?: object) => calls.push({ kind: 'push', name, params }),
+      goBack: () => calls.push({ kind: 'back' }),
+    };
+    return { calls, navigation };
+  }
+
+  it("the report's links go to Body and goals and the past months, and the tap is reported", async () => {
+    signIn();
+    withLivePlan();
+    // Every answer's features are the app's from then on: this one still revises plans.
+    api.on(
+      'GET',
+      '/health/feedback/reports/:id',
+      Reply.ok({ ...reportJSON({ seenAt: '2026-10-02T10:00:00.000Z' }), features: ['health_feedback', 'plan_revision'] }),
+    );
+    const { calls, navigation } = fakeNavigation();
+    const events = recordAnalytics();
+    const props = { route: { key: 'k', name: 'FeedbackReport', params: { reportId: 'r-1' } }, navigation } as unknown as Parameters<
+      typeof FeedbackReportScreen
+    >[0];
+    await render(<FeedbackReportScreen {...props} />);
+    await act(settle);
+    await fireEvent.press(screen.getAllByRole('button', { name: en('feedback.detail.settings') })[0]!);
+    await fireEvent.press(screen.getByRole('button', { name: en('feedback.detail.history') }));
+    await fireEvent.press(screen.getByRole('button', { name: en('common.back') }));
+    expect(calls).toEqual([
+      { kind: 'navigate', name: 'BodyAndGoals', params: { anchor: 'feedback' } },
+      { kind: 'push', name: 'FeedbackHistory', params: undefined },
+      { kind: 'back' },
+    ]);
+    // The member's membership and plan decide the line's action: Adjust my plan.
+    await fireEvent.press(screen.getByRole('button', { name: en('coach.chip.adjust_plan') }));
+    expect(events).toContainEqual({ event: 'feedback_action_tapped', params: { action: 'adjust_plan' } });
+  });
+
+  it('a server that no longer revises plans offers Change training days instead', async () => {
+    signIn();
+    withLivePlan();
+    api.on('GET', '/health/feedback/reports/:id', Reply.ok(reportJSON({ seenAt: '2026-10-02T10:00:00.000Z' })));
+    const { navigation } = fakeNavigation();
+    const props = { route: { key: 'k', name: 'FeedbackReport', params: { reportId: 'r-1' } }, navigation } as unknown as Parameters<
+      typeof FeedbackReportScreen
+    >[0];
+    await render(<FeedbackReportScreen {...props} />);
+    await act(settle);
+    expect(screen.getByRole('button', { name: en('feedback.action.change_days') })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: en('coach.chip.adjust_plan') })).toBeNull();
+  });
+
+  it('a past month opens its report on the stack', async () => {
+    signIn();
+    api.on('GET', '/health/feedback/reports', Reply.ok({ data: [{ id: 'r-1', title: 'September 2026', seenAt: '2026-10-02T10:00:00Z' }], pagination: {} }));
+    const { calls, navigation } = fakeNavigation();
+    const props = { route: { key: 'k', name: 'FeedbackHistory' }, navigation } as unknown as Parameters<typeof FeedbackHistoryScreen>[0];
+    await render(<FeedbackHistoryScreen {...props} />);
+    await act(settle);
+    await fireEvent.press(screen.getByRole('button', { name: 'September 2026' }));
+    expect(calls).toEqual([{ kind: 'push', name: 'FeedbackReport', params: { reportId: 'r-1' } }]);
+  });
+});
+
+/** An entitled member with a live plan on a server that revises plans. */
+function withLivePlan(): void {
+  useHealthStore.setState({
+    today: { program: { id: 'prog-1', status: 'active' } } as unknown as ReturnType<typeof useHealthStore.getState>['today'],
+  });
+}
