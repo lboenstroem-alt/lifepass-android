@@ -59,12 +59,20 @@ jest.mock('../../attractions/HomeOutsideCard', () => {
 });
 jest.mock('../../../components/CheckInProofBanner', () => {
   const { Text: MockText } = require('react-native');
-  return {
-    __esModule: true,
-    default: ({ checkIn }: { checkIn: { venue: { name: string }; memberName: string | null } }) => (
-      <MockText testID="proof.banner">{`${checkIn.venue.name} / ${checkIn.memberName}`}</MockText>
-    ),
-  };
+  const { useAppStore: mockUseAppStore } = require('../../../stores/appStore');
+  type MockCheckIn = { venue: { name: string }; memberShortName?: string | null; memberName?: string | null };
+  // Mounted with no props, the real banner reads the app store's profile
+  // itself; the stand-in does the same so the test sees what Home loaded.
+  function MockBanner({ checkIn: given }: { checkIn?: MockCheckIn | null }) {
+    const fromStore = mockUseAppStore(
+      (s: { profile?: { recentCheckIn?: MockCheckIn | null } | null }) => s.profile?.recentCheckIn ?? null,
+    );
+    const checkIn = given === undefined ? fromStore : given;
+    if (!checkIn) return null;
+    const name = checkIn.memberShortName ?? checkIn.memberName ?? null;
+    return <MockText testID="proof.banner">{`${checkIn.venue.name} / ${name}`}</MockText>;
+  }
+  return { __esModule: true, default: MockBanner };
 });
 /* eslint-enable @typescript-eslint/no-require-imports */
 
