@@ -119,6 +119,14 @@ export interface PlanShellState {
    * tapped twice.
    */
   readonly adoptedProposalId: string | null;
+  /**
+   * When the adopt was taken in (ms). Only a read that LANDED after it can
+   * lift `adoptedProposalId`: a non-forced read that returns at once inside
+   * the freshness window leaves the 'loaded' state from before the adopt,
+   * and lifting on that would draw the proposal card again under the green
+   * banner while the forced read is still in flight.
+   */
+  readonly adoptedAt: number | null;
   /** A section a parked action asked to land on; the screen scrolls when it exists. */
   readonly scrollTarget: PlanSectionAnchor | null;
   /** Moves when TalkBack should follow a scroll onto the review card. */
@@ -127,6 +135,8 @@ export interface PlanShellState {
   readonly parked: ParkedPlanAction | null;
   /** Items this phone saved that the server refused (3.5's banner). */
   readonly failedOutboxItems: readonly PlanOutboxItem[];
+  /** Outbox items with a Save as extra or a Discard in flight: a second tap would post twice. */
+  readonly busyOutboxIds: readonly string[];
   /** The next appearance reads again with force (a meal page or the classes sheet closed). */
   readonly reloadOnNextFocus: boolean;
   /** Whose bookings hint shows on this appearance (null: none). */
@@ -141,10 +151,12 @@ const initialState: PlanShellState = {
   adoptedBanner: null,
   adoptedBannerShown: false,
   adoptedProposalId: null,
+  adoptedAt: null,
   scrollTarget: null,
   reviewFocusNonce: 0,
   parked: null,
   failedOutboxItems: [],
+  busyOutboxIds: [],
   reloadOnNextFocus: false,
   bookingsHintFor: null,
   localConsent: null,
@@ -208,10 +220,10 @@ export async function reloadPlan(options: { force?: boolean } = {}): Promise<voi
   // programme arrived or the server says there is none, and the proposal
   // card is the honest thing to show again. Kept over a FAILED read, where
   // the card would be a second Start button with no way to know whether the
-  // first one worked.
-  if (get().adoptedProposalId !== null && useHealthStore.getState().loadState.kind === 'loaded') {
-    set({ adoptedProposalId: null });
-  }
+  // first one worked, and over a 'loaded' from BEFORE the adopt (a call that
+  // returned inside the freshness window, or whose outbox flush let it in
+  // ahead of the forced read): only a read that landed since says anything.
+  liftAdoptGuardIfAnswered();
 
   const bridge = usePlanBridges.getState().feedback;
   if (bridge && supportsFeedbackNow() && hasConsentNow()) {
@@ -221,6 +233,15 @@ export async function reloadPlan(options: { force?: boolean } = {}): Promise<voi
       // The card shows what it has.
     }
   }
+}
+
+function liftAdoptGuardIfAnswered(): void {
+  const { adoptedProposalId, adoptedAt } = get();
+  if (adoptedProposalId === null) return;
+  const loadState = useHealthStore.getState().loadState;
+  if (loadState.kind !== 'loaded') return;
+  if (adoptedAt !== null && loadState.at.getTime() <= adoptedAt) return;
+  set({ adoptedProposalId: null, adoptedAt: null });
 }
 
 /** Ask the next appearance to read with force (iOS's `onDismiss` reload after a sheet or cover). */
@@ -291,6 +312,13 @@ export async function presentPlanRunner(session: SessionView): Promise<void> {
   }
   const today = todayServerDay();
   const missed = (session.status ?? 'planned') === 'missed' || (session.scheduledFor !== null && session.scheduledFor < today);
+  // The runner's close reads the day again (iOS `runnerClosed`: a saved,
+  // skipped or needs-reload close reads with force). The runner is a root
+  // modal with no answer to hand back, so every close reads: otherwise the
+  // Today card and the strip keep "planned" and Start until the freshness
+  // window runs out. A close that queued the workout shows in the banner
+  // from the same return (`planReturnedFromSheet`).
+  set({ reloadOnNextFocus: true });
   openRunner(session, missed ? 'missed' : 'today');
 }
 
@@ -335,29 +363,50 @@ export function refreshOutbox(): void {
   if (!same) set({ failedOutboxItems: items });
 }
 
+/**
+ * Marks an outbox item busy for the length of `work`, or answers false when
+ * it already is. Save as extra posts the workout again under a NEW key, so a
+ * quick double tap would log it twice as two extras; Discard beside it waits
+ * too, since the item is mid-post.
+ */
+async function whileOutboxItemBusy(item: PlanOutboxItem, work: () => Promise<void>): Promise<boolean> {
+  if (get().busyOutboxIds.includes(item.id)) return false;
+  set({ busyOutboxIds: [...get().busyOutboxIds, item.id] });
+  try {
+    await work();
+  } finally {
+    set({ busyOutboxIds: get().busyOutboxIds.filter((id) => id !== item.id) });
+  }
+  return true;
+}
+
 /** "Save as extra": a failed workout reposted with a new key and `asExtra: true` (7.7). */
 export async function saveOutboxItemAsExtra(item: PlanOutboxItem): Promise<void> {
-  const source = usePlanBridges.getState().outboxes[item.kind];
-  try {
-    await source?.saveAsExtra?.(item);
-  } catch {
-    // Still failed: the banner stays.
-  }
-  refreshOutbox();
-  await reloadPlan({ force: true });
+  const ran = await whileOutboxItemBusy(item, async () => {
+    const source = usePlanBridges.getState().outboxes[item.kind];
+    try {
+      await source?.saveAsExtra?.(item);
+    } catch {
+      // Still failed: the banner stays.
+    }
+    refreshOutbox();
+  });
+  if (ran) await reloadPlan({ force: true });
 }
 
 /** "Discard", after the member confirmed: it throws away something they did. */
 export async function discardOutboxItem(item: PlanOutboxItem): Promise<void> {
-  track('outbox_item_discarded', { kind: item.kind });
-  const source = usePlanBridges.getState().outboxes[item.kind];
-  try {
-    await source?.discard(item);
-  } catch {
-    // Still there: the banner stays.
-  }
-  refreshOutbox();
-  await reloadPlan({ force: true });
+  const ran = await whileOutboxItemBusy(item, async () => {
+    track('outbox_item_discarded', { kind: item.kind });
+    const source = usePlanBridges.getState().outboxes[item.kind];
+    try {
+      await source?.discard(item);
+    } catch {
+      // Still there: the banner stays.
+    }
+    refreshOutbox();
+  });
+  if (ran) await reloadPlan({ force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -462,6 +511,7 @@ function perform(action: PlanAction): void {
         // The proposal in the store is the one just adopted; its card stays
         // off screen until the read below replaces it with the plan.
         adoptedProposalId: store.today?.proposal?.program.id ?? null,
+        adoptedAt: Date.now(),
       });
       // The adopt set the programme on the server; Plan's own day, week and
       // upcoming come from this read (its freshness window would skip it).
@@ -563,6 +613,8 @@ export function runPlanTask(force = false): void {
  * whose close re-reads (`reloadPlanOnNextFocus`) reads now.
  */
 export function planReturnedFromSheet(): void {
+  // A workout the runner queued offline (iOS `.queued`) is in the banner at once.
+  refreshOutbox();
   if (get().reloadOnNextFocus) {
     set({ reloadOnNextFocus: false });
     void reloadPlan({ force: true });
@@ -636,6 +688,29 @@ export function dismissBookingsHint(): void {
 
 // ---------------------------------------------------------------------------
 // Reset
+
+/**
+ * The health data on this phone was wiped (consent withdrawn on another
+ * device, a Kenni check that says under 18, an account deletion): iOS
+ * `wipeLocal` sets `planPath = NavigationPath()`, so a Diary, a meal
+ * history, a feedback report or the measurements open on Plan's stack close
+ * and the gate or the under-18 card shows; nothing keeps drawing what the
+ * member just withdrew. Nothing aimed at the wiped day fires later either:
+ * no scroll, no held action, no adopt suppression or banner, no failed item
+ * from an outbox that is gone (the next refresh reads what is left).
+ */
+export function planHealthWiped(): void {
+  popPlanToRoot();
+  set({
+    scrollTarget: null,
+    parked: null,
+    adoptedBanner: null,
+    adoptedBannerShown: false,
+    adoptedProposalId: null,
+    adoptedAt: null,
+    failedOutboxItems: [],
+  });
+}
 
 /** Sign-out and tests: nothing parked, no banner, no member's hint. */
 export function resetPlanShell(): void {

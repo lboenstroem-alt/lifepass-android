@@ -76,6 +76,9 @@ export default function PlanStatusBanner() {
  */
 function OutboxBanner({ item }: { item: PlanOutboxItem }) {
   const { t } = useT();
+  // A Save as extra or a Discard in flight: both wait, so a second tap
+  // cannot post the workout again under a new key.
+  const busy = usePlanShell((s) => s.busyOutboxIds.includes(item.id));
   const confirmDiscard = () =>
     showDialog({
       title: t('plan.outbox.discard_title'),
@@ -101,10 +104,12 @@ function OutboxBanner({ item }: { item: PlanOutboxItem }) {
         {item.kind === 'workout' ? (
           <Pressable
             onPress={() => void saveOutboxItemAsExtra(item)}
+            disabled={busy}
             accessibilityRole="button"
             accessibilityLabel={t('plan.outbox.save_extra')}
+            accessibilityState={{ disabled: busy, busy }}
             hitSlop={5}
-            style={({ pressed }) => [styles.saveExtra, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.saveExtra, (pressed || busy) && styles.pressed]}
             testID="plan.banner.outbox.saveExtra"
           >
             <LPText size={13} weight="semibold" color={colors.onAccent}>
@@ -114,9 +119,11 @@ function OutboxBanner({ item }: { item: PlanOutboxItem }) {
         ) : null}
         <Pressable
           onPress={confirmDiscard}
+          disabled={busy}
           accessibilityRole="button"
           accessibilityLabel={t('plan.outbox.discard')}
-          style={({ pressed }) => [styles.discard, pressed && styles.pressed]}
+          accessibilityState={{ disabled: busy, busy }}
+          style={({ pressed }) => [styles.discard, (pressed || busy) && styles.pressed]}
           testID="plan.banner.outbox.discard"
         >
           <LPText size={13} weight="semibold" color={colors.paper2}>

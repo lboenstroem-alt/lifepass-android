@@ -11,6 +11,11 @@
 //   (`plan.intro.collapsed.<id>`) is health use and goes with the health wipe
 //   (src/health/localKeys.ts), and the memory goes with it, so a member who
 //   withdrew and consented again is offered the full card, as on iOS.
+// - On a health wipe, Plan's stack goes back to its first screen (iOS
+//   `wipeLocal` resets `planPath`): a Diary, a report or the measurements
+//   open there close, and the gate or the under-18 card shows instead of
+//   what the member just withdrew. Nothing aimed at the wiped day (a scroll,
+//   a held action, the adopt suppression) fires later.
 //
 // Kept on the phone, as on iOS: the bookings hint's visit count and "found
 // Profile" flag (per member, not health data).
@@ -18,7 +23,7 @@ import { registerSignOutCleaner } from '../../app/signOut';
 import { registerHealthWipeHook } from '../../health';
 
 import { forgetIntroCollapse } from './intro/introCollapse';
-import { resetPlanShell } from './shell/planShell';
+import { planHealthWiped, resetPlanShell } from './shell/planShell';
 
 registerSignOutCleaner('plan.shell', () => {
   resetPlanShell();
@@ -26,3 +31,4 @@ registerSignOutCleaner('plan.shell', () => {
 });
 
 registerHealthWipeHook('plan.intro-collapse', () => forgetIntroCollapse());
+registerHealthWipeHook('plan.shell', () => planHealthWiped());

@@ -105,6 +105,41 @@ describe('the status banner on screen', () => {
     expect(events.some((e) => e.event === 'outbox_item_discarded')).toBe(false);
   });
 
+  it('a second tap while Save as extra runs posts nothing, and both buttons wait', async () => {
+    signIn(memberProfile({ consent: false }));
+    const saved: string[] = [];
+    let finish: () => void = () => undefined;
+    let failed: PlanOutboxItem[] = [WORKOUT];
+    installPlanOutbox('workout', {
+      flush: async () => undefined,
+      failedItems: () => failed,
+      saveAsExtra: (item) => {
+        saved.push(item.id);
+        return new Promise<void>((resolve) => {
+          finish = () => {
+            failed = [];
+            resolve();
+          };
+        });
+      },
+      discard: async () => undefined,
+    });
+    refreshOutbox();
+    await render(<PlanStatusBanner />);
+    const saveExtra = screen.getByRole('button', { name: en('plan.outbox.save_extra') });
+    await fireEvent.press(saveExtra);
+    expect(saveExtra).toBeDisabled();
+    expect(screen.getByRole('button', { name: en('plan.outbox.discard') })).toBeDisabled();
+    await fireEvent.press(saveExtra);
+    expect(saved).toEqual(['w-1']);
+    await act(async () => {
+      finish();
+      await settle();
+    });
+    expect(saved).toEqual(['w-1']);
+    expect(screen.queryByTestId('plan.banner.outbox')).toBeNull();
+  });
+
   it('a failed meal can only be discarded, and the discard is reported', async () => {
     signIn(memberProfile({ consent: false }));
     let failed: PlanOutboxItem[] = [MEAL];

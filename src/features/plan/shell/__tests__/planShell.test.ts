@@ -9,6 +9,7 @@ import { api, Reply } from '@test/server';
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { decodeSessionActionResponse, useHealthStore } from '../../../../health';
 import * as healthLocalStore from '../../../../health/localStore';
+import { runHealthWipeHooks } from '../../../../health/wipe';
 import { addServerDays } from '../../../../i18n/format';
 import { UPGRADED_FROM_PROFILE_TAB_KEY } from '../../../../navigation/navPrefs';
 import { planVisitsKey, profileOpenedKey } from '../../../../navigation/profile';
@@ -36,6 +37,7 @@ import {
   openPlanMealCapture,
   planDidAppear,
   planReturnedFromSheet,
+  presentPlanRunner,
   reloadPlan,
   reloadPlanOnNextFocus,
   saveOutboxItemAsExtra,
@@ -43,6 +45,8 @@ import {
   setProgramStatus,
   usePlanShell,
 } from '../planShell';
+// The Plan shell's sign-out cleaner and health wipe hooks, as the app registers them.
+import '../../register';
 
 stubApiClientPerTest();
 
@@ -309,6 +313,39 @@ describe('the outbox banner (3.5)', () => {
   });
 });
 
+describe('the outbox banner, twice tapped', () => {
+  it('posts a workout as an extra once however often it is tapped, and Discard waits for it', async () => {
+    signIn(memberProfile({ consent: false }));
+    const reposted: string[] = [];
+    const discarded: string[] = [];
+    let finish: () => void = () => undefined;
+    installPlanOutbox('workout', {
+      flush: async () => undefined,
+      failedItems: () => [{ id: 'w-1', kind: 'workout' }],
+      saveAsExtra: (item) => {
+        reposted.push(item.id);
+        return new Promise<void>((resolve) => (finish = resolve));
+      },
+      discard: async (item) => void discarded.push(item.id),
+    });
+    const item = { id: 'w-1', kind: 'workout' } as const;
+    const first = saveOutboxItemAsExtra(item);
+    const second = saveOutboxItemAsExtra(item);
+    const discard = discardOutboxItem(item);
+    await settle();
+    expect(reposted).toEqual(['w-1']);
+    expect(discarded).toEqual([]);
+    expect(shell().busyOutboxIds).toEqual(['w-1']);
+    finish();
+    await Promise.all([first, second, discard]);
+    expect(shell().busyOutboxIds).toEqual([]);
+    expect(reposted).toEqual(['w-1']);
+    // Free again once the first answer is in.
+    await discardOutboxItem(item);
+    expect(discarded).toEqual(['w-1']);
+  });
+});
+
 describe('parked actions (0.3)', () => {
   it('waits for the read before answering a weekly check-in notification, then opens the sheet', async () => {
     const opened: string[] = [];
@@ -433,6 +470,47 @@ describe('parked actions (0.3)', () => {
     expect(api.sentAll('/health')).toHaveLength(2);
   });
 
+  it("keeps the adopted proposal hidden while the read that answers the adopt is still in flight", async () => {
+    // The appearance starts the forced read for the adopt, then its own
+    // non-forced read. With an outbox installed, both flush first, and a
+    // flush already running answers the second caller at once (RUN-1's
+    // guard): the non-forced read overtakes and returns inside the freshness
+    // window on the 'loaded' from BEFORE the adopt. That says nothing about
+    // the adopt, so the proposal card must stay off screen.
+    signIn();
+    api.on('GET', '/health', Reply.ok(dayJSON(TODAY, { program: null, proposal: { id: 'p-2', status: 'proposed' } })));
+    await reloadPlan();
+    useHealthStore.setState({ loadState: { kind: 'loaded', at: new Date(Date.now() - 1_000) } });
+    let releaseFlush: () => void = () => undefined;
+    let flushing = false;
+    installPlanOutbox('workout', {
+      flush: () => {
+        if (flushing) return Promise.resolve();
+        flushing = true;
+        return new Promise<void>((resolve) => {
+          releaseFlush = () => {
+            flushing = false;
+            resolve();
+          };
+        });
+      },
+      failedItems: () => [],
+      discard: async () => undefined,
+    });
+    api.on('GET', '/health', Reply.ok(dayJSON()));
+    useIntentStore.getState().parkPlanAction({ kind: 'showAdoptedBanner', startsOn: '2026-10-19' });
+    planDidAppear();
+    await settle();
+    expect(shell().adoptedProposalId).toBe('p-2');
+    expect(api.sentAll('/health')).toHaveLength(1);
+
+    releaseFlush();
+    await settle();
+    expect(api.sentAll('/health')).toHaveLength(2);
+    expect(health().today?.program?.id).toBe('p-1');
+    expect(shell().adoptedProposalId).toBeNull();
+  });
+
   it('opens the report a feedback notification names, or the current one, or says it is on its way', async () => {
     signIn();
     useAppStore.setState({ serverFeatures: [ServerFeature.feedback] });
@@ -507,6 +585,67 @@ describe('appearances', () => {
     await settle();
     expect(api.sentAll('/health')).toHaveLength(reads + 1);
     expect(api.sentAll('/health').at(-1)!.query.date).toBe(past);
+  });
+
+  it("back from the workout runner reads the day with force, and shows a workout it queued at once", async () => {
+    signIn();
+    api.on('GET', '/health', Reply.ok(dayJSON()));
+    await reloadPlan();
+    const session = health().today!.day!.session!;
+    await presentPlanRunner(session);
+    expect(mockOpenRunner).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }), 'today');
+    expect(shell().reloadOnNextFocus).toBe(true);
+
+    // The runner closed with the workout queued offline (iOS `.queued`).
+    installPlanOutbox('workout', {
+      flush: () => new Promise<void>(() => undefined),
+      failedItems: () => [{ id: 'w-9', kind: 'workout' }],
+      discard: async () => undefined,
+    });
+    planReturnedFromSheet();
+    // In the banner before the read (or its flush) has answered.
+    expect(shell().failedOutboxItems).toEqual([{ id: 'w-9', kind: 'workout' }]);
+    expect(shell().reloadOnNextFocus).toBe(false);
+  });
+
+  it('a workout saved or skipped in the runner is read again inside the freshness window', async () => {
+    signIn();
+    api.on('GET', '/health', Reply.ok(dayJSON()));
+    await reloadPlan();
+    const reads = api.sentAll('/health').length;
+    await presentPlanRunner(health().today!.day!.session!);
+    api.on('GET', '/health', Reply.ok(dayJSON(TODAY, { day: { date: TODAY, relative: 'today', session: { id: `s-${TODAY}`, scheduledFor: TODAY, kind: 'strength', title: 'Full body', status: 'done' } } })));
+    planReturnedFromSheet();
+    await settle();
+    expect(api.sentAll('/health')).toHaveLength(reads + 1);
+    expect(health().today?.day?.session?.status).toBe('done');
+  });
+});
+
+describe('a health wipe', () => {
+  it("takes Plan's stack back to its first screen, and nothing aimed at the wiped day fires later", async () => {
+    signIn();
+    const nav = navigation();
+    usePlanShell.setState({
+      scrollTarget: 'review',
+      parked: { action: { kind: 'openWeeklyCheckIn' }, parkedAt: Date.now() },
+      adoptedBanner: { startsOn: '2026-10-19' },
+      adoptedBannerShown: true,
+      adoptedProposalId: 'p-2',
+      adoptedAt: Date.now(),
+      failedOutboxItems: [{ id: 'w-1', kind: 'workout' }],
+    });
+    await runHealthWipeHooks({ profileId: MEMBER, reason: 'withdrawn_elsewhere' });
+    expect(nav.pops).toHaveLength(1);
+    expect(shell()).toMatchObject({
+      scrollTarget: null,
+      parked: null,
+      adoptedBanner: null,
+      adoptedBannerShown: false,
+      adoptedProposalId: null,
+      adoptedAt: null,
+      failedOutboxItems: [],
+    });
   });
 });
 
