@@ -66,6 +66,7 @@ import {
   type CreateBookingSessionOptions,
 } from '../../booking';
 import type { ClassOccurrence } from '../model/occurrence';
+import { isClassSheetFixture, seedClassSheetFixture } from './fixtures';
 import {
   announcesStatus,
   ClassSheetHeight,
@@ -162,11 +163,17 @@ export default function ClassBookingSheet({
     finishedRef.current(ending);
   }, []);
 
-  // Prepared once: seed from the row, re-check its day, then the price.
+  // Prepared once: seed from the row, re-check its day, then the price (a
+  // development fixture is seeded instead, with no request: ./fixtures.ts).
   const prepared = useRef(false);
   useEffect(() => {
     if (prepared.current) return;
     prepared.current = true;
+    const fixture = isClassSheetFixture(occurrence);
+    if (fixture) {
+      seedClassSheetFixture(store, occurrence, fixture);
+      return;
+    }
     const session = store.getState();
     session.setVenue(venueOf(occurrence));
     void session.prepare(toBookingOccurrence(occurrence));
