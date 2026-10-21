@@ -123,6 +123,7 @@ export function Hero({ detail, onOpenUrl }: { readonly detail: AttractionDetail;
           isSelected: true,
           isTrailhead: isHike(detail),
         }}
+        label={detail.name}
         style={styles.heroBand}
         testID="attraction.hero.map"
       />
@@ -316,6 +317,7 @@ export function RouteSection({ detail }: { readonly detail: AttractionDetail }) 
         region={routeRegion(bounds)}
         lines={detail.routeLines}
         marker={{ coordinate: { latitude: detail.latitude, longitude: detail.longitude }, isTrailhead: true }}
+        label={detail.name}
         style={styles.routeMap}
         testID="attraction.route.map"
       />
@@ -571,7 +573,9 @@ function NearbySightRow({ item, onPress }: { readonly item: AttractionNearby; re
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={[name, distance].filter(Boolean).join(', ')}
+      // The whole row, as VoiceOver reads iOS's NavigationLink: the photo's
+      // credit too while the photo shows (CC BY-SA wants it reachable).
+      accessibilityLabel={[name, credit, distance].filter(Boolean).join(', ')}
       style={({ pressed }) => [styles.linkRow, pressed && styles.pressed]}
       testID={`attraction.nearby.${item.slug}`}
     >

@@ -10,7 +10,12 @@
  * The route is drawn with the Explore map's recipe (iOS `TrailStroke`): a
  * 6 dp white casing under a 3 dp light-blue line, round caps and joins, so
  * the card and the map show one trail rather than two styles of it. The
- * sight's ring sits on top.
+ * sight's ring sits on top, its name under it: iOS places the ring as
+ * `Annotation(a.name, ...)` and never hides annotation titles on the card,
+ * so MapKit labels the spot or trailhead. Mapbox has no such title, so the
+ * name is drawn here, in the Explore map's sight-label style (iOS
+ * `AttractionMapLabel`: 11 pt semibold, the dark attraction blue, a white
+ * halo, one line).
  *
  * Mapbox stands in for MapKit (plan 5.6). A muted light style, as iOS's
  * `.standard(emphasis: .muted)`. A TextureView rather than a SurfaceView, so
@@ -22,7 +27,7 @@ import { useMemo } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import type { AttractionTier } from '../../../api/attractions';
-import { hiddenFromAccessibility } from '../../../components/ui';
+import { hiddenFromAccessibility, LPText } from '../../../components/ui';
 import { env } from '../../../config/env';
 import type { Coordinate } from '../../../lib/geo';
 import { colors } from '../../../theme';
@@ -48,6 +53,8 @@ export interface SightMapProps {
     readonly isSelected?: boolean;
     readonly isTrailhead?: boolean;
   };
+  /** The sight's name, drawn under its ring. */
+  readonly label?: string;
   readonly style?: StyleProp<ViewStyle>;
   readonly testID?: string;
 }
@@ -64,7 +71,7 @@ export function routeFeature(lines: readonly (readonly Coordinate[])[]): GeoJSON
   };
 }
 
-export default function SightMap({ region, lines, marker, style, testID }: SightMapProps) {
+export default function SightMap({ region, lines, marker, label, style, testID }: SightMapProps) {
   const corners = regionCorners(region);
   const shape = useMemo(() => (lines && lines.length > 0 ? routeFeature(lines) : null), [lines]);
   return (
@@ -92,13 +99,52 @@ export default function SightMap({ region, lines, marker, style, testID }: Sight
           anchor={{ x: 0.5, y: 0.5 }}
           allowOverlap
         >
-          <AttractionRing tier={marker.tier} isSelected={marker.isSelected} isTrailhead={marker.isTrailhead} />
+          {/* The ring must stay on the coordinate with the name under it, so
+              an invisible copy of the name above balances the one below and
+              the centre anchor stays the ring's centre at any font size. */}
+          <View style={styles.marker}>
+            {label ? <MarkerName text={label} balance /> : null}
+            <AttractionRing tier={marker.tier} isSelected={marker.isSelected} isTrailhead={marker.isTrailhead} />
+            {label ? <MarkerName text={label} /> : null}
+          </View>
         </MarkerView>
       </MapView>
     </View>
   );
 }
 
+/** The sight's name on the map (iOS `AttractionMapLabel`). */
+function MarkerName({ text, balance = false }: { readonly text: string; readonly balance?: boolean }) {
+  return (
+    <LPText
+      size={11}
+      weight="semibold"
+      color={colors.attraction2}
+      align="center"
+      numberOfLines={1}
+      ellipsizeMode="tail"
+      // Part of the picture, like iOS's fixed-size map label: the card's
+      // title above already names the place at the member's text size.
+      maxScale={1}
+      style={[styles.name, balance && styles.balance]}
+      testID={balance ? undefined : 'attraction.map.name'}
+    >
+      {text}
+    </LPText>
+  );
+}
+
 const styles = StyleSheet.create({
   frame: { overflow: 'hidden', backgroundColor: colors.ink3 },
+  // iOS `AttractionMapLayout.labelGap`.
+  marker: { alignItems: 'center', gap: 1 },
+  // iOS `AttractionMapLayout.labelMaxWidth`, with room for the halo.
+  name: {
+    maxWidth: 136,
+    paddingHorizontal: 2,
+    textShadowColor: '#FFFFFF',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 2.5,
+  },
+  balance: { opacity: 0 },
 });

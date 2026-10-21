@@ -73,6 +73,23 @@ async function renderCard({ slug = 'seljalandsfoss', key = 'AttractionDetail-1' 
   await waitFor(() => expect(screen.queryByTestId('attraction.loading')).toBeNull());
 }
 
+/** Mapbox draws a map's contents once its view has a size: give it one. */
+async function layOutMap(testID: string) {
+  type Node = ReturnType<typeof screen.getByTestId>;
+  const withLayout = (node: Node): Node | null => {
+    if (typeof node.props.onLayout === 'function') return node;
+    for (const child of node.children) {
+      const found = typeof child === 'string' ? null : withLayout(child as Node);
+      if (found) return found;
+    }
+    return null;
+  };
+  const view = withLayout(screen.getByTestId(testID, { includeHiddenElements: true }));
+  if (!view) throw new Error(`no map view under ${testID}`);
+  await fireEvent(view, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 240 } } });
+  return within(screen.getByTestId(testID, { includeHiddenElements: true }));
+}
+
 beforeEach(() => {
   setCurrentLanguage('en');
   navigation = fakeNavigation();
@@ -272,7 +289,7 @@ describe('getting there', () => {
       return true;
     });
     await fireEvent.press(screen.getByRole('button', { name: 'Directions' }));
-    expect(await screen.findByText(en('attraction.android.maps_other'))).toBeOnTheScreen();
+    expect(await screen.findByText(en('venue.maps_other'))).toBeOnTheScreen();
     await fireEvent.press(screen.getByTestId('attraction.directions.other'));
     await waitFor(() => expect(openURL).toHaveBeenCalledTimes(2));
     expect(openURL.mock.calls[0][0]).toBe('geo:63.615452,-19.988276?q=63.615452,-19.988276(Seljalandsfoss)');
@@ -303,13 +320,18 @@ describe('pictures', () => {
   it('shows a still map of the spot when there is no picture at all', async () => {
     serve({ images: [] });
     await renderCard();
-    expect(screen.getByTestId('attraction.hero.map', { includeHiddenElements: true })).toBeOnTheScreen();
+    const map = await layOutMap('attraction.hero.map');
+    // The ring is labelled with the name, as MapKit titles iOS's annotation.
+    expect(map.getByTestId('attraction.map.name', { includeHiddenElements: true })).toHaveTextContent('Seljalandsfoss');
     expect(screen.queryByTestId('attraction.credit')).toBeNull();
   });
 
   it('swaps a nearby photo that will not load for the ring, and drops its credit', async () => {
     serve();
     await renderCard();
+    // TalkBack reads the row whole, the photo's credit with it.
+    const label = () => screen.getByTestId('attraction.nearby.gljufrabui').props.accessibilityLabel as string;
+    expect(label()).toBe('Gljufrafoss, Photo: Pjt56 · CC BY-SA 4.0, 656 m');
     jest.useFakeTimers();
     try {
       for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -325,6 +347,8 @@ describe('pictures', () => {
     }
     await waitFor(() => expect(screen.queryByTestId('attraction.nearby.gljufrabui.credit')).toBeNull());
     expect(screen.getByTestId('attraction.nearby.gljufrabui.ring', { includeHiddenElements: true })).toBeOnTheScreen();
+    // No photo, no credit to read.
+    expect(label()).toBe('Gljufrafoss, 656 m');
   });
 });
 
@@ -338,7 +362,8 @@ describe('walks', () => {
       outAndBack: true,
     });
     await renderCard();
-    expect(screen.getByTestId('attraction.route.map', { includeHiddenElements: true })).toBeOnTheScreen();
+    const map = await layOutMap('attraction.route.map');
+    expect(map.getByTestId('attraction.map.name', { includeHiddenElements: true })).toHaveTextContent('Seljalandsfoss');
     expect(screen.getByText('Route: © OpenStreetMap contributors, ODbL')).toBeOnTheScreen();
     const facts = within(screen.getByTestId('attraction.facts'));
     expect(facts.getByText('7.1 km one way')).toBeOnTheScreen();

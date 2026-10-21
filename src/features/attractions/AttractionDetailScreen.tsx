@@ -30,7 +30,10 @@
  * the card on screen; the card holds nothing a restart must restore.
  *
  * Directions offers Google Maps and "another app" (a `geo:` pin): there is no
- * Apple Maps on Android (plan 5.6). `mapsLinks.apple` is not used.
+ * Apple Maps on Android (plan 5.6). `mapsLinks.apple` is not used. Both
+ * answers are the venue page's own words (F1's shared `venue.maps_other`), as
+ * iOS reuses `venue.maps_apple` and `venue.maps_google` here, so the two
+ * Directions dialogs cannot drift apart.
  */
 import { Ionicons } from '@expo/vector-icons';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
@@ -166,7 +169,7 @@ export default function AttractionDetailScreen({ navigation, route }: SharedRout
     ? [
         { label: t('venue.maps_google'), onPress: () => void open(googleMapsUrl(detail)), testID: 'attraction.directions.google' },
         {
-          label: t('attraction.android.maps_other'),
+          label: t('venue.maps_other'),
           onPress: () =>
             void (async () => {
               // No app takes `geo:` (rare): Google Maps on the web, so the

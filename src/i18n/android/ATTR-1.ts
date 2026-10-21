@@ -4,18 +4,12 @@
 // iOS string comes from the generated tables through t()/tp(). The rules for
 // a pack are in ./pack.ts.
 //
-// - `attraction.android.maps_other`: the sight card's Directions dialog,
-//   second answer. iOS offers Apple Maps beside Google Maps; Android has no
-//   Apple Maps, so the answer hands the sight to whichever maps app the
-//   member uses (a `geo:` link, plan 5.6). Worded as the venue page's answer
-//   (VENUE-1's `venue.page.maps_other`), so the two dialogs read the same.
+// Empty: the sight card's second Directions answer ("another maps app", a
+// `geo:` pin where iOS offers Apple Maps) is F1's shared `venue.maps_other`
+// (./F1.ts), the venue page's words, so the two dialogs read the same.
 import { definePack } from './pack';
 
 export default definePack({
-  en: {
-    'attraction.android.maps_other': 'Open in another app',
-  },
-  is: {
-    'attraction.android.maps_other': 'Opna í öðru forriti',
-  },
+  en: {},
+  is: {},
 });

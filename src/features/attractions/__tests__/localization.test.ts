@@ -2,7 +2,7 @@
  * The sights' copy (iOS Localization.swift `attraction.*`, LocalizationKeyTests
  * and LocalizationDashTests style): every key in both languages with its
  * placeholders, the kind and region dictionaries word for word the server's,
- * and the Android-only words in ATTR-1's pack.
+ * and no Android-only words of its own (ATTR-1's pack is empty).
  */
 import { hasKey, lookup } from '../../../i18n';
 import en from '../../../i18n/strings.en.json';
@@ -60,11 +60,11 @@ it('calls a top pick a top pick, never "Mælt með"', () => {
   expect(lookup('attraction.top_pick', 'is')).toBe('Hápunktur');
 });
 
-it('words the Android-only directions answer in both languages, without dashes', () => {
-  expect(Object.keys(pack.en).sort()).toEqual(Object.keys(pack.is).sort());
-  expect(lookup('attraction.android.maps_other', 'en')).toBe('Open in another app');
-  expect(lookup('attraction.android.maps_other', 'is')).toBe('Opna í öðru forriti');
-  for (const value of [...Object.values(pack.en), ...Object.values(pack.is)]) {
-    expect(value).not.toMatch(/[–—]/);
-  }
+it("answers Directions in the venue page's shared words, with no private copy of them", () => {
+  // One key for both dialogs (F1's `venue.maps_other`), as iOS reuses the
+  // venue's keys on the sight card.
+  expect(lookup('venue.maps_other', 'en')).toBe('Open in another maps app');
+  expect(lookup('venue.maps_other', 'is')).toBe('Opna í öðru kortaforriti');
+  expect(hasKey('attraction.android.maps_other')).toBe(false);
+  expect(pack).toEqual({ en: {}, is: {} });
 });
