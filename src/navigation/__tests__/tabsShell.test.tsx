@@ -94,6 +94,12 @@ jest.mock('../../components/KenniVerificationModal', () => {
     default: ({ visible }: { visible: boolean }) => (visible ? <MockText>Kenni sheet</MockText> : null),
   };
 });
+// Receipts is ACCT-2's page now: the placeholder test below still reaches F4's
+// StubScreen through that route, so what it checks is unchanged.
+jest.mock('../../features/account/receipts/ReceiptsScreen', () => {
+  const { StubScreen: MockStubScreen } = require('../stubs');
+  return { __esModule: true, default: () => <MockStubScreen route="Receipts" owner="ACCT-2" /> };
+});
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 /** `navigate` as the first build's screens call it: by a name no navigator has. */
