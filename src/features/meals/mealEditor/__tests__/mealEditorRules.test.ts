@@ -104,7 +104,6 @@ describe('the day line', () => {
         target: { kcalLow: 1800, kcalHigh: 2000, proteinG: 120 },
       },
     },
-    'day',
   );
   const now = new Date('2026-10-21T12:00:00Z');
 
