@@ -7,7 +7,7 @@ import { loadRegistrations, registeredHookIds, runSignOutCleaners } from '../../
 import { decodeSessionHistoryItem } from '../../../../health';
 import { registeredHealthWipeHookIds, runHealthWipeHooks } from '../../../../health/wipe';
 import { historyItem, rememberHistoryItems, resetHistoryItemsForTests, retainHistoryItems } from '../../history/historyCache';
-import { noteReminderDraft, onProposalOutcome, reminderDraft, reportProposalOutcome, resetProposalBridges } from '../proposalActions';
+import { forgetReminderDraft, noteReminderDraft, onProposalOutcome, reminderDraft, reportProposalOutcome, resetProposalBridges } from '../proposalActions';
 
 const workout = decodeSessionHistoryItem({ id: 'h-1', date: '2026-10-15', title: 'Legs' }, 'item');
 
@@ -26,7 +26,7 @@ it('a sign-out forgets the history workouts, the reminder choice and the listene
   loadRegistrations();
   const release = retainHistoryItems();
   rememberHistoryItems([workout]);
-  noteReminderDraft('p-1', { remindersOn: false, minutes: 480 });
+  noteReminderDraft('p-1', { remindersOn: false, minutes: 480 }, {});
   const heard = jest.fn();
   onProposalOutcome('p-1', heard);
 
@@ -43,13 +43,24 @@ it('a health wipe forgets the workouts and the reminder choice', async () => {
   loadRegistrations();
   const release = retainHistoryItems();
   rememberHistoryItems([workout]);
-  noteReminderDraft('p-1', { remindersOn: true, minutes: 420 });
+  noteReminderDraft('p-1', { remindersOn: true, minutes: 420 }, {});
 
   await runHealthWipeHooks({ profileId: 'member-1', reason: 'withdrawn' });
 
   expect(historyItem('h-1')).toBeNull();
   expect(reminderDraft('p-1')).toBeNull();
   release();
+});
+
+it("a card's reminder choice goes with that card, never with another's", () => {
+  const coachCard = {};
+  const planCard = {};
+  noteReminderDraft('p-1', { remindersOn: false, minutes: 480 }, coachCard);
+  noteReminderDraft('p-1', { remindersOn: true, minutes: 450 }, planCard);
+  forgetReminderDraft('p-1', coachCard);
+  expect(reminderDraft('p-1')).toEqual({ remindersOn: true, minutes: 450 });
+  forgetReminderDraft('p-1', planCard);
+  expect(reminderDraft('p-1')).toBeNull();
 });
 
 it('the history list holds its workouts only while one is mounted', () => {

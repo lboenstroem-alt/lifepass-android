@@ -110,31 +110,51 @@ export interface AdoptRequest {
  * server is classified (./proposalRules.ts `adoptFailure`); one that is not
  * the card's business is handed to the health store first, and a plan
  * changed elsewhere leaves Plan's toast.
+ *
+ * ONLY THE POST CAN FAIL THE START. Once the server has adopted the plan it
+ * is running, whatever the bookkeeping after it does: a throw there must
+ * never draw "Something went wrong" over a Start button for a plan that
+ * already started (a second tap would meet a 409 and Plan would never get
+ * its banner). iOS has nothing that can throw after `service.adopt`.
  */
 export async function adoptProposal(request: AdoptRequest): Promise<AdoptResult> {
   track('program_proposal_action', { action: 'start' });
   const { remindersOn, minutes } = request.reminders;
   const notesWillArrive = remindersOn ? await requestIfUndetermined() : false;
+  let response: Awaited<ReturnType<typeof adoptProgram>>;
   try {
-    const response = await adoptProgram(request.program.id, request.replaceActive, newIdempotencyKey());
-    const profileId = useAppStore.getState().profile?.id ?? null;
-    if (profileId) {
-      await writeReminderPreferences(profileId, {
-        remindersOn,
-        minutes,
-        notificationsDenied: notificationsDeniedAfterAdopt(remindersOn, notesWillArrive),
-      });
-    }
-    track('program_adopted', { entry: request.entry, replaced: response.replaced !== null });
-    const startsOn = response.program?.program.startsOn ?? null;
-    const intents = useIntentStore.getState();
-    intents.parkPlanAction({ kind: 'showAdoptedBanner', startsOn });
-    intents.requestTab('Plan');
-    return { kind: 'started', startsOn };
+    response = await adoptProgram(request.program.id, request.replaceActive, newIdempotencyKey());
   } catch (error) {
     const failure = adoptFailure(error);
     noteFailure(error, failure);
     return { kind: 'failed', failure };
+  }
+
+  // writeReminderPreferences keeps its own failures (nothing stored, nothing promised).
+  const profileId = useAppStore.getState().profile?.id ?? null;
+  if (profileId) {
+    await writeReminderPreferences(profileId, {
+      remindersOn,
+      minutes,
+      notificationsDenied: notificationsDeniedAfterAdopt(remindersOn, notesWillArrive),
+    });
+  }
+  attempt(() => track('program_adopted', { entry: request.entry, replaced: response.replaced !== null }));
+  const startsOn = response.program?.program.startsOn ?? null;
+  attempt(() => {
+    const intents = useIntentStore.getState();
+    intents.parkPlanAction({ kind: 'showAdoptedBanner', startsOn });
+    intents.requestTab('Plan');
+  });
+  return { kind: 'started', startsOn };
+}
+
+/** Bookkeeping after a write the server has already made: a throw here is not the member's failure. */
+function attempt(work: () => void): void {
+  try {
+    work();
+  } catch {
+    // The plan started; Plan's next read shows it even without the banner.
   }
 }
 
@@ -198,21 +218,31 @@ export function reportProposalOutcome(programId: string, outcome: ProposalOutcom
 // ---------------------------------------------------------------------------
 // The card's reminder choice, for Start in the weeks screen
 
-const reminderDrafts = new Map<string, ReminderPreferences>();
+const reminderDrafts = new Map<string, { readonly owner: object; readonly preferences: ReminderPreferences }>();
 
 /**
  * The card's toggle and time as they stand, so Start in the weeks screen
  * sends what the card shows (iOS: the weeks sheet's Start runs the card's
  * own `adopt`, with the card's toggle). Nothing is STORED until a plan
- * starts; this is memory only.
+ * starts; this is memory only, and it lives only as long as the card that
+ * shows it (`forgetReminderDraft` on unmount): a member who toggled and then
+ * left the card (Not now, Discard, another screen) has changed nothing.
+ *
+ * `owner` is the card noting it. The last card to note a programme's draft
+ * holds it (a card notes again as its See all weeks opens the weeks screen).
  */
-export function noteReminderDraft(programId: string, preferences: ReminderPreferences): void {
-  reminderDrafts.set(programId, preferences);
+export function noteReminderDraft(programId: string, preferences: ReminderPreferences, owner: object): void {
+  reminderDrafts.set(programId, { owner, preferences });
 }
 
-/** The card's choice for `programId`, or null when no card showed it. */
+/** The card `owner` has gone: its choice goes with it (another card's stays). */
+export function forgetReminderDraft(programId: string, owner: object): void {
+  if (reminderDrafts.get(programId)?.owner === owner) reminderDrafts.delete(programId);
+}
+
+/** The choice a card on screen shows for `programId`, or null when none does. */
 export function reminderDraft(programId: string): ReminderPreferences | null {
-  return reminderDrafts.get(programId) ?? null;
+  return reminderDrafts.get(programId)?.preferences ?? null;
 }
 
 /** A health wipe: no card's choice is remembered (the cards listening stay). */

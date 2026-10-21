@@ -63,7 +63,7 @@ describe('the notes', () => {
 
 describe('Start from a previewed day', () => {
   const today = '2026-10-21';
-  const context = { readOnly: false, programPaused: false, today, hasPending: false };
+  const context = { readOnly: false, programPaused: false, today, outboxPending: false };
   const session = { kind: 'strength' as const, scheduledFor: today, status: 'planned' as const };
 
   it("today's planned strength, cardio or mobility session may start", () => {
@@ -87,6 +87,6 @@ describe('Start from a previewed day', () => {
   it('not read only, not on a paused plan, not with the workout waiting to sync', () => {
     expect(canStartFromOverview(session, { ...context, readOnly: true })).toBe(false);
     expect(canStartFromOverview(session, { ...context, programPaused: true })).toBe(false);
-    expect(canStartFromOverview(session, { ...context, hasPending: true })).toBe(false);
+    expect(canStartFromOverview(session, { ...context, outboxPending: true })).toBe(false);
   });
 });

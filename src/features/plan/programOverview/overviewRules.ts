@@ -55,10 +55,15 @@ const RUNNER_KINDS: readonly SessionKind[] = ['strength', 'cardio', 'mobility'];
  * `WorkoutRunnerEligibility.canStartToday`): today's planned session, for a
  * member who may write, on a plan that is not paused, a kind the runner
  * runs, and not already saved on this phone waiting to sync.
+ *
+ * PLAN-2 owns this rule (`canStartRunnerToday`, same arguments) and lands on
+ * its own branch; this copy stands in until it is merged, reached only
+ * through ./sessionPreview.tsx `canStartToday`, which the merge points at
+ * PLAN-2's. Delete it then.
  */
 export function canStartFromOverview(
   session: Pick<SessionView, 'kind' | 'scheduledFor' | 'status'>,
-  context: { readonly readOnly: boolean; readonly programPaused: boolean; readonly today: string; readonly hasPending: boolean },
+  context: { readonly readOnly: boolean; readonly programPaused: boolean; readonly today: string; readonly outboxPending: boolean },
 ): boolean {
   return (
     !context.readOnly &&
@@ -66,6 +71,6 @@ export function canStartFromOverview(
     RUNNER_KINDS.includes(session.kind ?? 'rest') &&
     session.scheduledFor === context.today &&
     (session.status ?? 'planned') === 'planned' &&
-    !context.hasPending
+    !context.outboxPending
   );
 }

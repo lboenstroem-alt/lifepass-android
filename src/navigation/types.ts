@@ -144,8 +144,17 @@ export type SharedRoutes = {
   WorkoutHistory: { readonly segment: WorkoutHistorySegment };
   /** One finished workout. Owner PLAN-4. */
   WorkoutDetail: { readonly sessionId: string };
-  /** A programme's weeks. Owner PLAN-4. */
-  ProgramOverview: { readonly programId: string; readonly mode: ProgramOverviewMode };
+  /**
+   * A programme's weeks. Owner PLAN-4. `fromCard`: a proposal card's "See
+   * all weeks" opened it (the palette of that card), so Start and Discard run
+   * that card's flow; without it (Plan's "A new plan is ready" row) they go
+   * back, as on iOS.
+   */
+  ProgramOverview: {
+    readonly programId: string;
+    readonly mode: ProgramOverviewMode;
+    readonly fromCard?: 'coach' | 'plan';
+  };
   /** Meal drafts. Owner PLAN-5. */
   Drafts: undefined;
   /** A monthly feedback report: the one named, or the month's, or the current one. Owner FEED-1. */

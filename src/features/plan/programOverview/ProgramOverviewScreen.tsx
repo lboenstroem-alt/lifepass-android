@@ -21,12 +21,15 @@
  * changes; a skeleton while there is nothing, the error with Try again when
  * that read failed.
  *
- * A PROPOSAL'S START, WHEREVER THIS WAS OPENED FROM, runs the card's own
- * flow (../proposal/useProposalFlow.ts): a revision asks to switch, the
- * server's 409 asks to replace. iOS opens this screen from Plan's "A new plan
- * is ready" row with a Start that only goes back; Android starts the plan, so
- * the row is not a dead end. The outcome reaches the card that opened it
- * (`reportProposalOutcome`).
+ * A PROPOSAL'S START AND DISCARD depend on who opened the screen, as on iOS:
+ * - a proposal card's "See all weeks" (`fromCard`): the card's own flow
+ *   (../proposal/useProposalFlow.ts, iOS the weeks sheet's `onStart` calling
+ *   the card's `adopt`): a revision asks to switch, anything else adopts at
+ *   once and the server's 409 asks to replace; Discard asks, then discards.
+ *   The outcome reaches the card (`reportProposalOutcome`).
+ * - Plan's "A new plan is ready" row (iOS PlanView `.proposalReview`): both
+ *   only go back (`onStart: { pop() }`, `onDiscard: { pop() }`). Nothing is
+ *   posted and no permission is asked there.
  */
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
@@ -72,14 +75,14 @@ import { currentPlanView, popPlanToRoot, presentPlanRunner, reloadPlan } from '.
 import { sessionKindIcon } from '../shell/sessionKindIcon';
 import StatusMark from '../week/StatusMark';
 
-import { canStartFromOverview, clampWeek, initialWeek, showsDeloadNote, shownWeek, sortedWeeks, weekNote } from './overviewRules';
-import { openSessionPreview, useSessionPreviewAvailable } from './sessionPreview';
+import { clampWeek, initialWeek, showsDeloadNote, shownWeek, sortedWeeks, weekNote } from './overviewRules';
+import { canStartToday, useSessionPreview } from './sessionPreview';
 
 /** iOS leaves 140 pt under the page: the tab bar floats over it, plus room to breathe. */
 const BOTTOM_ROOM = 64;
 
 export default function ProgramOverviewScreen({ route, navigation }: SharedRouteProps<'ProgramOverview'>) {
-  const { programId, mode } = route.params;
+  const { programId, mode, fromCard } = route.params;
   const { t, language } = useT();
   const insets = useSafeAreaInsets();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? insets.bottom;
@@ -88,6 +91,8 @@ export default function ProgramOverviewScreen({ route, navigation }: SharedRoute
   const [isLoading, setLoading] = useState(true);
   const [selectedWeek, setSelectedWeek] = useState(1);
   const alive = useRef(true);
+  /** Which read is the newest: an older one that answers late is dropped (iOS `.task(id:)` cancels it). */
+  const loadGeneration = useRef(0);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -96,18 +101,23 @@ export default function ProgramOverviewScreen({ route, navigation }: SharedRoute
   }, []);
 
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
+    const isCurrent = () => alive.current && generation === loadGeneration.current;
     setLoadFailed(false);
     setLoading(true);
     try {
       const loaded = await fetchProgram(programId, language);
-      if (!alive.current) return;
+      if (!isCurrent()) return;
       setDetail(loaded);
       setSelectedWeek(initialWeek(loaded));
+      setLoading(false);
     } catch (error) {
-      if (!alive.current || isCancellation(error)) return;
+      // A cancelled read keeps the skeleton: iOS returns before it clears
+      // `isLoading`, so the page never sits empty with neither a skeleton
+      // nor Try again.
+      if (!isCurrent() || isCancellation(error)) return;
       setLoadFailed(true);
-    } finally {
-      if (alive.current) setLoading(false);
+      setLoading(false);
     }
   }, [programId, language]);
 
@@ -145,7 +155,11 @@ export default function ProgramOverviewScreen({ route, navigation }: SharedRoute
         <DayRows days={shown?.days ?? []} mode={mode} />
         {mode === 'live' ? <LiveActions program={program} onUpdated={applyDetail} /> : null}
         {mode === 'proposal' ? (
-          <ProposalActions program={program} programId={programId} navigation={navigation} />
+          fromCard ? (
+            <CardProposalActions program={program} programId={programId} fromCard={fromCard} navigation={navigation} />
+          ) : (
+            <ReviewProposalActions program={program} navigation={navigation} />
+          )
         ) : null}
       </>
     );
@@ -244,7 +258,8 @@ function WeekNotes({ note, deload }: { note: string | null; deload: boolean }) {
 
 function DayRows({ days, mode }: { days: readonly SessionBrief[]; mode: 'live' | 'proposal' | 'past' }) {
   const { t, language } = useT();
-  const previewAvailable = useSessionPreviewAvailable();
+  const preview = useSessionPreview('programOverview.preview');
+  const previewAvailable = preview.available;
   const opening = useRef(false);
 
   const open = async (day: SessionBrief) => {
@@ -253,15 +268,16 @@ function DayRows({ days, mode }: { days: readonly SessionBrief[]; mode: 'live' |
     try {
       const session = await fetchSession(day.id, language);
       const view = currentPlanView();
+      // Only a live plan's overview offers Start (iOS `mode == .live && canStartSession`).
       const canStart =
         mode === 'live' &&
-        canStartFromOverview(session, {
+        canStartToday(session, {
           readOnly: view.isReadOnly,
           programPaused: view.shownDay?.program?.status === 'paused',
+          outboxPending: hasPendingWorkoutNow(session.id),
           today: todayServerDay(),
-          hasPending: hasPendingWorkoutNow(session.id),
         });
-      openSessionPreview({
+      preview.open({
         session,
         canStart,
         // Back to Plan, then the runner (iOS: `planPath` reset, `presentRunner`).
@@ -277,49 +293,53 @@ function DayRows({ days, mode }: { days: readonly SessionBrief[]; mode: 'live' |
     }
   };
 
-  if (days.length === 0) return null;
+  // The sheet draws in the UI kit's portal: where it sits here adds nothing to the page.
+  if (days.length === 0) return preview.element;
   return (
-    <Card style={styles.dayCard}>
-      {days.map((day, index) => {
-        const rest = isRestRow(day);
-        const tappable = !rest && previewAvailable;
-        return (
-          <Pressable
-            key={day.id}
-            onPress={() => void open(day)}
-            disabled={!tappable}
-            accessible
-            accessibilityRole={tappable ? 'button' : undefined}
-            accessibilityLabel={dayRowLabel(day, index, t, language)}
-            style={({ pressed }) => [styles.dayRow, index > 0 && styles.divider, rest && styles.rest, pressed && styles.pressed]}
-            testID={`programOverview.day.${index}`}
-          >
-            <View style={styles.dayWhen}>
-              <LPText size={10} tracking={1.1} color={colors.paper3} numberOfLines={1}>
-                {weekdayAbbreviation(rowWeekday(day, index), language).toUpperCase()}
+    <>
+      <Card style={styles.dayCard}>
+        {days.map((day, index) => {
+          const rest = isRestRow(day);
+          const tappable = !rest && previewAvailable;
+          return (
+            <Pressable
+              key={day.id}
+              onPress={() => void open(day)}
+              disabled={!tappable}
+              accessible
+              accessibilityRole={tappable ? 'button' : undefined}
+              accessibilityLabel={dayRowLabel(day, index, t, language)}
+              style={({ pressed }) => [styles.dayRow, index > 0 && styles.divider, rest && styles.rest, pressed && styles.pressed]}
+              testID={`programOverview.day.${index}`}
+            >
+              <View style={styles.dayWhen}>
+                <LPText size={10} tracking={1.1} color={colors.paper3} numberOfLines={1}>
+                  {weekdayAbbreviation(rowWeekday(day, index), language).toUpperCase()}
+                </LPText>
+                {mode !== 'proposal' && day.scheduledFor ? (
+                  <LPText size={10} color={colors.paper4} numberOfLines={1}>
+                    {shortDay(day.scheduledFor, language)}
+                  </LPText>
+                ) : null}
+              </View>
+              <View {...hiddenFromAccessibility} style={styles.kind}>
+                <MaterialCommunityIcons name={sessionKindIcon(day.kind ?? 'rest')} size={17} color={colors.paper2} />
+              </View>
+              <LPText size={15} color={colors.paper} numberOfLines={2} style={styles.grow}>
+                {rowTitle(day, t)}
               </LPText>
-              {mode !== 'proposal' && day.scheduledFor ? (
-                <LPText size={10} color={colors.paper4} numberOfLines={1}>
-                  {shortDay(day.scheduledFor, language)}
+              {day.minutes !== null && day.minutes > 0 ? (
+                <LPText size={12} color={colors.paper3}>
+                  {duration(day.minutes, language)}
                 </LPText>
               ) : null}
-            </View>
-            <View {...hiddenFromAccessibility} style={styles.kind}>
-              <MaterialCommunityIcons name={sessionKindIcon(day.kind ?? 'rest')} size={17} color={colors.paper2} />
-            </View>
-            <LPText size={15} color={colors.paper} numberOfLines={2} style={styles.grow}>
-              {rowTitle(day, t)}
-            </LPText>
-            {day.minutes !== null && day.minutes > 0 ? (
-              <LPText size={12} color={colors.paper3}>
-                {duration(day.minutes, language)}
-              </LPText>
-            ) : null}
-            <StatusMark status={day.status ?? 'planned'} />
-          </Pressable>
-        );
-      })}
-    </Card>
+              <StatusMark status={day.status ?? 'planned'} />
+            </Pressable>
+          );
+        })}
+      </Card>
+      {preview.element}
+    </>
   );
 }
 
@@ -401,25 +421,56 @@ function LiveActions({ program, onUpdated }: { program: ProgramSummary; onUpdate
   );
 }
 
-/** Start this plan (Switch to this plan) and Discard, through the card's own flow. */
-function ProposalActions({
+/**
+ * Plan's "A new plan is ready" row opened this (iOS PlanView `.proposalReview`
+ * passes `onStart: { pop() }` and `onDiscard: { pop() }`): both go back to
+ * Plan, where the plan is still waiting. Nothing is posted, and no
+ * notification permission is asked for a reminder choice nobody showed.
+ */
+function ReviewProposalActions({
+  program,
+  navigation,
+}: {
+  program: ProgramSummary;
+  navigation: SharedRouteProps<'ProgramOverview'>['navigation'];
+}) {
+  const { t } = useT();
+  const back = () => {
+    if (navigation.canGoBack()) navigation.goBack();
+  };
+  return (
+    <View style={styles.proposalActions}>
+      <PrimaryButton title={t(startKey(program))} onPress={back} testID="overview.proposal.start" />
+      <QuietButton title={t('program.proposal.discard')} colour={colors.destructive} onPress={back} testID="programOverview.discard" />
+    </View>
+  );
+}
+
+/**
+ * A proposal card's "See all weeks" opened this: Start and Discard are that
+ * card's (iOS the weeks sheet's `onStart` runs the card's `adopt`, its
+ * `onDiscard` the card's discard question), with the card's reminder choice.
+ */
+function CardProposalActions({
   program,
   programId,
+  fromCard,
   navigation,
 }: {
   program: ProgramSummary;
   programId: string;
+  fromCard: 'coach' | 'plan';
   navigation: SharedRouteProps<'ProgramOverview'>['navigation'];
 }) {
   const { t } = useT();
   const profileId = useAppStore((s) => s.profile?.id ?? null);
-  // Opened on Plan's own stack, or over the Coach's card.
+  // On Plan's own stack (the Plan card), or over the Coach's.
   const onPlanStack = navigation.getState?.()?.routeNames?.includes('PlanMain' as never) === true;
 
   const onOutcome = (outcome: ProposalOutcome) => {
     reportProposalOutcome(programId, outcome);
     // A start parks Plan's banner, which reads again itself; anything else
-    // changed what Plan shows (the "new plan" row, the proposal card).
+    // changed what Plan shows (the proposal card).
     if (outcome !== 'started') void reloadPlan({ force: true });
     if (outcome === 'started' && onPlanStack) {
       popPlanToRoot();
@@ -430,7 +481,8 @@ function ProposalActions({
 
   const flow = useProposalFlow({
     program,
-    entry: onPlanStack ? 'plan' : 'coach',
+    entry: fromCard,
+    // The card that opened this is still mounted under it: its toggle as it stands.
     reminders: () => reminderDraft(programId) ?? loadReminderPreferences(profileId),
     onOutcome,
   });

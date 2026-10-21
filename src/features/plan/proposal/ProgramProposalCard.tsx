@@ -63,14 +63,19 @@ import { useIntentStore } from '../../../stores/intentStore';
 import { colors } from '../../../theme';
 import { openChangeDays } from '../days';
 import { isRestRow, proposalMetaLine, proposalRowLabel, rowTitle, rowWeekday, targetsLine, targetsText } from '../overview/planCopy';
-import { openSessionPreview, useSessionPreviewAvailable } from '../programOverview/sessionPreview';
+import { useSessionPreview } from '../programOverview/sessionPreview';
 import { reloadPlan } from '../shell/planShell';
 import { sessionKindIcon } from '../shell/sessionKindIcon';
 
 import { PROPOSAL_COLOURS, type ProposalColours } from './palette';
-import { loadReminderPreferences, noteReminderDraft, onProposalOutcome } from './proposalActions';
 import {
-  DEFAULT_REMINDER_MINUTES,
+  forgetReminderDraft,
+  loadReminderPreferences,
+  noteReminderDraft,
+  onProposalOutcome,
+  type ReminderPreferences,
+} from './proposalActions';
+import {
   kickerKey,
   offersOpenPlan,
   outcomeCopyKey,
@@ -240,47 +245,64 @@ function Collapsed({
   );
 }
 
-function FullCard({
-  proposal,
-  palette,
-  colours,
-  onOutcome,
-  onUpdated,
-  testID,
-}: {
+type FullCardProps = {
   proposal: HealthProposal;
   palette: ProposalPalette;
   colours: ProposalColours;
   onOutcome: (outcome: ProposalOutcome) => void;
   onUpdated: (detail: ProgramDetail) => void;
   testID: string;
-}) {
-  const { t, language } = useT();
-  const navigation = useContext(NavigationContext) as AppNavigation | undefined;
-  const program = proposal.program;
-  const profileId = useAppStore((s) => s.profile?.id ?? null);
-  const hasLiveProgram = useHealthStore(selectHasLiveProgram);
-  const previewAvailable = useSessionPreviewAvailable();
+};
 
-  // The reminder toggle and time: the stored choice, else on at 07:00 (iOS `loadReminderPreferences`).
-  const [remindersOn, setRemindersOn] = useState(true);
-  const [reminderMinutes, setReminderMinutes] = useState(DEFAULT_REMINDER_MINUTES);
-  const reminders = useRef({ remindersOn: true, minutes: DEFAULT_REMINDER_MINUTES });
+/**
+ * The card waits for the member's stored reminder choice before it draws
+ * (iOS reads it from UserDefaults in `onAppear`, before the first frame
+ * anyone sees). Drawn at the defaults first, a toggle stored off would flip
+ * on screen, and a touch made before the read landed would be overwritten.
+ */
+function FullCard(props: FullCardProps) {
+  const profileId = useAppStore((s) => s.profile?.id ?? null);
+  const [stored, setStored] = useState<{ readonly profileId: string | null; readonly preferences: ReminderPreferences } | null>(null);
   useEffect(() => {
     let live = true;
-    void loadReminderPreferences(profileId).then((stored) => {
-      if (!live) return;
-      setRemindersOn(stored.remindersOn);
-      setReminderMinutes(stored.minutes);
+    void loadReminderPreferences(profileId).then((preferences) => {
+      if (live) setStored({ profileId, preferences });
     });
     return () => {
       live = false;
     };
   }, [profileId]);
+  if (!stored || stored.profileId !== profileId) return null;
+  return <LoadedCard key={profileId ?? ''} {...props} initialReminders={stored.preferences} />;
+}
+
+function LoadedCard({
+  proposal,
+  palette,
+  colours,
+  onOutcome,
+  onUpdated,
+  testID,
+  initialReminders,
+}: FullCardProps & { initialReminders: ReminderPreferences }) {
+  const { t, language } = useT();
+  const navigation = useContext(NavigationContext) as AppNavigation | undefined;
+  const program = proposal.program;
+  const hasLiveProgram = useHealthStore(selectHasLiveProgram);
+  const preview = useSessionPreview(`${testID}.preview`);
+
+  // The reminder toggle and time: the stored choice, else on at 07:00 (iOS `loadReminderPreferences`).
+  const [remindersOn, setRemindersOn] = useState(initialReminders.remindersOn);
+  const [reminderMinutes, setReminderMinutes] = useState(initialReminders.minutes);
+  const reminders = useRef<ReminderPreferences>(initialReminders);
+  // This card, as the owner of the choice it lends the weeks screen.
+  const [draftOwner] = useState(() => ({}));
   useEffect(() => {
     reminders.current = { remindersOn, minutes: reminderMinutes };
-    noteReminderDraft(program.id, reminders.current);
-  }, [program.id, remindersOn, reminderMinutes]);
+    noteReminderDraft(program.id, reminders.current, draftOwner);
+  }, [program.id, remindersOn, reminderMinutes, draftOwner]);
+  // The choice lives only as long as the card that shows it.
+  useEffect(() => () => forgetReminderDraft(program.id, draftOwner), [program.id, draftOwner]);
 
   const flow = useProposalFlow({
     program,
@@ -291,7 +313,9 @@ function FullCard({
   const busy = flow.isBusy;
 
   const seeAllWeeks = () => {
-    const params = { programId: program.id, mode: 'proposal' as const };
+    // The weeks screen's Start is this card's: it sends this card's choice.
+    noteReminderDraft(program.id, reminders.current, draftOwner);
+    const params = { programId: program.id, mode: 'proposal' as const, fromCard: palette };
     if (navigation) openSharedRoute(navigation, 'ProgramOverview', params);
     else navigateInCurrentTab('ProgramOverview', params);
   };
@@ -303,7 +327,8 @@ function FullCard({
     opening.current = true;
     try {
       const session = await fetchSession(brief.id, language);
-      openSessionPreview({ session, canStart: false, onStart: () => undefined });
+      // Never Start from a proposal (iOS `canStart: false`).
+      preview.open({ session, canStart: false });
     } catch {
       // Nothing opens: a preview that cannot load is not worth an error over the card.
     } finally {
@@ -340,139 +365,142 @@ function FullCard({
   const startLabel = t(startKey(program));
 
   return (
-    <View style={[styles.tile, styles.card, { backgroundColor: colours.tile, borderColor: colours.stroke }]} testID={testID}>
-      <View style={styles.heading}>
-        <Kicker text={t(kickerKey(program), { weeks: String(program.weeks ?? 4) })} color={colours.text3} />
-        <LPText serif size={22} color={colours.text} accessibilityRole="header">
-          {program.summaryTitle ?? ''}
-        </LPText>
-        <LPText size={13} color={colours.text2}>
-          {proposalMetaLine(program, t, language)}
-        </LPText>
-      </View>
+    <>
+      <View style={[styles.tile, styles.card, { backgroundColor: colours.tile, borderColor: colours.stroke }]} testID={testID}>
+        <View style={styles.heading}>
+          <Kicker text={t(kickerKey(program), { weeks: String(program.weeks ?? 4) })} color={colours.text3} />
+          <LPText serif size={22} color={colours.text} accessibilityRole="header">
+            {program.summaryTitle ?? ''}
+          </LPText>
+          <LPText size={13} color={colours.text2}>
+            {proposalMetaLine(program, t, language)}
+          </LPText>
+        </View>
 
-      <View style={[styles.weekOne, { backgroundColor: colours.rows }]}>
-        {proposal.week1.map((session, index) => {
-          const rest = isRestRow(session);
-          const tappable = !rest && previewAvailable;
-          return (
-            <Pressable
-              key={session.id}
-              onPress={() => void openSession(session)}
-              disabled={!tappable || busy}
-              accessible
-              accessibilityRole={tappable ? 'button' : undefined}
-              accessibilityLabel={proposalRowLabel(session, index, t, language)}
-              accessibilityState={tappable ? { disabled: busy } : undefined}
-              style={({ pressed }) => [
-                styles.weekRow,
-                index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colours.stroke },
-                rest && styles.restRow,
-                pressed && styles.pressed,
-              ]}
-              testID={`${testID}.week1.${index}`}
-            >
-              <LPText size={10} tracking={1.1} color={colours.text3} style={styles.weekday} numberOfLines={1}>
-                {weekdayAbbreviation(rowWeekday(session, index), language).toUpperCase()}
-              </LPText>
-              <View {...hiddenFromAccessibility} style={styles.kindIcon}>
-                <MaterialCommunityIcons name={sessionKindIcon(session.kind ?? 'rest')} size={15} color={colours.text2} />
-              </View>
-              <LPText size={14} color={colours.text} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.grow}>
-                {rowTitle(session, t)}
-              </LPText>
-              {session.minutes !== null && session.minutes > 0 ? (
-                <LPText size={12} color={colours.text3}>
-                  {duration(session.minutes, language)}
+        <View style={[styles.weekOne, { backgroundColor: colours.rows }]}>
+          {proposal.week1.map((session, index) => {
+            const rest = isRestRow(session);
+            const tappable = !rest && preview.available;
+            return (
+              <Pressable
+                key={session.id}
+                onPress={() => void openSession(session)}
+                disabled={!tappable || busy}
+                accessible
+                accessibilityRole={tappable ? 'button' : undefined}
+                accessibilityLabel={proposalRowLabel(session, index, t, language)}
+                accessibilityState={tappable ? { disabled: busy } : undefined}
+                style={({ pressed }) => [
+                  styles.weekRow,
+                  index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colours.stroke },
+                  rest && styles.restRow,
+                  pressed && styles.pressed,
+                ]}
+                testID={`${testID}.week1.${index}`}
+              >
+                <LPText size={10} tracking={1.1} color={colours.text3} style={styles.weekday} numberOfLines={1}>
+                  {weekdayAbbreviation(rowWeekday(session, index), language).toUpperCase()}
                 </LPText>
-              ) : null}
-            </Pressable>
-          );
-        })}
-      </View>
+                <View {...hiddenFromAccessibility} style={styles.kindIcon}>
+                  <MaterialCommunityIcons name={sessionKindIcon(session.kind ?? 'rest')} size={15} color={colours.text2} />
+                </View>
+                <LPText size={14} color={colours.text} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.grow}>
+                  {rowTitle(session, t)}
+                </LPText>
+                {session.minutes !== null && session.minutes > 0 ? (
+                  <LPText size={12} color={colours.text3}>
+                    {duration(session.minutes, language)}
+                  </LPText>
+                ) : null}
+              </Pressable>
+            );
+          })}
+        </View>
 
-      <QuietButton title={t('program.proposal.see_all')} colour={colours.text2} onPress={seeAllWeeks} testID={`${testID}.seeAll`} />
+        <QuietButton title={t('program.proposal.see_all')} colour={colours.text2} onPress={seeAllWeeks} testID={`${testID}.seeAll`} />
 
-      <View style={styles.targets}>
-        <LPText size={13} color={colours.text2} style={styles.shrink} testID={`${testID}.targets`}>
-          {targetsText(targets, t, language)}
-        </LPText>
-        {targets.kind === 'targets' ? palette === 'plan' ? <EstimateChip /> : <GlassEstimateChip /> : null}
-      </View>
-
-      <LPText size={12} color={colours.text3}>
-        {t('health.disclaimer')}
-      </LPText>
-
-      <View style={styles.reminders}>
-        <Pressable
-          onPress={() => setRemindersOn((on) => !on)}
-          accessibilityRole="switch"
-          accessibilityLabel={t('program.proposal.reminders')}
-          accessibilityState={{ checked: remindersOn }}
-          style={styles.reminderToggle}
-          testID={`${testID}.reminders`}
-        >
-          <LPText size={14} color={colours.text} style={styles.shrink}>
-            {t('program.proposal.reminders')}
+        <View style={styles.targets}>
+          <LPText size={13} color={colours.text2} style={styles.shrink} testID={`${testID}.targets`}>
+            {targetsText(targets, t, language)}
           </LPText>
-          <Switch
-            value={remindersOn}
-            onValueChange={setRemindersOn}
-            trackColor={{ true: colors.rust, false: colors.line2 }}
-            thumbColor={colors.onAccent}
-            accessible={false}
-            importantForAccessibility="no-hide-descendants"
+          {targets.kind === 'targets' ? palette === 'plan' ? <EstimateChip /> : <GlassEstimateChip /> : null}
+        </View>
+
+        <LPText size={12} color={colours.text3}>
+          {t('health.disclaimer')}
+        </LPText>
+
+        <View style={styles.reminders}>
+          <Pressable
+            onPress={() => setRemindersOn((on) => !on)}
+            accessibilityRole="switch"
+            accessibilityLabel={t('program.proposal.reminders')}
+            accessibilityState={{ checked: remindersOn }}
+            style={styles.reminderToggle}
+            testID={`${testID}.reminders`}
+          >
+            <LPText size={14} color={colours.text} style={styles.shrink}>
+              {t('program.proposal.reminders')}
+            </LPText>
+            <Switch
+              value={remindersOn}
+              onValueChange={setRemindersOn}
+              trackColor={{ true: colors.rust, false: colors.line2 }}
+              thumbColor={colors.onAccent}
+              accessible={false}
+              importantForAccessibility="no-hide-descendants"
+            />
+          </Pressable>
+          <MenuPicker
+            options={timeOptions}
+            value={String(reminderMinutes)}
+            onChange={(value) => setReminderMinutes(Number(value))}
+            label={t('plan4.reminder_time')}
+            disabled={!remindersOn}
+            renderTrigger={(selected) => (
+              <View style={styles.timeTrigger}>
+                <LPText size={13} weight="semibold" color={colours.text2}>
+                  {selected?.label ?? reminderTimeLabel(reminderMinutes)}
+                </LPText>
+              </View>
+            )}
+            testID={`${testID}.reminderTime`}
           />
-        </Pressable>
-        <MenuPicker
-          options={timeOptions}
-          value={String(reminderMinutes)}
-          onChange={(value) => setReminderMinutes(Number(value))}
-          label={t('plan4.reminder_time')}
-          disabled={!remindersOn}
-          renderTrigger={(selected) => (
-            <View style={styles.timeTrigger}>
-              <LPText size={13} weight="semibold" color={colours.text2}>
-                {selected?.label ?? reminderTimeLabel(reminderMinutes)}
-              </LPText>
-            </View>
-          )}
-          testID={`${testID}.reminderTime`}
-        />
-      </View>
+        </View>
 
-      {flow.errorKey ? (
-        <LPText size={13} color={colours.error} accessibilityLiveRegion="polite" testID={`${testID}.error`}>
-          {t(flow.errorKey)}
-        </LPText>
-      ) : null}
-
-      <Pressable
-        onPress={() => flow.start(startDecision(program, hasLiveProgram))}
-        disabled={busy}
-        accessibilityRole="button"
-        accessibilityLabel={startLabel}
-        accessibilityHint={t('a11y.opens_plan')}
-        accessibilityState={{ disabled: busy, busy }}
-        style={({ pressed }) => [styles.start, pressed && styles.pressed]}
-        testID={program.revisionOf !== null ? 'program.revision.start' : 'program.proposal.start'}
-      >
-        {busy ? (
-          <ActivityIndicator color={colors.onAccent} />
-        ) : (
-          <LPText size={15} weight="semibold" color={colors.onAccent}>
-            {startLabel}
+        {flow.errorKey ? (
+          <LPText size={13} color={colours.error} accessibilityLiveRegion="polite" testID={`${testID}.error`}>
+            {t(flow.errorKey)}
           </LPText>
-        )}
-      </Pressable>
+        ) : null}
 
-      <View style={styles.textButtons}>
-        <QuietButton title={t('program.proposal.change_days')} colour={colours.text2} onPress={changeDays} disabled={busy} testID={`${testID}.changeDays`} />
-        <QuietButton title={t('program.proposal.not_now')} colour={colours.text2} onPress={notNow} disabled={busy} testID={`${testID}.notNow`} />
-        <QuietButton title={t('program.proposal.discard')} colour={colours.text2} onPress={flow.askDiscard} disabled={busy} testID={`${testID}.discard`} />
+        <Pressable
+          onPress={() => flow.start(startDecision(program, hasLiveProgram))}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel={startLabel}
+          accessibilityHint={t('a11y.opens_plan')}
+          accessibilityState={{ disabled: busy, busy }}
+          style={({ pressed }) => [styles.start, pressed && styles.pressed]}
+          testID={program.revisionOf !== null ? 'program.revision.start' : 'program.proposal.start'}
+        >
+          {busy ? (
+            <ActivityIndicator color={colors.onAccent} />
+          ) : (
+            <LPText size={15} weight="semibold" color={colors.onAccent}>
+              {startLabel}
+            </LPText>
+          )}
+        </Pressable>
+
+        <View style={styles.textButtons}>
+          <QuietButton title={t('program.proposal.change_days')} colour={colours.text2} onPress={changeDays} disabled={busy} testID={`${testID}.changeDays`} />
+          <QuietButton title={t('program.proposal.not_now')} colour={colours.text2} onPress={notNow} disabled={busy} testID={`${testID}.notNow`} />
+          <QuietButton title={t('program.proposal.discard')} colour={colours.text2} onPress={flow.askDiscard} disabled={busy} testID={`${testID}.discard`} />
+        </View>
       </View>
-    </View>
+      {preview.element}
+    </>
   );
 }
 

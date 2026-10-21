@@ -1,33 +1,53 @@
 /**
  * The programme overview (iOS ProgramOverviewView) in a real stack against
- * the stub server: the read in the account language, the skeleton and the
- * error, the header, the week picker and its notes, the day rows and their
- * preview, and the three modes' actions (live: days, pause, resume, end;
- * proposal: Start through the card's flow, Discard; past: none).
+ * the stub server: the read in the account language (a late older read
+ * dropped, a cancelled one keeping the skeleton), the error, the header, the
+ * week picker and its notes, the day rows and their preview (PLAN-2's sheet
+ * stood in for), and the three modes' actions (live: days, pause, resume,
+ * end; proposal from a card: Start through the card's flow, Discard;
+ * proposal from Plan's review row: both only go back; past: none).
  */
 import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { api, Reply } from '@test/server';
+import { notificationsState } from '@test/mocks/expoNotifications';
+import { api, Reply, type StubReply } from '@test/server';
 import { Text } from 'react-native';
 
+import { TransportError } from '../../../../api';
 import { expectSentToMatchContract, stubApiClientPerTest } from '../../../../api/testing';
 import { resetUiKit, UiKitProvider } from '../../../../components/ui';
 import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
-import { decodeHealthDay, useHealthStore } from '../../../../health';
-import { translate } from '../../../../i18n';
+import { decodeHealthDay, fetchProgram, ReminderKeys, useHealthStore } from '../../../../health';
+import { setCurrentLanguage, translate } from '../../../../i18n';
 import { useIntentStore } from '../../../../stores/intentStore';
+import { openRunner } from '../../../runner';
 import { ChangeDaysHost } from '../../days';
-import { onProposalOutcome, resetProposalBridges } from '../../proposal/proposalActions';
-import { dayJSON, freshPlan, memberProfile, settle, signIn, TODAY } from '../../__tests__/planFixtures';
+import { noteReminderDraft, onProposalOutcome, resetProposalBridges } from '../../proposal/proposalActions';
+import { dayJSON, freshPlan, MEMBER, memberProfile, settle, signIn, TODAY } from '../../__tests__/planFixtures';
 import ProgramOverviewScreen from '../ProgramOverviewScreen';
-import { installSessionPreview, resetSessionPreviewForTests } from '../sessionPreview';
+
+import { setPreviewInstalled } from './fakePreviewSheet';
 
 jest.mock('@gorhom/bottom-sheet', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require('../../../../components/ui/testing/bottomSheetMock').bottomSheetModule,
 );
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
+// PLAN-2's sheet is on its own branch: a stand-in that keeps its promises.
+jest.mock('../sessionPreview', () => {
+  const actual = jest.requireActual('../sessionPreview');
+  const fake = jest.requireActual('./fakePreviewSheet');
+  return { ...actual, useSessionPreview: (testID?: string) => actual.useSessionPreview(testID, fake.installedSheet()) };
+});
+// The runner is a root modal this stack does not have: what Start asks of it is enough.
+jest.mock('../../../runner', () => ({ ...jest.requireActual('../../../runner'), openRunner: jest.fn() }));
+// The read itself, so one test can hand it a cancellation.
+jest.mock('../../../../health', () => {
+  const actual = jest.requireActual('../../../../health');
+  return { ...actual, fetchProgram: jest.fn(actual.fetchProgram) };
+});
 
 stubApiClientPerTest();
 
@@ -79,7 +99,8 @@ function Root() {
   return <Text>root</Text>;
 }
 
-async function renderOverview(mode: 'live' | 'proposal' | 'past', rootName = 'Root') {
+async function renderOverview(mode: 'live' | 'proposal' | 'past', options: { fromCard?: 'coach' | 'plan' } = {}) {
+  const rootName = 'Root';
   await render(
     <NavigationContainer ref={navigationRef}>
       <UiKitProvider>
@@ -92,7 +113,7 @@ async function renderOverview(mode: 'live' | 'proposal' | 'past', rootName = 'Ro
     </NavigationContainer>,
   );
   await act(async () => {
-    (navigationRef.navigate as (name: string, params: object) => void)('ProgramOverview', { programId: PROGRAM, mode });
+    (navigationRef.navigate as (name: string, params: object) => void)('ProgramOverview', { programId: PROGRAM, mode, ...options });
   });
   await act(async () => settle());
 }
@@ -100,7 +121,9 @@ async function renderOverview(mode: 'live' | 'proposal' | 'past', rootName = 'Ro
 beforeEach(() => {
   freshPlan();
   resetProposalBridges();
-  resetSessionPreviewForTests();
+  setPreviewInstalled(true);
+  jest.mocked(openRunner).mockClear();
+  notificationsState.reset();
   bottomSheetMock.reset();
   resetUiKit();
   signIn();
@@ -109,6 +132,11 @@ beforeEach(() => {
     selectedDate: TODAY,
   });
   api.on('GET', '/health', Reply.ok(dayJSON(TODAY)));
+});
+
+afterEach(async () => {
+  setCurrentLanguage('en');
+  await AsyncStorage.clear();
 });
 
 describe('the read', () => {
@@ -134,6 +162,35 @@ describe('the read', () => {
     await fireEvent.press(screen.getByRole('button', { name: en('venue.try_again') }));
     expect(await screen.findByRole('header', { name: 'Stronger in four weeks' })).toBeOnTheScreen();
   });
+
+  it('a new language reads again, and the older read answering late is dropped', async () => {
+    let answerEnglish: (reply: StubReply) => void = () => undefined;
+    api.on('GET', programPath, (request) =>
+      request.query.locale === 'is'
+        ? Reply.ok({ program: detailJSON({ summaryTitle: 'Sterkari á fjórum vikum' }) })
+        : new Promise<StubReply>((resolve) => {
+            answerEnglish = resolve;
+          }),
+    );
+    await renderOverview('live');
+    expect(screen.getByTestId('programOverview.loading')).toBeOnTheScreen();
+
+    await act(async () => setCurrentLanguage('is'));
+    expect(await screen.findByRole('header', { name: 'Sterkari á fjórum vikum' })).toBeOnTheScreen();
+    await act(async () => {
+      answerEnglish(Reply.ok({ program: detailJSON() }));
+      await settle();
+    });
+    expect(screen.getByRole('header', { name: 'Sterkari á fjórum vikum' })).toBeOnTheScreen();
+    expect(screen.queryByRole('header', { name: 'Stronger in four weeks' })).toBeNull();
+  });
+
+  it('a cancelled first read keeps the skeleton (never an empty page)', async () => {
+    jest.mocked(fetchProgram).mockImplementationOnce(() => Promise.reject(new TransportError('cancelled')));
+    await renderOverview('live');
+    expect(screen.getByTestId('programOverview.loading')).toBeOnTheScreen();
+    expect(screen.queryByTestId('programOverview.error')).toBeNull();
+  });
 });
 
 describe('the weeks', () => {
@@ -152,15 +209,40 @@ describe('the weeks', () => {
   });
 
   it("a session opens its preview, with Start for today's planned session of a live plan", async () => {
-    const opener = jest.fn();
-    installSessionPreview(opener);
     api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
     api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' } }));
     await renderOverview('live');
     expect(screen.queryByRole('button', { name: 'Thu, Rest day' })).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
-    await waitFor(() => expect(opener).toHaveBeenCalledTimes(1));
-    expect(opener.mock.calls[0][0]).toMatchObject({ canStart: true, session: { id: 'w2-1' } });
+    expect(await screen.findByText('preview:w2-1')).toBeOnTheScreen();
+    expect(api.sent('/health/sessions/w2-1', 'GET').query.locale).toBe('en');
+
+    // Start: the sheet goes first, then the runner opens on today's session.
+    await fireEvent.press(screen.getByRole('button', { name: 'preview start' }));
+    await waitFor(() => expect(openRunner).toHaveBeenCalledWith(expect.objectContaining({ id: 'w2-1' }), 'today'));
+    expect(screen.queryByText('preview:w2-1')).toBeNull();
+  });
+
+  it('a session another day offers no Start; each opening is its own sheet', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', '/health/sessions/w1-1', Reply.ok({ session: { id: 'w1-1', kind: 'strength', scheduledFor: '2026-10-12', status: 'done', title: 'Legs' } }));
+    await renderOverview('live');
+    await fireEvent.press(screen.getByTestId('programOverview.week.1'));
+    await fireEvent.press(screen.getByRole('button', { name: 'Mon, Legs, 40 min, done' }));
+    expect(await screen.findByText('preview:w1-1')).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: 'preview start' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'preview close' }));
+    expect(screen.queryByText('preview:w1-1')).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Mon, Legs, 40 min, done' }));
+    expect(await screen.findByText('preview:w1-1')).toBeOnTheScreen();
+  });
+
+  it("until PLAN-2's sheet is merged the rows are not buttons at all", async () => {
+    setPreviewInstalled(false);
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    await renderOverview('live');
+    expect(screen.getByLabelText('Wed, Upper body, 35 min, planned')).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: 'Wed, Upper body, 35 min, planned' })).toBeNull();
   });
 });
 
@@ -205,7 +287,52 @@ describe('live mode', () => {
   });
 });
 
-describe('proposal mode', () => {
+describe("proposal mode, from Plan's review row (iOS `.proposalReview`)", () => {
+  const adoptPath = `${programPath}/adopt`;
+
+  it('rows have no dates; Start only goes back: nothing posted, no permission asked', async () => {
+    const outcomes: string[] = [];
+    onProposalOutcome(PROGRAM, (outcome) => outcomes.push(outcome));
+    useHealthStore.setState({
+      today: decodeHealthDay(dayJSON(TODAY, { program: { id: 'live-1', status: 'active', weekNo: 2, weeks: 4 }, proposal: null })),
+    });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed', startsOn: null, endsOn: null }) }));
+    api.on('POST', adoptPath, Reply.problem(409, 'program_already_active'));
+    await renderOverview('proposal');
+    await fireEvent.press(screen.getByTestId('programOverview.week.1'));
+    expect(screen.queryByText('Mon 12 Oct')).toBeNull();
+    expect(screen.queryByRole('button', { name: en('plan.overview.pause') })).toBeNull();
+
+    await fireEvent.press(button('program.proposal.start'));
+    expect(await screen.findByText('root')).toBeOnTheScreen();
+    await act(async () => settle());
+    expect(api.sentAll(adoptPath)).toHaveLength(0);
+    expect(notificationsState.requestCount()).toBe(0);
+    expect(screen.queryByText(en('program.replace.title'))).toBeNull();
+    expect(useIntentStore.getState().pendingPlanAction).toBeNull();
+    expect(outcomes).toEqual([]);
+  });
+
+  it('a revision is labelled Switch, and only goes back too', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed', revisionOf: 'a1b2c3d4-0000-4000-8000-000000000001' }) }));
+    await renderOverview('proposal');
+    await fireEvent.press(button('program.revision.start'));
+    expect(await screen.findByText('root')).toBeOnTheScreen();
+    expect(screen.queryByText(en('program.revision.switch.title'))).toBeNull();
+    expect(api.sentAll(adoptPath)).toHaveLength(0);
+  });
+
+  it('Discard only goes back: no question, nothing posted', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed' }) }));
+    await renderOverview('proposal');
+    await fireEvent.press(button('program.proposal.discard'));
+    expect(await screen.findByText('root')).toBeOnTheScreen();
+    expect(screen.queryByText(en('program.discard.body'))).toBeNull();
+    expect(api.sentAll(`${programPath}/discard`)).toHaveLength(0);
+  });
+});
+
+describe("proposal mode, from a card's See all weeks (the card's flow)", () => {
   const adoptPath = `${programPath}/adopt`;
 
   it('rows have no dates; Start adopts, tells the card, and goes back', async () => {
@@ -213,7 +340,7 @@ describe('proposal mode', () => {
     onProposalOutcome(PROGRAM, (outcome) => outcomes.push(outcome));
     api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed', startsOn: null, endsOn: null }) }));
     api.on('POST', adoptPath, Reply.ok({ program: { id: PROGRAM, status: 'active', startsOn: '2026-10-22', weekPlans: [] }, replaced: null }));
-    await renderOverview('proposal');
+    await renderOverview('proposal', { fromCard: 'coach' });
     await fireEvent.press(screen.getByTestId('programOverview.week.1'));
     expect(screen.queryByText('Mon 12 Oct')).toBeNull();
     expect(screen.queryByRole('button', { name: en('plan.overview.pause') })).toBeNull();
@@ -228,14 +355,14 @@ describe('proposal mode', () => {
   it('a running plan the store did not know of: the 409 asks to replace', async () => {
     api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed' }) }));
     api.on('POST', adoptPath, Reply.problem(409, 'program_already_active'));
-    await renderOverview('proposal');
+    await renderOverview('proposal', { fromCard: 'coach' });
     await fireEvent.press(button('program.proposal.start'));
     expect(await screen.findByText(en('program.replace.body'))).toBeOnTheScreen();
   });
 
   it('a revision is switched to, and asks first', async () => {
     api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed', revisionOf: 'a1b2c3d4-0000-4000-8000-000000000001', startsOnIfAdoptedNow: '2026-10-22' }) }));
-    await renderOverview('proposal');
+    await renderOverview('proposal', { fromCard: 'plan' });
     await fireEvent.press(button('program.revision.start'));
     expect(await screen.findByText(en('program.revision.switch.title'))).toBeOnTheScreen();
     expect(api.sentAll(adoptPath)).toHaveLength(0);
@@ -246,7 +373,7 @@ describe('proposal mode', () => {
     onProposalOutcome(PROGRAM, (outcome) => outcomes.push(outcome));
     api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed' }) }));
     api.on('POST', `${programPath}/discard`, Reply.ok({ ok: true }));
-    await renderOverview('proposal');
+    await renderOverview('proposal', { fromCard: 'coach' });
     await fireEvent.press(button('program.proposal.discard'));
     expect(await screen.findByText(en('program.discard.body'))).toBeOnTheScreen();
     const discards = screen.getAllByRole('button', { name: en('program.discard.confirm') });
@@ -254,12 +381,21 @@ describe('proposal mode', () => {
     await waitFor(() => expect(outcomes).toEqual(['discarded']));
     expect(await screen.findByText('root')).toBeOnTheScreen();
   });
+
+  it("Start sends the opening card's reminder choice: switched off, no permission is asked", async () => {
+    noteReminderDraft(PROGRAM, { remindersOn: false, minutes: 480 }, {});
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed' }) }));
+    api.on('POST', adoptPath, Reply.ok({ program: { id: PROGRAM, status: 'active', startsOn: '2026-10-22', weekPlans: [] }, replaced: null }));
+    await renderOverview('proposal', { fromCard: 'plan' });
+    await fireEvent.press(button('program.proposal.start'));
+    await waitFor(async () => expect(await AsyncStorage.getItem(ReminderKeys.workoutDay(MEMBER))).toBe('false'));
+    expect(await AsyncStorage.getItem(ReminderKeys.time(MEMBER))).toBe('480');
+    expect(notificationsState.requestCount()).toBe(0);
+  });
 });
 
 describe('past mode', () => {
   it('a past plan: its kicker and title, no actions, no Start in a preview', async () => {
-    const opener = jest.fn();
-    installSessionPreview(opener);
     signIn(memberProfile());
     api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'completed' }) }));
     api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned' } }));
@@ -269,7 +405,7 @@ describe('past mode', () => {
     expect(screen.queryByRole('button', { name: en('plan.overview.end') })).toBeNull();
     expect(screen.queryByRole('button', { name: en('program.proposal.start') })).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
-    await waitFor(() => expect(opener).toHaveBeenCalledTimes(1));
-    expect(opener.mock.calls[0][0].canStart).toBe(false);
+    expect(await screen.findByText('preview:w2-1')).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: 'preview start' })).toBeNull();
   });
 });

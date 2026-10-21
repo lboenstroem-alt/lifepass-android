@@ -4,8 +4,9 @@
  * each of its three shapes (adopt, replace, switch), the 409 that asks the
  * replace question, the reminder permission and preferences (written only
  * after a successful adopt), the refusals, Not now and Discard, the
- * collapsed outcomes, Change days redrawing the card, and an outcome
- * decided in the weeks screen.
+ * collapsed outcomes, Change days redrawing the card, an outcome decided
+ * in the weeks screen, and the reminder choice it lends that screen (only
+ * while the card is on screen).
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NavigationContainer } from '@react-navigation/native';
@@ -20,19 +21,26 @@ import { resetUiKit, UiKitProvider } from '../../../../components/ui';
 import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
 import { decodeHealthDay, decodeHealthProposal, ReminderKeys, useHealthStore } from '../../../../health';
 import { translate } from '../../../../i18n';
+import { setAnalyticsObserver } from '../../../../lib/analytics';
 import { useIntentStore } from '../../../../stores/intentStore';
 import { ChangeDaysHost } from '../../days';
 import { readAdoptedBannerKey, reminderDeniedKey } from '../../shell/adoptedBanner';
 import { dayJSON, freshPlan, MEMBER, recordAnalytics, settle, signIn, TODAY } from '../../__tests__/planFixtures';
 import ProgramProposalCard, { type ProgramProposalCardProps } from '../ProgramProposalCard';
-import { installSessionPreview, resetSessionPreviewForTests } from '../../programOverview/sessionPreview';
-import { reportProposalOutcome, resetProposalBridges } from '../proposalActions';
+import { setPreviewInstalled } from '../../programOverview/__tests__/fakePreviewSheet';
+import { reminderDraft, reportProposalOutcome, resetProposalBridges } from '../proposalActions';
 
 jest.mock('@gorhom/bottom-sheet', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require('../../../../components/ui/testing/bottomSheetMock').bottomSheetModule,
 );
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
+// PLAN-2's sheet is on its own branch: a stand-in that keeps its promises.
+jest.mock('../../programOverview/sessionPreview', () => {
+  const actual = jest.requireActual('../../programOverview/sessionPreview');
+  const fake = jest.requireActual('../../programOverview/__tests__/fakePreviewSheet');
+  return { ...actual, useSessionPreview: (testID?: string) => actual.useSessionPreview(testID, fake.installedSheet()) };
+});
 
 stubApiClientPerTest();
 
@@ -105,7 +113,7 @@ async function renderCard(props: Partial<ProgramProposalCardProps> = {}) {
 beforeEach(() => {
   freshPlan();
   resetProposalBridges();
-  resetSessionPreviewForTests();
+  setPreviewInstalled(true);
   bottomSheetMock.reset();
   resetUiKit();
   notificationsState.reset();
@@ -154,19 +162,19 @@ describe('what it shows', () => {
   });
 
   it('a session row opens its preview (no Start from a proposal); a rest row is not a button', async () => {
-    const opener = jest.fn();
-    installSessionPreview(opener);
-    api.on('GET', '/health/sessions/s-1', Reply.ok({ session: { id: 's-1', kind: 'strength', title: 'Legs', blocks: [] } }));
+    api.on('GET', '/health/sessions/s-1', Reply.ok({ session: { id: 's-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Legs', blocks: [] } }));
     setDay();
     await renderCard();
     expect(screen.getByRole('button', { name: 'Mon, Legs, 40 min' })).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: 'Tue, Rest day' })).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Mon, Legs, 40 min' }));
-    await waitFor(() => expect(opener).toHaveBeenCalledTimes(1));
-    expect(opener.mock.calls[0][0]).toMatchObject({ canStart: false, session: { id: 's-1' } });
+    expect(await screen.findByText('preview:s-1')).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: 'preview start' })).toBeNull();
+    expect(api.sent('/health/sessions/s-1', 'GET').query.locale).toBe('en');
   });
 
-  it('with no preview installed the rows are not buttons at all', async () => {
+  it("until PLAN-2's sheet is merged the rows are not buttons at all", async () => {
+    setPreviewInstalled(false);
     setDay();
     await renderCard();
     expect(screen.queryByRole('button', { name: 'Mon, Legs, 40 min' })).toBeNull();
@@ -181,11 +189,72 @@ describe('what it shows', () => {
     expect(screen.queryByText(en('program.proposal.saved'))).toBeNull();
   });
 
-  it('See all weeks opens the programme overview in proposal mode', async () => {
+  it("See all weeks opens the programme overview in proposal mode, as this card's", async () => {
     setDay();
     await renderCard();
     await fireEvent.press(button('program.proposal.see_all'));
-    expect(await screen.findByText(`route:ProgramOverview:${JSON.stringify({ programId: PROPOSAL, mode: 'proposal' })}`)).toBeOnTheScreen();
+    expect(
+      await screen.findByText(`route:ProgramOverview:${JSON.stringify({ programId: PROPOSAL, mode: 'proposal', fromCard: 'plan' })}`),
+    ).toBeOnTheScreen();
+  });
+
+  it('waits for the stored choice: nothing drawn at the defaults first, so a toggle stored off never flips', async () => {
+    await AsyncStorage.multiSet([
+      [ReminderKeys.workoutDay(MEMBER), 'false'],
+      [ReminderKeys.time(MEMBER), '480'],
+    ]);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // The storage mock's getItem is a jest.fn already: hold its own implementation back until `release`.
+    const getItem = jest.mocked(AsyncStorage.getItem);
+    const read = getItem.getMockImplementation()!;
+    getItem.mockImplementation((...args) => gate.then(() => read(...args)));
+    try {
+      setDay();
+      await renderCard();
+      expect(screen.queryByTestId('program.proposal')).toBeNull();
+      expect(screen.queryByRole('switch')).toBeNull();
+
+      await act(async () => {
+        release();
+        await settle();
+      });
+      expect(screen.getByRole('switch', { name: en('program.proposal.reminders') }).props.accessibilityState.checked).toBe(false);
+      expect(screen.getByText('08:00')).toBeOnTheScreen();
+    } finally {
+      getItem.mockImplementation(read);
+    }
+  });
+});
+
+describe("the reminder choice the weeks screen's Start sends", () => {
+  it('is the card\'s toggle while the card is on screen, noted again as See all weeks opens', async () => {
+    setDay();
+    await renderCard();
+    expect(reminderDraft(PROPOSAL)).toEqual({ remindersOn: true, minutes: 420 });
+    await fireEvent.press(screen.getByRole('switch', { name: en('program.proposal.reminders') }));
+    await fireEvent.press(button('program.proposal.see_all'));
+    expect(reminderDraft(PROPOSAL)).toEqual({ remindersOn: false, minutes: 420 });
+  });
+
+  it('goes with the card: toggled off, then Not now in the Coach, nothing is remembered', async () => {
+    setDay();
+    await renderCard({ palette: 'coach' });
+    await fireEvent.press(screen.getByRole('switch', { name: en('program.proposal.reminders') }));
+    expect(reminderDraft(PROPOSAL)).toEqual({ remindersOn: false, minutes: 420 });
+    await fireEvent.press(button('program.proposal.not_now'));
+    expect(screen.getByText(en('program.proposal.saved'))).toBeOnTheScreen();
+    expect(reminderDraft(PROPOSAL)).toBeNull();
+  });
+
+  it('goes when the card unmounts', async () => {
+    setDay();
+    await renderCard();
+    expect(reminderDraft(PROPOSAL)).not.toBeNull();
+    await act(async () => screen.unmount());
+    expect(reminderDraft(PROPOSAL)).toBeNull();
   });
 });
 
@@ -289,6 +358,21 @@ describe('Start', () => {
     expect(await AsyncStorage.getItem(ReminderKeys.workoutDay(MEMBER))).toBeNull();
     expect(await AsyncStorage.getItem(reminderDeniedKey(MEMBER))).toBeNull();
     expect(useIntentStore.getState().pendingPlanAction).toBeNull();
+  });
+
+  it('once the server has adopted, bookkeeping that throws never turns the start into a failure', async () => {
+    setAnalyticsObserver((event) => {
+      if (event === 'program_adopted') throw new Error('analytics param refused');
+    });
+    api.on('POST', adoptPath, adopted('2026-10-22'));
+    setDay();
+    await renderCard({ palette: 'coach' });
+    await fireEvent.press(button('program.proposal.start'));
+    expect(await screen.findByText(en('program.proposal.started'))).toBeOnTheScreen();
+    expect(screen.queryByText(en('common.error_body'))).toBeNull();
+    expect(useIntentStore.getState().pendingPlanAction?.action).toEqual({ kind: 'showAdoptedBanner', startsOn: '2026-10-22' });
+    expect(useIntentStore.getState().pendingTab).toBe('Plan');
+    expect(api.sentAll(adoptPath, 'POST')).toHaveLength(1);
   });
 
   it('a stale revision keeps the card with its line', async () => {
