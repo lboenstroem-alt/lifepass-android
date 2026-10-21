@@ -411,3 +411,54 @@ describe('a session with no blocks', () => {
     expect(screen.queryByTestId('runner.nextSetLine')).toBeNull();
   });
 });
+
+describe('narrow phones (360 dp): what fits on one line', () => {
+  function layout(testID: string, width: number): Promise<void> {
+    return fireEvent(screen.getByTestId(testID), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width, height: 64 } } });
+  }
+
+  it('a set with a kg column stacks under its label, the two steppers side by side where they fit', async () => {
+    await show(runner());
+    // Before anything is measured: the stacked row, controls side by side.
+    expect(screen.getByTestId('runner.set.0.0.stacked')).toBeTruthy();
+    await layout('runner.set.0.0.doseControl', 140);
+    await layout('runner.set.0.0.kgControl', 140);
+    // 360 dp less the page's 20 + 20, the row's 3 + 3 margin and 12 + 12 padding: 290 inside.
+    await layout('runner.set.0.0', 314);
+    expect(screen.getByTestId('runner.set.0.0.controlsSideBySide')).toBeTruthy();
+    await layout('runner.set.0.1.doseControl', 140);
+    await layout('runner.set.0.1.kgControl', 152);
+    await layout('runner.set.0.1', 314);
+    expect(screen.getByTestId('runner.set.0.1.controlsStacked')).toBeTruthy();
+    // A wide tablet: everything on one line.
+    await layout('runner.set.0.2.doseControl', 140);
+    await layout('runner.set.0.2.kgControl', 140);
+    await layout('runner.set.0.2', 440);
+    expect(screen.getByTestId('runner.set.0.2.oneLine')).toBeTruthy();
+  });
+
+  it('a set without one stays on one line', async () => {
+    const controller = runner();
+    controller.advance();
+    await show(controller);
+    expect(screen.getByTestId('runner.set.1.0.oneLine')).toBeTruthy();
+    await layout('runner.set.1.0.doseControl', 140);
+    await layout('runner.set.1.0', 314);
+    expect(screen.getByTestId('runner.set.1.0.oneLine')).toBeTruthy();
+  });
+
+  it('the rest bar puts the countdown over its buttons unless the line holds both', async () => {
+    const controller = runner();
+    await show(controller);
+    await fireEvent.press(screen.getByTestId('runner.primary'));
+    const direction = () => StyleSheet.flatten(screen.getByTestId('runner.restBar').props.style).flexDirection;
+    expect(direction()).toBeUndefined();
+    await layout('runner.restBar.countdownPart', 140);
+    await layout('runner.restBar.buttons', 218);
+    await layout('runner.restBar', 360);
+    expect(direction()).toBeUndefined();
+    // 140 + 4 + 218 and two gaps of 10, inside 16 + 16 padding: 414.
+    await layout('runner.restBar', 414);
+    expect(direction()).toBe('row');
+  });
+});

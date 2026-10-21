@@ -299,12 +299,20 @@ export default function RunnerSetRow({
 
   // The controls, each measured where it is drawn.
   const dose = (
-    <View onLayout={fit.onPartLayout('dose')} style={accessibilityLayout ? styles.partStretched : styles.part}>
+    <View
+      onLayout={fit.onPartLayout('dose')}
+      style={accessibilityLayout ? styles.partStretched : styles.part}
+      testID={`${testID}.doseControl`}
+    >
       {doseControl()}
     </View>
   );
   const kg = loads ? (
-    <View onLayout={fit.onPartLayout('kg')} style={accessibilityLayout ? styles.partStretched : styles.part}>
+    <View
+      onLayout={fit.onPartLayout('kg')}
+      style={accessibilityLayout ? styles.partStretched : styles.part}
+      testID={`${testID}.kgControl`}
+    >
       {kgControl()}
     </View>
   ) : null;
@@ -332,7 +340,7 @@ export default function RunnerSetRow({
       style={[styles.row, isNext && styles.next, isSkippedSet && styles.dimmed]}
     >
       {wide ? (
-        <View style={styles.wideLine}>
+        <View style={styles.wideLine} testID={`${testID}.oneLine`}>
           <View style={styles.labelColumn}>{setLabel}</View>
           <View style={styles.spacer} />
           {dose}
@@ -340,13 +348,16 @@ export default function RunnerSetRow({
           {checkButton}
         </View>
       ) : (
-        <View style={styles.stacked}>
+        <View style={styles.stacked} testID={`${testID}.stacked`}>
           <View style={styles.topLine}>
             {setLabel}
             <View style={styles.spacer} />
             {checkButton}
           </View>
-          <View style={sideBySide ? styles.controlsRow : styles.controlsColumn}>
+          <View
+            style={sideBySide ? styles.controlsRow : styles.controlsColumn}
+            testID={`${testID}.${sideBySide ? 'controlsSideBySide' : 'controlsStacked'}`}
+          >
             {dose}
             {kg}
           </View>

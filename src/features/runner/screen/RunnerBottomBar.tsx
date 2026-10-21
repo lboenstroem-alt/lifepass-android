@@ -150,7 +150,7 @@ function RestBar({ controller, countdownRef }: { controller: RunnerController; c
   const oneLine = fitsInRow(fit, inner, ['countdown', 'buttons'], { gap: 10, fixed: 4, fixedCount: 1, fallback: false });
 
   const countdown = (
-    <View onLayout={fit.onPartLayout('countdown')} style={styles.countdown}>
+    <View onLayout={fit.onPartLayout('countdown')} style={styles.countdown} testID="runner.restBar.countdownPart">
       <RestRing fraction={controller.restFraction} />
       <View
         ref={countdownRef}
@@ -179,7 +179,7 @@ function RestBar({ controller, countdownRef }: { controller: RunnerController; c
   );
 
   const buttons = (
-    <View onLayout={fit.onPartLayout('buttons')} style={styles.restButtons}>
+    <View onLayout={fit.onPartLayout('buttons')} style={styles.restButtons} testID="runner.restBar.buttons">
       <RestIconButton
         icon="rewind-15"
         label={t('runner.rest_minus')}
