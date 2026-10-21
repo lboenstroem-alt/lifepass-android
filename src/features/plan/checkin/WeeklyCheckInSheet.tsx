@@ -19,6 +19,14 @@
  * Offline says the action needs a connection; a refusal for want of a
  * membership closes the sheet (the gate is what answers it).
  *
+ * THE MEMBER CAN CLOSE IT WHILE IT SAVES, as on iOS (no
+ * `interactiveDismissDisabled` there): the request runs on, the caller's
+ * `onSaved` / `onWeightLogged` still re-reads the day, and what the answer
+ * means beyond this sheet (the "changed" toast, a gate) still happens. Only
+ * what the sheet itself would draw (the review step, an error line) is
+ * dropped once it is closing or gone. The `saving` ref is what stops a
+ * second POST from a double tap.
+ *
  * Controlled, like every sheet: `visible`, and `onClose` when the member or
  * the sheet asks to close. Each opening starts afresh (its fields, its key,
  * the first step), so a caller need not remount it.
@@ -26,7 +34,7 @@
  *   <WeeklyCheckInSheet visible={open} mode="weightOnly" weighIn={day?.weighIn ?? null}
  *     checkIn={day?.checkIn ?? null} onClose={() => setOpen(false)} onWeightLogged={reload} />
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   Animated,
@@ -134,9 +142,18 @@ function CheckInPresentation({
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [review, setReview] = useState<CheckinResponse['review']>(null);
 
-  const idempotencyKey = useRef(newIdempotencyKey());
+  // One key per presentation, minted once (a lazy initial state, not a new
+  // UUID thrown away on every render); renewed only by
+  // `health_measurement_deleted`.
+  const [initialKey] = useState(newIdempotencyKey);
+  const idempotencyKey = useRef(initialKey);
   const saving = useRef(false);
   const alive = useRef(true);
+  /** False once the member or the sheet has closed it (it may still be sliding away). */
+  const shown = useRef(visible);
+  useLayoutEffect(() => {
+    shown.current = visible;
+  }, [visible]);
   const titleRef = useRef<Text>(null);
   const reviewTitleRef = useRef<Text>(null);
   const fade = useRef(new Animated.Value(1)).current;
@@ -159,7 +176,7 @@ function CheckInPresentation({
   const weightError = valid ? null : t('body.err.weight');
   const errorText = errorKey ? t(errorKey) : null;
 
-  useAnnounceChange(weightError);
+  useSettledAnnouncement(weightError, form.weightText);
   useAnnounceChange(errorText);
 
   // ---- The review step's arrival: cross-fade, then TalkBack onto its title.
@@ -180,11 +197,6 @@ function CheckInPresentation({
   }, [review]);
 
   // ---- Actions
-
-  const close = () => {
-    if (saving.current) return;
-    onClose();
-  };
 
   const save = async () => {
     if (saving.current || !canSave) return;
@@ -215,18 +227,27 @@ function CheckInPresentation({
       track('weekly_review_viewed');
       finish();
       onSaved?.(response);
-      if (!alive.current) return;
+      // Closed while it saved: the caller has its answer; nothing to draw.
+      if (!alive.current || !shown.current) return;
       if (response.review) setReview(response.review);
       else onClose();
     } catch (error) {
       finish();
-      if (alive.current) handleSaveError(error);
+      handleSaveError(error);
     }
   };
 
+  /**
+   * iOS's order. The store's part (the toast, the gate) happens even when the
+   * member has closed the sheet meanwhile; the sheet's own lines only while
+   * it is up.
+   */
   function handleSaveError(error: unknown): void {
+    const showError = (key: string) => {
+      if (alive.current && shown.current) setErrorKey(key);
+    };
     if (!isApiError(error)) {
-      setErrorKey('common.error_body');
+      showError('common.error_body');
       return;
     }
     if (isCancellation(error)) return;
@@ -238,12 +259,12 @@ function CheckInPresentation({
       return;
     }
     if (isOffline(error)) {
-      setErrorKey('health.offline.action_hint');
+      showError('health.offline.action_hint');
       return;
     }
     const outcome = useHealthStore.getState().handle(error, { foreground: true });
     if (outcome === 'gate') onClose();
-    else setErrorKey('common.error_body');
+    else showError('common.error_body');
   }
 
   const toggleSkip = () => {
@@ -261,9 +282,8 @@ function CheckInPresentation({
   return (
     <Sheet
       visible={visible}
-      onClose={close}
+      onClose={onClose}
       onClosed={onClosed}
-      busy={isSaving}
       fullHeight
       initialFocusRef={titleRef}
       testID={testID}
@@ -303,7 +323,6 @@ function CheckInPresentation({
               spokenUnit={t('a11y.unit.kg')}
               decreaseLabel={t('a11y.decrease_weight')}
               increaseLabel={t('a11y.increase_weight')}
-              invalid={!valid}
               dimmed={form.weightSkipped}
               // A tap on the dimmed field brings the weight back (iOS onTapGesture).
               onFocus={() => {
@@ -495,7 +514,7 @@ function RatingRow({
   );
 }
 
-/** Says a line that appears where the member's focus is not (an error under a field). */
+/** Says a line that appears where the member's focus is not (an error after a Save). */
 function useAnnounceChange(text: string | null): void {
   const previous = useRef(text);
   useEffect(() => {
@@ -503,6 +522,33 @@ function useAnnounceChange(text: string | null): void {
     previous.current = text;
     if (text) announce(text);
   }, [text]);
+}
+
+/** How long the field must rest on an out-of-range value before TalkBack says so. */
+const SETTLE_MS = 1000;
+
+/**
+ * The range error under the weight field, said once the member has stopped
+ * typing. While a value is typed it flips between valid and not on almost
+ * every key ("" is valid, "7" is not, "72" is again), and saying it then
+ * would talk over TalkBack reading the keys back. iOS shows the line without
+ * announcing it; here it is said once it has stood for a second, and again
+ * only after it has gone and come back. Not on opening.
+ */
+function useSettledAnnouncement(text: string | null, input: string): void {
+  const said = useRef(text);
+  useEffect(() => {
+    if (!text) {
+      said.current = null;
+      return undefined;
+    }
+    if (said.current === text) return undefined;
+    const timer = setTimeout(() => {
+      said.current = text;
+      announce(text);
+    }, SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [text, input]);
 }
 
 const styles = StyleSheet.create({

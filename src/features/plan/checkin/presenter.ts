@@ -75,11 +75,6 @@ export function attachWeeklyCheckInHost(): () => void {
   };
 }
 
-/** Whether a host is mounted to draw what `openWeeklyCheckIn` asks for. */
-export function isWeeklyCheckInHostMounted(): boolean {
-  return hostsMounted > 0;
-}
-
 /** Tests: nothing showing. */
 export function resetWeeklyCheckInPresenterForTests(): void {
   useWeeklyCheckInPresenter.setState({ request: null, visible: false });

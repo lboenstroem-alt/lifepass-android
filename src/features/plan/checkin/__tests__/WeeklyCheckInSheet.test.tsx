@@ -2,16 +2,19 @@
  * The weekly check-in sheet on screen, opened the way Plan opens it
  * (`openWeeklyCheckIn` drawn by the review slot's host), and in Body and
  * goals' Log weight mode: what it opens with, what OP-23 and OP-24 are sent,
- * the cross-fade to the fresh review, and every refusal (offline, a deleted
- * weigh-in, the membership gate, anything else).
+ * the cross-fade to the fresh review, every refusal (offline, a deleted
+ * weigh-in, the membership gate, anything else), a close while it saves, and
+ * when TalkBack hears the range error.
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { api, Reply } from '@test/server';
+import { api, Reply, type StubReply } from '@test/server';
+import { AccessibilityInfo } from 'react-native';
 
 import { expectSentToMatchContract, stubApiClientPerTest } from '../../../../api/testing';
 import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
 import { useHealthStore, type CheckInState, type WeighInState } from '../../../../health';
 import { translate } from '../../../../i18n';
+import { colors } from '../../../../theme';
 import { recordAnalytics, freshPlan, settle, signIn } from '../../__tests__/planFixtures';
 import {
   openWeeklyCheckIn,
@@ -316,6 +319,51 @@ describe('the weekly check-in, from Plan', () => {
     expect(api.sent('/health/checkin', 'POST').headers['idempotency-key']).not.toBe(first);
   });
 
+  it('the member can close it while it saves, as on iOS: the save runs on, the day is read again, nothing more is drawn', async () => {
+    const events = recordAnalytics();
+    today();
+    let answer: (reply: StubReply) => void = () => undefined;
+    api.on('POST', '/health/checkin', () => new Promise<StubReply>((resolve) => (answer = resolve)));
+    api.on('GET', '/health', Reply.ok({ date: '2026-10-19', today: '2026-10-19' }));
+    await openFromPlan();
+    await fireEvent.press(save());
+    await waitFor(() => expect(api.sentAll('/health/checkin', 'POST')).toHaveLength(1));
+    // Nothing locks the sheet while the request is out.
+    expect(bottomSheetMock.latest()!.enablePanDownToClose).toBe(true);
+
+    await act(async () => bottomSheetMock.latest()!.onDismiss!());
+    await waitFor(() => expect(useWeeklyCheckInPresenter.getState().request).toBeNull());
+    const readsBefore = api.sentAll('/health', 'GET').length;
+
+    await act(async () => {
+      answer(checkinAnswer());
+      await settle();
+    });
+    await waitFor(() => expect(api.sentAll('/health', 'GET').length).toBeGreaterThan(readsBefore));
+    expect(events.find((e) => e.event === 'weigh_in_logged')?.params).toEqual({ with_rating: false });
+    expect(screen.queryByTestId('plan.checkin.review')).toBeNull();
+    expect(screen.queryByTestId('plan.checkin.sheet')).toBeNull();
+    // A single POST: the close did not resend anything.
+    expect(api.sentAll('/health/checkin', 'POST')).toHaveLength(1);
+  });
+
+  it('closed while it saves, a weigh-in deleted elsewhere still says the data changed', async () => {
+    today();
+    let answer: (reply: StubReply) => void = () => undefined;
+    api.on('POST', '/health/checkin', () => new Promise<StubReply>((resolve) => (answer = resolve)));
+    await openFromPlan();
+    await fireEvent.press(save());
+    await waitFor(() => expect(api.sentAll('/health/checkin', 'POST')).toHaveLength(1));
+    await act(async () => bottomSheetMock.latest()!.onDismiss!());
+    await waitFor(() => expect(useWeeklyCheckInPresenter.getState().request).toBeNull());
+
+    await act(async () => {
+      answer(Reply.problem(409, 'health_measurement_deleted'));
+      await settle();
+    });
+    await waitFor(() => expect(useHealthStore.getState().toastKey).toBe('health.err.changed'));
+  });
+
   it('nothing opens without a host', () => {
     expect(openWeeklyCheckIn('notification')).toBe(false);
     expect(useWeeklyCheckInPresenter.getState().request).toBeNull();
@@ -365,5 +413,64 @@ describe('Log weight (Body and goals)', () => {
       <WeeklyCheckInSheet visible mode="weightOnly" weighIn={null} checkIn={null} onClose={jest.fn()} onWeightLogged={jest.fn()} />,
     );
     expect(screen.getByRole('button', { name: en('body.save') })).toBeDisabled();
+  });
+});
+
+describe('the range error, for TalkBack', () => {
+  it('is said once the value has stood for a second, not on every key while typing', async () => {
+    const spoken = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
+    await render(
+      <WeeklyCheckInSheet visible weighIn={decodeWeighIn(WEIGH_IN)} checkIn={null} onClose={jest.fn()} />,
+    );
+    const input = () => screen.getByTestId('checkin.sheet.weight.input');
+    const said = () => spoken.mock.calls.filter(([text]) => text === en('body.err.weight')).length;
+    jest.useFakeTimers();
+    try {
+      // "7", then "72": out of range for a moment, then fine again. Nothing said.
+      await fireEvent.changeText(input(), '');
+      await fireEvent.changeText(input(), '7');
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      await fireEvent.changeText(input(), '72');
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(said()).toBe(0);
+
+      // "720" stands: said once, and not again while it stays wrong.
+      await fireEvent.changeText(input(), '720');
+      await act(async () => {
+        jest.advanceTimersByTime(999);
+      });
+      expect(said()).toBe(0);
+      await act(async () => {
+        jest.advanceTimersByTime(1);
+      });
+      expect(said()).toBe(1);
+      await fireEvent.changeText(input(), '7200');
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(said()).toBe(1);
+
+      // Gone and back: said again.
+      await fireEvent.changeText(input(), '72');
+      await fireEvent.changeText(input(), '7');
+      await act(async () => {
+        jest.advanceTimersByTime(1000);
+      });
+      expect(said()).toBe(2);
+    } finally {
+      jest.useRealTimers();
+      spoken.mockRestore();
+    }
+  });
+
+  it('the field keeps its border; the line under it is what says the weight is wrong (iOS)', async () => {
+    await render(<WeeklyCheckInSheet visible weighIn={null} checkIn={null} onClose={jest.fn()} />);
+    await fireEvent.changeText(screen.getByTestId('checkin.sheet.weight.input'), '301');
+    expect(screen.getByTestId('checkin.sheet.weight.error')).toHaveTextContent(en('body.err.weight'));
+    expect(screen.getByTestId('checkin.sheet.weight.field')).not.toHaveStyle({ borderColor: colors.destructive });
   });
 });
