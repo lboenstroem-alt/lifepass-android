@@ -216,9 +216,13 @@ export default function GroupPartySection({
 }
 
 /**
- * The menu's choices with the seat's current band in them: a band the venue
- * no longer lists stays named as the request carries it, never shown as
- * another band.
+ * The menu's choices with the seat's current band in them. A band the venue
+ * does not list (a guest who starts as an adult where only child and infant
+ * tickets are sold) stays named as the request carries it, never shown as
+ * another band: it is listed last so the menu can mark it and TalkBack can
+ * say it, and choosing it changes nothing (MenuPicker reports only a new
+ * value). iOS draws the same label on the trigger and leaves it out of the
+ * menu; nothing new can be sent either way.
  */
 function withCurrent<T extends { value: string; label: string; testID?: string }>(
   options: readonly T[],
