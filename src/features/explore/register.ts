@@ -1,16 +1,15 @@
 // Session hooks for Explore: what this phone must forget when the member
-// signs out, claim when they sign in, or flush when the app comes back.
+// signs out.
 //
-// Pre-created by F3 (plan 3.0, rule 7); EXPL-1 fills it in. Imported once at
-// startup by src/app/registrations.ts, so a hook registered here is in place
-// before any sign-in or sign-out can happen. The helpers and their rules are
-// in src/app/signOut.ts, for example:
+// Imported once at startup by src/app/registrations.ts, so the cleaner is in
+// place before any sign-in or sign-out can happen (src/app/signOut.ts).
 //
-//   import { registerSignOutCleaner } from '../../app/signOut';
-//
-//   registerSignOutCleaner('explore.cache', async ({ memberId }) => {
-//     await AsyncStorage.removeItem(`explore.cache.${memberId}`);
-//   });
-//
-// Nothing is registered yet.
-export {};
+// Explore's venue list holds prices resolved for the member who asked (a
+// member or pass price), so it goes with them, along with a search still on
+// its way; the next member's list is their own. The Map/List emphasis
+// (`explore.mapToggleHinted`) stays: it is about the phone, not the account
+// (iOS @AppStorage).
+import { registerSignOutCleaner } from '../../app/signOut';
+import { exploreVenues } from './exploreVenues';
+
+registerSignOutCleaner('explore.venues', () => exploreVenues.reset());
