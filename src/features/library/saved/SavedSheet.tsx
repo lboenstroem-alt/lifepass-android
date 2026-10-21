@@ -46,7 +46,9 @@
  * is what the pull was an escape hatch for.
  *
  * Mounted by whoever presents it (the Coach drawer): controlled, `visible`
- * and `onClose`, like every kit sheet.
+ * and `onClose`, like every kit sheet. Keep it mounted with that screen, not
+ * only while it is open: it opens its page after it has gone, and it comes
+ * back after a venue.
  */
 import { Ionicons } from '@expo/vector-icons';
 import type { EventListenerCallback, EventMapBase } from '@react-navigation/native';
