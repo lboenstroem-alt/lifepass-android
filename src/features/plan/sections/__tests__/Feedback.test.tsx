@@ -1,11 +1,16 @@
 /**
  * Plan's monthly feedback section (iOS PlanView `feedbackSection`): drawn
  * only with the feature, consent, today on the strip and something to draw;
- * and what each of the card's buttons does on Plan's stack.
+ * what each of the card's buttons does on Plan's stack; and a note marked
+ * seen only while Plan's first screen is the one showing.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
+import { Text } from 'react-native';
 
 import { decodeFeedbackSummary } from '../../../../api/feedback';
 import { decodeProfile } from '../../../../api/profile';
@@ -230,5 +235,65 @@ describe("the card's buttons", () => {
     expect(intents.pendingCoachProgram).toEqual({ kind: 'adjust' });
     expect(intents.pendingTab).toBe('Coach');
     expect(intents.pendingCoachPrompt).toBeNull();
+  });
+});
+
+describe('the note is seen only on screen', () => {
+  function Other() {
+    return <Text>other</Text>;
+  }
+
+  const SEEN_ANSWER = Reply.ok({ id: 'n-1', seenAt: '2026-10-12T18:00:00.000Z', dismissedAt: null });
+
+  it('a note that lands while Plan is mounted under another tab waits for Plan', async () => {
+    signIn();
+    seed();
+    api.on('POST', '/health/feedback/reports/:id', SEEN_ANSWER);
+    const ref = createNavigationContainerRef<{ Home: undefined; Plan: undefined }>();
+    const Tab = createBottomTabNavigator();
+    await render(
+      <NavigationContainer ref={ref}>
+        <Tab.Navigator screenOptions={{ headerShown: false }} initialRouteName="Plan">
+          <Tab.Screen name="Home" component={Other} />
+          <Tab.Screen name="Plan" component={FeedbackSection} />
+        </Tab.Navigator>
+      </NavigationContainer>,
+    );
+    await settle();
+    await act(async () => ref.navigate('Home'));
+    // The app came back to the front on Home; the activation read brought a note.
+    await act(async () => seed({ note: NOTE }));
+    await settle();
+    expect(screen.getByText('No meals logged this past week.', { includeHiddenElements: true })).toBeTruthy();
+    expect(api.sentAll('/health/feedback/reports/n-1', 'POST')).toHaveLength(0);
+
+    await act(async () => ref.navigate('Plan'));
+    await settle();
+    expect(api.sentAll('/health/feedback/reports/n-1', 'POST').map((r) => r.body)).toEqual([{ action: 'seen' }]);
+  });
+
+  it("a note that lands under a screen pushed on Plan waits for Plan's return", async () => {
+    signIn();
+    seed();
+    api.on('POST', '/health/feedback/reports/:id', SEEN_ANSWER);
+    const ref = createNavigationContainerRef<{ PlanMain: undefined; FeedbackReport: undefined }>();
+    const Stack = createNativeStackNavigator();
+    await render(
+      <NavigationContainer ref={ref}>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="PlanMain" component={FeedbackSection} />
+          <Stack.Screen name="FeedbackReport" component={Other} />
+        </Stack.Navigator>
+      </NavigationContainer>,
+    );
+    await settle();
+    await act(async () => ref.navigate('FeedbackReport'));
+    await act(async () => seed({ note: NOTE }));
+    await settle();
+    expect(api.sentAll('/health/feedback/reports/n-1', 'POST')).toHaveLength(0);
+
+    await act(async () => ref.goBack());
+    await settle();
+    expect(api.sentAll('/health/feedback/reports/n-1', 'POST').map((r) => r.body)).toEqual([{ action: 'seen' }]);
   });
 });

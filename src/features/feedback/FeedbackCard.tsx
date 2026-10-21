@@ -35,6 +35,14 @@ export type FeedbackCardProps = {
   onAction: (action: ShownFeedbackAction) => void;
   onDismissNote: (id: string) => void;
   onNoteSeen: (id: string) => void;
+  /**
+   * The card is on screen: Plan's tab is selected and nothing covers its
+   * first screen. Defaults to true. Android keeps a visited tab, and the
+   * screens under a pushed one, mounted, where iOS draws only what shows;
+   * a note that lands while Plan is hidden waits for this before it is
+   * marked seen.
+   */
+  onScreen?: boolean;
   onIntroClosed: () => void;
   onIncludeFood: () => void;
   onDeclineFood: () => void;
@@ -66,16 +74,18 @@ function NoteCard({
   onAction,
   onDismissNote,
   onNoteSeen,
+  onScreen = true,
 }: FeedbackCardProps & { note: FeedbackNote; message: FeedbackMessage; text: string }) {
   const { t } = useT();
   const action = resolveAction(message.action);
-  // Marked seen when it is shown (iOS `onAppear`).
+  // Marked seen when it is shown (iOS `onAppear`), and only then: a seen note
+  // is one the server no longer announces.
   const unseen = note.seenAt === null;
   useEffect(() => {
-    if (unseen) onNoteSeen(note.id);
+    if (unseen && onScreen) onNoteSeen(note.id);
     // Once per note shown; the store keeps it to once per id per session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [note.id, unseen]);
+  }, [note.id, unseen, onScreen]);
   return (
     <Card style={[styles.margin, styles.padded]} testID="feedback.note">
       <Kicker text={t('feedback.note.kicker')} />

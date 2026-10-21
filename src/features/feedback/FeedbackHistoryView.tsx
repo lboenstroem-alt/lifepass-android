@@ -33,6 +33,12 @@ import { FeedbackNewPill } from './parts';
 export type FeedbackHistoryViewProps = {
   onBack?: () => void;
   onOpen: (reportId: string) => void;
+  /**
+   * Bumped each time the list shows again after a report covered it (iOS
+   * `.task` runs again on every appearance): the first page is read again in
+   * place, so a month just opened loses its "New".
+   */
+  reloadKey?: number;
   testID?: string;
 };
 
@@ -40,7 +46,7 @@ type Phase = 'loading' | 'loaded' | 'failed';
 
 const BOTTOM_ROOM = 64;
 
-export default function FeedbackHistoryView({ onBack, onOpen, testID = 'feedback.history' }: FeedbackHistoryViewProps) {
+export default function FeedbackHistoryView({ onBack, onOpen, reloadKey = 0, testID = 'feedback.history' }: FeedbackHistoryViewProps) {
   const { t, language } = useT();
   const insets = useSafeAreaInsets();
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? insets.bottom;
@@ -51,15 +57,25 @@ export default function FeedbackHistoryView({ onBack, onOpen, testID = 'feedback
   const [isLoadingMore, setLoadingMore] = useState(false);
   const rowsRef = useRef<readonly FeedbackReportSummary[]>([]);
   const abortRef = useRef<AbortController | null>(null);
-  const loadingMoreRef = useRef(false);
+  // "Show more" in flight. A new first page (another language, a return to
+  // the list) drops it: its rows and cursor belong to the list it was asked of.
+  const moreAbortRef = useRef<AbortController | null>(null);
 
   const setAllRows = (next: readonly FeedbackReportSummary[]) => {
     rowsRef.current = next;
     setRows(next);
   };
 
+  const dropLoadMore = () => {
+    if (!moreAbortRef.current) return;
+    moreAbortRef.current.abort();
+    moreAbortRef.current = null;
+    setLoadingMore(false);
+  };
+
   const loadFirstPage = useCallback(async () => {
     abortRef.current?.abort();
+    dropLoadMore();
     const abort = new AbortController();
     abortRef.current = abort;
     const app = useAppStore.getState();
@@ -88,18 +104,23 @@ export default function FeedbackHistoryView({ onBack, onOpen, testID = 'feedback
     }
   }, [language]);
 
-  // iOS `.task(id: appState.language)`.
+  // iOS `.task(id: appState.language)`, again on every appearance (`reloadKey`).
   useEffect(() => {
     void loadFirstPage();
-    return () => abortRef.current?.abort();
-  }, [loadFirstPage]);
+    return () => {
+      abortRef.current?.abort();
+      moreAbortRef.current?.abort();
+    };
+  }, [loadFirstPage, reloadKey]);
 
   const loadMore = useCallback(async () => {
-    if (!hasMore || !cursor || loadingMoreRef.current) return;
-    loadingMoreRef.current = true;
+    if (!hasMore || !cursor || moreAbortRef.current) return;
+    const abort = new AbortController();
+    moreAbortRef.current = abort;
     setLoadingMore(true);
     try {
-      const page = await fetchFeedbackReports({ cursor, language });
+      const page = await fetchFeedbackReports({ cursor, language, signal: abort.signal });
+      if (abort.signal.aborted) return;
       const known = new Set(rowsRef.current.map((row) => row.id));
       setAllRows([...rowsRef.current, ...page.reports.filter((row) => !known.has(row.id))]);
       setCursor(page.nextCursor);
@@ -107,8 +128,11 @@ export default function FeedbackHistoryView({ onBack, onOpen, testID = 'feedback
     } catch {
       // The button stays; another tap tries again.
     } finally {
-      loadingMoreRef.current = false;
-      setLoadingMore(false);
+      // Dropped by a new first page: that already reset the button. Closed: nothing to draw.
+      if (moreAbortRef.current === abort) {
+        moreAbortRef.current = null;
+        if (!abort.signal.aborted) setLoadingMore(false);
+      }
     }
   }, [hasMore, cursor, language]);
 

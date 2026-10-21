@@ -62,6 +62,7 @@ export { default as FeedbackCard, type FeedbackCardProps } from './FeedbackCard'
 export { default as FeedbackHistorySheet, type FeedbackHistorySheetProps } from './FeedbackHistorySheet';
 export { default as FeedbackHistoryView, type FeedbackHistoryViewProps } from './FeedbackHistoryView';
 export { default as FeedbackReportView, type FeedbackReportViewProps } from './FeedbackReportView';
+export { useReappearCount, useScreenFocused } from './focus';
 
 /**
  * Whether a local safety refusal in the Coach turns food and weight out of

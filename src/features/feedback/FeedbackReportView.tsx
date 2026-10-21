@@ -56,6 +56,13 @@ export type FeedbackReportViewProps = {
   onOpenSettings?: () => void;
   /** "See past months", under a monthly report. Omitted, the link is not drawn. */
   onOpenHistory?: () => void;
+  /**
+   * Bumped each time the view shows again after something covered it (iOS
+   * `.task` runs again on every appearance): it reads again, keeping the
+   * report on screen meanwhile. Settings changed in Body and goals land
+   * here on the way back.
+   */
+  reloadKey?: number;
   testID?: string;
 };
 
@@ -97,6 +104,7 @@ export default function FeedbackReportView({
   onBack,
   onOpenSettings,
   onOpenHistory,
+  reloadKey = 0,
   testID = 'feedback.detail',
 }: FeedbackReportViewProps) {
   const { t, language } = useT();
@@ -158,11 +166,12 @@ export default function FeedbackReportView({
     }
   }, [reportId, periodMonth, language, show]);
 
-  // iOS `.task(id: appState.language)`: every word is server copy in the account language.
+  // iOS `.task(id: appState.language)`: every word is server copy in the account
+  // language, read again on every appearance (`reloadKey`).
   useEffect(() => {
     void load();
     return () => abortRef.current?.abort();
-  }, [load]);
+  }, [load, reloadKey]);
 
   const titleKey = report?.kind === 'note' ? 'feedback.detail.note_title' : 'feedback.detail.title';
 

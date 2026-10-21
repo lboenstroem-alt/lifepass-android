@@ -15,7 +15,9 @@
  *   a line's action             ../../feedback actions (Plan to its root, then
  *                               the Coach, Change days or the meal page)
  *   Hide                        the note goes now; a failed hide puts it back
- *   the note on screen          marked seen
+ *   the note on screen          marked seen, only while Plan's first screen is
+ *                               the one showing (Android keeps the tab and the
+ *                               screens under a pushed one mounted)
  *   Got it                      the intro goes for good
  *   Include food and weight     the switch, then "Food and weight are now in
  *                               your feedback." when it took
@@ -31,12 +33,14 @@ import {
   useFeedbackActionResolver,
   useFeedbackCardState,
   useFeedbackStore,
+  useScreenFocused,
   useSupportsFeedback,
 } from '../../feedback';
 import { pushPlanRoute, usePlanView } from '../shell';
 
 export default function FeedbackSection() {
   const view = usePlanView();
+  const onScreen = useScreenFocused();
   const supports = useSupportsFeedback();
   const profileId = useAppStore((s) => s.profile?.id ?? null);
   const state = useFeedbackCardState();
@@ -58,6 +62,7 @@ export default function FeedbackSection() {
       onAction={(action) => tapFeedbackAction(action, { fromPushedScreen: false })}
       onDismissNote={(id) => void store.dismissNote(id)}
       onNoteSeen={(id) => void store.markSeen(id)}
+      onScreen={onScreen}
       onIntroClosed={() => void store.dismissIntro(profileId)}
       onIncludeFood={() => {
         void store.answerFoodOffer(true, profileId).then(() => {

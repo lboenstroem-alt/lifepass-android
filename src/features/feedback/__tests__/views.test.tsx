@@ -95,6 +95,16 @@ describe('the card', () => {
     expect(calls).toEqual(['seen:n-1', 'hide:n-1', 'open:r-1', 'history']);
   });
 
+  it('the note waits until the card is on screen to be marked seen', async () => {
+    // Plan mounted but hidden (another tab, a screen pushed over it): no mark.
+    const hidden = props({ note: note() }, { onScreen: false });
+    await render(<FeedbackCard {...hidden} />);
+    expect(screen.getByText('Your nights have been short.')).toBeOnTheScreen();
+    expect(calls).toEqual([]);
+    await screen.rerender(<FeedbackCard {...hidden} onScreen />);
+    expect(calls).toEqual(['seen:n-1']);
+  });
+
   it("draws a line's action only when the rule allows it", async () => {
     await render(<FeedbackCard {...props({ note: note('log_meal') })} />);
     await fireEvent.press(screen.getByRole('button', { name: en('feedback.action.log_meal') }));
@@ -321,6 +331,45 @@ describe('past months', () => {
     expect(api.sentAll('/health/feedback/reports').map((r) => r.query.cursor ?? null)).toEqual([null, 'c-2']);
   });
 
+  it('reads its first page again in place when it shows again', async () => {
+    signIn();
+    api.on('GET', '/health/feedback/reports', Reply.ok({ data: [row('r-1', { seenAt: null })], pagination: { nextCursor: null, hasMore: false } }));
+    await render(<FeedbackHistoryView onOpen={() => undefined} reloadKey={0} />);
+    await act(settle);
+    expect(screen.getByText(en('feedback.card.new'))).toBeOnTheScreen();
+
+    // The month was opened meanwhile: it comes back without its "New", and no skeleton shows.
+    api.on('GET', '/health/feedback/reports', Reply.delayed(30, Reply.ok({ data: [row('r-1')], pagination: { nextCursor: null, hasMore: false } })));
+    await screen.rerender(<FeedbackHistoryView onOpen={() => undefined} reloadKey={1} />);
+    expect(screen.queryByLabelText(en('a11y.loading'))).toBeNull();
+    expect(screen.getAllByTestId('feedback.history.row')).toHaveLength(1);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 60)));
+    await act(settle);
+    expect(api.sentAll('/health/feedback/reports')).toHaveLength(2);
+    expect(screen.queryByText(en('feedback.card.new'))).toBeNull();
+  });
+
+  it('a "Show more" still out when the first page is read again is dropped', async () => {
+    signIn();
+    api.on('GET', '/health/feedback/reports', (request) =>
+      request.query.cursor === 'c-2'
+        ? Reply.delayed(40, Reply.ok({ data: [row('r-old')], pagination: { nextCursor: 'c-3', hasMore: true } }))
+        : Reply.ok({ data: [row('r-1'), row('r-2')], pagination: { nextCursor: 'c-2', hasMore: true } }),
+    );
+    await render(<FeedbackHistoryView onOpen={() => undefined} reloadKey={0} />);
+    await act(settle);
+    await fireEvent.press(screen.getByRole('button', { name: en('feedback.history.more') }));
+    // The list is read again (another language, a return to it) before that page lands.
+    await screen.rerender(<FeedbackHistoryView onOpen={() => undefined} reloadKey={1} />);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 80)));
+    await act(settle);
+    expect(screen.getAllByTestId('feedback.history.row')).toHaveLength(2);
+    expect(screen.queryByText('First line of r-old.')).toBeNull();
+    // The button is free again, from the new page's cursor.
+    expect(screen.getByRole('button', { name: en('feedback.history.more') })).not.toBeDisabled();
+    expect(api.sentAll('/health/feedback/reports').map((r) => r.query.cursor ?? null)).toEqual([null, 'c-2', null]);
+  });
+
   it('a failure with nothing to show offers Try again', async () => {
     signIn();
     api.on('GET', '/health/feedback/reports', Reply.problem(500, 'internal_error'));
@@ -348,6 +397,39 @@ describe("Body and goals' history sheet", () => {
     expect(screen.getByText(en('feedback.history.title').toUpperCase())).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: en('common.back') }));
     expect(closed).toBe(1);
+  });
+
+  it('keeps the list under an open report, and reads it again in place on the way back', async () => {
+    signIn();
+    api.on('GET', '/health/feedback/reports', (request) =>
+      request.query.cursor === 'c-2'
+        ? Reply.ok({ data: [{ id: 'r-2', title: 'August 2026', seenAt: '2026-09-02T10:00:00Z' }], pagination: { nextCursor: null, hasMore: false } })
+        : Reply.ok({ data: [{ id: 'r-1', title: 'September 2026' }], pagination: { nextCursor: 'c-2', hasMore: true } }),
+    );
+    api.on('GET', '/health/feedback/reports/:id', Reply.ok(reportJSON({ id: 'r-2', title: 'August 2026', seenAt: '2026-09-02T10:00:00Z' })));
+    await render(<FeedbackHistorySheet visible onClose={() => undefined} />);
+    await act(settle);
+    await fireEvent.press(screen.getByRole('button', { name: en('feedback.history.more') }));
+    await act(settle);
+    await fireEvent.press(screen.getByRole('button', { name: 'August 2026' }));
+    await act(settle);
+    expect(screen.getByRole('header', { name: 'August 2026' })).toBeOnTheScreen();
+    // Still there under the report, out of reach of touch and TalkBack.
+    expect(screen.getAllByTestId('feedback.history.row', { includeHiddenElements: true })).toHaveLength(2);
+    expect(screen.queryAllByTestId('feedback.history.row')).toHaveLength(0);
+
+    api.on(
+      'GET',
+      '/health/feedback/reports',
+      Reply.delayed(30, Reply.ok({ data: [{ id: 'r-1', title: 'September 2026' }], pagination: { nextCursor: 'c-2', hasMore: true } })),
+    );
+    await fireEvent.press(screen.getByRole('button', { name: en('common.back') }));
+    // Back at once with its rows, no skeleton, while the first page is read again.
+    expect(screen.queryByLabelText(en('a11y.loading'))).toBeNull();
+    expect(screen.getAllByTestId('feedback.history.row')).toHaveLength(2);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 60)));
+    await act(settle);
+    expect(api.sentAll('/health/feedback/reports').map((r) => r.query.cursor ?? null)).toEqual([null, 'c-2', null]);
   });
 });
 

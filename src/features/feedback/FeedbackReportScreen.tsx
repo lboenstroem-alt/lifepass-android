@@ -11,14 +11,20 @@
  *
  * `periodMonth` without `reportId` opens that month's report; neither opens
  * the current one. The hardware back is the stack's own.
+ *
+ * The screen stays mounted under anything pushed over it, so it reads again
+ * each time it shows again (iOS `.task` on every appearance): food and weight
+ * switched in Body and goals change the report on the way back.
  */
 import type { SharedRouteProps } from '../../navigation/types';
 
 import { tapFeedbackAction, useFeedbackActionResolver } from './actions';
 import FeedbackReportView from './FeedbackReportView';
+import { useReappearCount } from './focus';
 
 export default function FeedbackReportScreen({ route, navigation }: SharedRouteProps<'FeedbackReport'>) {
   const resolveAction = useFeedbackActionResolver();
+  const reloadKey = useReappearCount();
   return (
     <FeedbackReportView
       reportId={route.params?.reportId ?? null}
@@ -28,6 +34,7 @@ export default function FeedbackReportScreen({ route, navigation }: SharedRouteP
       onBack={() => navigation.goBack()}
       onOpenSettings={() => navigation.navigate('BodyAndGoals', { anchor: 'feedback' })}
       onOpenHistory={() => navigation.push('FeedbackHistory')}
+      reloadKey={reloadKey}
       testID="feedback.detail"
     />
   );
