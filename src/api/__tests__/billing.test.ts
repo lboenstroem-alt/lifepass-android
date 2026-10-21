@@ -30,9 +30,9 @@ const company = {
     status: 'active',
     amountIsk: 0,
     currentPeriodEndsAt: '2026-10-01T00:00:00Z',
-    companyName: 'KPMG',
-    memberPriceIsk: 14900,
-    subsidyIsk: 14900,
+    companyName: 'Acme ehf.',
+    memberPriceIsk: 12000,
+    subsidyIsk: 12000,
   },
   paymentMethod: null,
 };
@@ -62,9 +62,9 @@ describe('the billing summary', () => {
     expect(billingAmountIsk(covered.subscription)).toBe(0);
     expect(covered.paymentMethod).toBeNull(); // no card yet is a state, not an error
     expect(billingCompanyDetails(covered.subscription)).toEqual({
-      companyName: 'KPMG',
-      memberPriceIsk: 14900,
-      subsidyIsk: 14900,
+      companyName: 'Acme ehf.',
+      memberPriceIsk: 12000,
+      subsidyIsk: 12000,
     });
 
     const future = decodeBillingSummary({

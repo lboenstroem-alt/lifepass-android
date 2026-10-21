@@ -53,9 +53,9 @@ const companyCovered = (paymentMethod: object | null = null) => ({
     status: 'active',
     amountIsk: 0,
     currentPeriodEndsAt: PERIOD_END,
-    companyName: 'KPMG',
-    memberPriceIsk: 14900,
-    subsidyIsk: 14900,
+    companyName: 'Acme ehf.',
+    memberPriceIsk: 12000,
+    subsidyIsk: 12000,
   },
   paymentMethod,
 });
@@ -142,7 +142,7 @@ describe('what it says', () => {
     api.on('GET', '/billing/summary', Reply.ok(companyCovered()));
     await show();
     expect(rowText('youPay')).toBe('You pay | Nothing — fully covered');
-    expect(rowText('employer')).toBe('Employer | KPMG covers ISK 14,900 of ISK 14,900');
+    expect(rowText('employer')).toBe('Employer | Acme ehf. covers ISK 12,000 of ISK 12,000');
     expect(rowText('card')).toBe('Payment card | No card on file');
     expect(screen.getByRole('button', { name: 'Add card' })).toBeTruthy();
     expect(screen.queryByTestId('billing.card.remove')).toBeNull();

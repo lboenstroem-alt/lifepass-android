@@ -45,12 +45,12 @@ describe('billingView', () => {
 
   it('a co-pay share with its employer arithmetic, in Icelandic', () => {
     const view = billingView(
-      summary({ kind: 'company', ...details, amountIsk: 4900, companyName: 'IKEA', memberPriceIsk: 14900, subsidyIsk: 10000 }, card),
+      summary({ kind: 'company', ...details, amountIsk: 3000, companyName: 'Acme ehf.', memberPriceIsk: 12000, subsidyIsk: 9000 }, card),
       'is',
     )!;
     expect(view.rows).toEqual([
-      { id: 'youPay', label: 'Þú greiðir', value: 'ISK 4,900 / mán.' },
-      { id: 'employer', label: 'Vinnuveitandi', value: 'IKEA greiðir ISK 10,000 af ISK 14,900' },
+      { id: 'youPay', label: 'Þú greiðir', value: 'ISK 3,000 / mán.' },
+      { id: 'employer', label: 'Vinnuveitandi', value: 'Acme ehf. greiðir ISK 9,000 af ISK 12,000' },
       { id: 'card', label: 'Greiðslukort', value: 'Visa ···· 4242' },
     ]);
     // A share is charged to the card: Remove is hidden.
