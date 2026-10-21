@@ -1,11 +1,27 @@
-// @f4-stub (plan 3.0.3): a Plan section, filled by PLAN-4; mounted by PLAN-1.
-//
-// A proposed programme waiting to be adopted.
-// The section reads what it needs itself (the health store, the app store),
-// so Plan mounts it with no props. Keep the default export; replace the body
-// (and this marker). A filler may add OPTIONAL props, never required ones.
-// Renders nothing until PLAN-4 lands.
+/* eslint lifepass/no-literal-copy: "error" */
+/**
+ * Plan's proposal section (PLAN-4, mounted by PLAN-1): the programme the
+ * Coach built, waiting to be started, in Plan's paper palette (iOS
+ * PlanView `proposalCard`). PLAN-1 decides WHERE it stands: as the intro
+ * section with no live plan, and in Today's place after a finished block (a
+ * member who built the next block and tapped Not now is never invited to
+ * build one again). With a live plan Plan shows the "A new plan is ready"
+ * row instead, whose Review opens the programme overview in proposal mode.
+ *
+ * Every outcome reads Plan again; Start also lands the adopted banner.
+ */
+import { StyleSheet, View } from 'react-native';
+
+import ProgramProposalCard from '../proposal/ProgramProposalCard';
 
 export default function ProposalSection() {
-  return null;
+  return (
+    <View style={styles.inset}>
+      <ProgramProposalCard palette="plan" testID="plan.proposal" />
+    </View>
+  );
 }
+
+const styles = StyleSheet.create({
+  inset: { paddingHorizontal: 20 },
+});
