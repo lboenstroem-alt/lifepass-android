@@ -12,6 +12,7 @@ import { act, fireEvent, screen, within } from '@testing-library/react-native';
 import { notificationsState } from '@test/mocks/expoNotifications';
 import { api, Reply } from '@test/server';
 import * as Sharing from 'expo-sharing';
+import { StyleSheet } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { bottomSheetMock } from '../../../components/ui/testing/bottomSheetMock';
@@ -182,6 +183,11 @@ describe('the sections', () => {
     const toggle = screen.getByTestId('bodygoals.tracking.switch');
     expect(toggle.props.accessibilityState).toMatchObject({ checked: false, disabled: true });
     expect(toggle.props.accessibilityHint).toBe('Needs an active membership');
+    // Only the switch is dim (iOS disables the Toggle alone): the title and
+    // the line that says why stay at full strength.
+    expect(StyleSheet.flatten(toggle.props.style).opacity).toBeUndefined();
+    expect(StyleSheet.flatten(screen.getByTestId('bodygoals.tracking.switch.control', { includeHiddenElements: true }).props.style).opacity).toBe(0.45);
+    expect(screen.getByText('Needs an active membership')).toBeTruthy();
   });
 
   it('a minor sees the under-18 notice and the footer, nothing else', async () => {
