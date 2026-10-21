@@ -3,10 +3,11 @@
  *
  * Every write is `POST /health/sessions/{id}` with a FRESH Idempotency-Key
  * per tap (a retry of the same tap would reuse it; the card has none). The
- * answer patches the day, the week and the upcoming rows through the shell
- * (`applySessionAction`, iOS `apply`); a refusal goes through the health
- * store's one problem table, and the two that mean "what you see is stale"
- * (changed elsewhere, or the membership gate) read the day again.
+ * answer goes to the card's host (`onApplied`, iOS `onActionResult`), which
+ * patches the day, the week and the upcoming rows; a refusal goes through
+ * the health store's one problem table, and the two that mean "what you see
+ * is stale" (changed elsewhere, or the membership gate) ask the host to read
+ * the day again (`onReload`, iOS `onReload`).
  *
  * ONE ACTION AT A TIME. `useBusyAction` holds the key of the action in
  * flight: a second tap, on the same button or another, does nothing until
@@ -20,11 +21,11 @@ import {
   postSessionAction,
   useHealthStore,
   type SessionActionBody,
+  type SessionActionResponse,
   type SessionView,
 } from '../../../health';
 import type { Lang } from '../../../i18n';
 import { track, type AnalyticsEvent, type AnalyticsParams } from '../../../lib/analytics';
-import { applySessionAction, reloadPlan } from '../shell';
 
 export interface CardActionRequest {
   readonly sessionId: string;
@@ -39,15 +40,23 @@ export interface CardActionRequest {
 /** How a card action ended, for tests and for the caller's own follow-up. */
 export type CardActionOutcome = 'applied' | 'reloaded' | 'refused' | 'cancelled';
 
+/** Where a card action's answer goes: the card's host (TodayCardHandlers). */
+export interface CardActionSink {
+  /** The server took it: patch day, week and upcoming. */
+  readonly onApplied: (response: SessionActionResponse) => void;
+  /** What the card shows is stale: read again. */
+  readonly onReload: () => void;
+}
+
 /**
- * Sends one card action and applies its answer. Never throws: a refusal is
- * the store's to explain (its toast), and a stale card reads again.
+ * Sends one card action and hands its answer to `sink`. Never throws: a
+ * refusal is the store's to explain (its toast), and a stale card reads again.
  */
-export async function sendCardAction(request: CardActionRequest): Promise<CardActionOutcome> {
+export async function sendCardAction(request: CardActionRequest, sink: CardActionSink): Promise<CardActionOutcome> {
   try {
     const response = await postSessionAction(request.sessionId, request.body, newIdempotencyKey());
     track(request.event, request.params ?? {});
-    applySessionAction(response);
+    sink.onApplied(response);
     if (request.toastKey) useHealthStore.getState().setToast(request.toastKey);
     return 'applied';
   } catch (error) {
@@ -55,13 +64,13 @@ export async function sendCardAction(request: CardActionRequest): Promise<CardAc
       if (error.isCancellation) return 'cancelled';
       const outcome = useHealthStore.getState().handle(error, { foreground: true });
       if (outcome === 'changedElsewhere' || outcome === 'gate') {
-        void reloadPlan({ force: true });
+        sink.onReload();
         return 'reloaded';
       }
       return 'refused';
     }
     useHealthStore.getState().setToast('health.err.changed');
-    void reloadPlan({ force: true });
+    sink.onReload();
     return 'reloaded';
   }
 }

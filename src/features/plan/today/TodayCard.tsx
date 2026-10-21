@@ -76,10 +76,23 @@ export type TodayCardProps = {
   handlers: TodayCardHandlers;
 };
 
-/** One sheet at a time, chosen by a value rather than by five booleans. */
-type TodaySheet =
+/**
+ * One sheet at a time, chosen by a value rather than by five booleans.
+ *
+ * EVERY OPENING IS A NEW SHEET. `opening` counts presentations and keys the
+ * sheet, so each one mounts fresh (iOS `.sheet(item:)` builds a new view,
+ * with new @State, every time): a No energy sheet cancelled in skip mode on
+ * Tuesday never reopens in skip mode with Tuesday's form, busy flag or
+ * Idempotency-Key on today's card. It also scopes each sheet's close to
+ * itself: an answer that lands after the member opened another sheet applies,
+ * and leaves the newer sheet up.
+ */
+type TodaySheet = SheetRequest & { readonly opening: number };
+
+/** A sheet as the taps ask for it; `openSheet` numbers the opening. */
+type SheetRequest =
   | { readonly kind: 'noEnergy'; readonly session: SessionView; readonly skipMode: boolean }
-  | { readonly kind: 'preview'; readonly session: SessionView; readonly entry: string; readonly opening: number }
+  | { readonly kind: 'preview'; readonly session: SessionView; readonly entry: string }
   | { readonly kind: 'noteWhy' }
   | { readonly kind: 'logWorkout'; readonly session: SessionView }
   | { readonly kind: 'pool' };
@@ -132,7 +145,9 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
     setSheet(next);
   }, []);
   const openSheet = useCallback(
-    (next: TodaySheet) => {
+    (request: SheetRequest) => {
+      openings.current += 1;
+      const next: TodaySheet = { ...request, opening: openings.current };
       if (handover.current) clearTimeout(handover.current);
       if (sheetRef.current === null) {
         show(next);
@@ -147,23 +162,28 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
     },
     [show],
   );
-  const closeSheet = useCallback(() => show(null), [show]);
+  /** Closes that opening's sheet if it is still the one up (a late close never takes a newer sheet down). */
+  const closeSheet = useCallback(
+    (opening: number) => {
+      if (sheetRef.current?.opening === opening) show(null);
+    },
+    [show],
+  );
 
   // ---- Actions ------------------------------------------------------------
 
+  // The card's own writes answer through the same handlers as its sheets'.
   const post = useCallback<TodayCardContextValue['post']>(
-    (busyKey, request) => run(busyKey, () => sendCardAction(request)),
-    [run],
+    (busyKey, request) =>
+      run(busyKey, () => sendCardAction(request, { onApplied: handlers.onActionResult, onReload: handlers.onReload })),
+    [run, handlers],
   );
 
   const loadAndPreview = useCallback(
     (sessionId: string, entry: string) =>
       run(`pull-${sessionId}`, async () => {
         const loaded = await loadSessionForPreview(sessionId, language);
-        if (loaded) {
-          openings.current += 1;
-          openSheet({ kind: 'preview', session: loaded, entry, opening: openings.current });
-        }
+        if (loaded) openSheet({ kind: 'preview', session: loaded, entry });
       }),
     [run, language, openSheet],
   );
@@ -182,10 +202,7 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
       onOpenPoolPicker: () => openSheet({ kind: 'pool' }),
       onOpenNoteWhy: () => openSheet({ kind: 'noteWhy' }),
       onOpenNoEnergy: (target, skipMode) => openSheet({ kind: 'noEnergy', session: target, skipMode }),
-      onOpenPreview: (target, entry) => {
-        openings.current += 1;
-        openSheet({ kind: 'preview', session: target, entry, opening: openings.current });
-      },
+      onOpenPreview: (target, entry) => openSheet({ kind: 'preview', session: target, entry }),
       onLoadAndPreview: loadAndPreview,
       onOpenLogWorkout: (target) => openSheet({ kind: 'logWorkout', session: target }),
     }),
@@ -253,9 +270,7 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
   const band = recoveryBandWord(day, isToday, t);
   const today = todayServerDay();
 
-  const noEnergy = shown.current.noEnergy;
-  const preview = shown.current.preview;
-  const logWorkout = shown.current.logWorkout;
+  const { noEnergy, preview, noteWhy, logWorkout, pool } = shown.current;
 
   return (
     <TodayCardProvider value={context}>
@@ -300,17 +315,25 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
         ) : null}
       </View>
 
+      {/* PLAN-3's two sheets are controlled: the card closes them once they
+          have answered, as iOS's dismiss() after onResult and after
+          onChangedElsewhere (a close the sheet also makes is harmless). */}
       {noEnergy ? (
         <NoEnergySheet
-          visible={sheet?.kind === 'noEnergy'}
-          onClose={closeSheet}
+          key={`noEnergy-${noEnergy.opening}`}
+          visible={sheet?.opening === noEnergy.opening}
+          onClose={() => closeSheet(noEnergy.opening)}
           session={noEnergy.session}
           tomorrowTitle={day.day?.tomorrow?.title ?? null}
           startsInSkipMode={noEnergy.skipMode}
-          onResult={(result) => handlers.onActionResult(result as SessionActionResponse)}
+          onResult={(result) => {
+            handlers.onActionResult(result as SessionActionResponse);
+            closeSheet(noEnergy.opening);
+          }}
           onChangedElsewhere={() => {
             useHealthStore.getState().setToast('health.err.changed');
             handlers.onReload();
+            closeSheet(noEnergy.opening);
           }}
         />
       ) : null}
@@ -318,8 +341,8 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
       {preview ? (
         <SessionPreviewSheet
           key={`preview-${preview.opening}`}
-          visible={sheet?.kind === 'preview'}
-          onClose={closeSheet}
+          visible={sheet?.opening === preview.opening}
+          onClose={() => closeSheet(preview.opening)}
           session={preview.session}
           entry={preview.entry}
           canStart={canStartRunnerToday(preview.session, {
@@ -333,14 +356,21 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
         />
       ) : null}
 
-      {shown.current.noteWhy ? (
-        <NoteWhySheet visible={sheet?.kind === 'noteWhy'} onClose={closeSheet} note={day.note} scores={day.scores} />
+      {noteWhy ? (
+        <NoteWhySheet
+          key={`noteWhy-${noteWhy.opening}`}
+          visible={sheet?.opening === noteWhy.opening}
+          onClose={() => closeSheet(noteWhy.opening)}
+          note={day.note}
+          scores={day.scores}
+        />
       ) : null}
 
       {logWorkout ? (
         <LogWorkoutSheet
-          visible={sheet?.kind === 'logWorkout'}
-          onClose={closeSheet}
+          key={`logWorkout-${logWorkout.opening}`}
+          visible={sheet?.opening === logWorkout.opening}
+          onClose={() => closeSheet(logWorkout.opening)}
           session={logWorkout.session}
           cardDate={day.date}
           pullCandidate={isToday ? restPullCandidate(day) : null}
@@ -348,7 +378,7 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
             // The sheet's "Was it Saturday's session? Do it today instead":
             // the rest row's own pull, once the sheet has gone.
             const candidate = restPullCandidate(day);
-            closeSheet();
+            closeSheet(logWorkout.opening);
             if (!candidate) return;
             if (handover.current) clearTimeout(handover.current);
             handover.current = setTimeout(() => {
@@ -356,18 +386,25 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
               loadAndPreview(candidate.id, 'log_sheet');
             }, SHEET_HANDOVER_MS);
           }}
-          onResult={(result) => handlers.onActionResult(result as SessionActionResponse)}
-          onChangedElsewhere={handlers.onReload}
+          onResult={(result) => {
+            handlers.onActionResult(result as SessionActionResponse);
+            closeSheet(logWorkout.opening);
+          }}
+          onChangedElsewhere={() => {
+            handlers.onReload();
+            closeSheet(logWorkout.opening);
+          }}
         />
       ) : null}
 
-      {shown.current.pool ? (
+      {pool ? (
         <PlanVenuePickerSheet
-          visible={sheet?.kind === 'pool'}
-          onClose={closeSheet}
+          key={`pool-${pool.opening}`}
+          visible={sheet?.opening === pool.opening}
+          onClose={() => closeSheet(pool.opening)}
           onOpenVenue={(slug) => {
             afterPoolClose.current = () => handlers.onOpenVenue(slug);
-            closeSheet();
+            closeSheet(pool.opening);
           }}
           onClosed={() => {
             const next = afterPoolClose.current;
