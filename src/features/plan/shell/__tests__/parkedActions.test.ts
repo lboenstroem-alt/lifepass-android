@@ -7,6 +7,7 @@
 import type { HealthLoadState } from '../../../../health';
 import { PLAN_ACTION_WINDOW_MS, type PlanAction } from '../../../../stores/intentStore';
 import { canAnswerPlanAction, isParkedActionExpired, scrollDecision, type PlanActionContext } from '../parkedActions';
+import { PLAN_SECTION_ANCHORS, planBodyAnchors } from '../sectionRule';
 
 const PARKED_AT = Date.UTC(2026, 9, 17, 8, 0, 0);
 
@@ -92,7 +93,13 @@ describe('the feedback actions and the routes', () => {
 });
 
 describe('a parked scroll', () => {
-  const base = { hasReviewSection: false, showsFeedbackSection: false, healthLoadState: 'idle', feedbackLoadState: 'idle' } as const;
+  const base = {
+    hasReviewSection: false,
+    showsFeedbackSection: false,
+    healthLoadState: 'idle',
+    feedbackLoadState: 'idle',
+    bodyAnchors: PLAN_SECTION_ANCHORS,
+  } as const;
 
   it('scrolls once its section is there', () => {
     expect(scrollDecision('review', { ...base, hasReviewSection: true })).toBe('scroll');
@@ -112,5 +119,18 @@ describe('a parked scroll', () => {
     expect(scrollDecision('feedback', { ...base, feedbackLoadState: 'loading' })).toBe('wait');
     expect(scrollDecision('feedback', { ...base, feedbackLoadState: 'loaded' })).toBe('drop');
     expect(scrollDecision('feedback', { ...base, feedbackLoadState: 'failed' })).toBe('drop');
+  });
+
+  it('gives up on a section the body on screen has no place for, and waits under the skeleton', () => {
+    // A feedback notification for a lapsed member whose consent stands: the
+    // gate draws no feedback card, so the request must not outlive the tap.
+    const gate = planBodyAnchors('gate', true);
+    expect(scrollDecision('feedback', { ...base, showsFeedbackSection: true, bodyAnchors: gate })).toBe('drop');
+    expect(scrollDecision('review', { ...base, hasReviewSection: true, bodyAnchors: gate })).toBe('scroll');
+    expect(scrollDecision('review', { ...base, hasReviewSection: true, bodyAnchors: planBodyAnchors('gate', false) })).toBe('drop');
+    expect(scrollDecision('review', { ...base, hasReviewSection: true, bodyAnchors: planBodyAnchors('error', true) })).toBe('drop');
+    expect(scrollDecision('feedback', { ...base, showsFeedbackSection: true, bodyAnchors: planBodyAnchors('minor', true) })).toBe('drop');
+    expect(scrollDecision('feedback', { ...base, showsFeedbackSection: true, bodyAnchors: planBodyAnchors('intro', true) })).toBe('scroll');
+    expect(scrollDecision('feedback', { ...base, showsFeedbackSection: true, bodyAnchors: planBodyAnchors('loading', true) })).toBe('wait');
   });
 });

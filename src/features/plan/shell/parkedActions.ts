@@ -96,6 +96,8 @@ export interface ScrollContext {
   readonly healthLoadState: HealthLoadState['kind'];
   /** The feedback read's state ('idle' when the feature is not there). */
   readonly feedbackLoadState: 'idle' | 'loading' | 'loaded' | 'failed';
+  /** The anchors the body on screen mounts (`planBodyAnchors`); 'pending' under the skeleton. */
+  readonly bodyAnchors: readonly PlanSectionAnchor[] | 'pending';
 }
 
 /**
@@ -113,5 +115,10 @@ export function scrollDecision(target: PlanSectionAnchor, context: ScrollContext
   if (target === 'review' && !context.hasReviewSection) {
     return context.healthLoadState === 'loaded' ? 'drop' : 'wait';
   }
+  // The data says the card is there; the body on screen still has to have a
+  // place for it. One with no slot for it gives up, as iOS's `scrollTo` to a
+  // missing id does; the skeleton is a body still to come.
+  if (context.bodyAnchors === 'pending') return 'wait';
+  if (!context.bodyAnchors.includes(target)) return 'drop';
   return 'scroll';
 }

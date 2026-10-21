@@ -11,6 +11,7 @@ import { resetIntentStoreForTests } from '../../../stores/intentStore';
 import { setAnalyticsObserver, type AnalyticsEvent, type AnalyticsParams } from '../../../lib/analytics';
 import { forgetIntroCollapse } from '../intro/introCollapse';
 import { resetPlanBridgesForTests } from '../shell/bridges';
+import { resetPlanFocusTargetsForTests } from '../shell/focusTargets';
 import { resetPlanShell } from '../shell/planShell';
 
 export const MEMBER = '8c2c1b36-2a7e-4b1f-9e0e-2f1c4f0a9c11';
@@ -93,6 +94,7 @@ export function freshPlan(): void {
   resetHealthStoreForTests();
   resetIntentStoreForTests();
   resetPlanBridgesForTests();
+  resetPlanFocusTargetsForTests();
   resetPlanShell();
   forgetIntroCollapse();
   setAnalyticsObserver(null);

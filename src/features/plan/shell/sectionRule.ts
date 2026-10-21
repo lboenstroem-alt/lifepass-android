@@ -90,3 +90,33 @@ export type PlanSectionAnchor = (typeof PLAN_SECTION_ANCHORS)[number];
 export function planSectionAnchor(raw: string): PlanSectionAnchor | null {
   return (PLAN_SECTION_ANCHORS as readonly string[]).includes(raw) ? (raw as PlanSectionAnchor) : null;
 }
+
+/**
+ * The anchors the body on screen mounts at all, whatever its cards then
+ * draw (iOS: the `.id`s in the view tree). A scroll to an anchor the body
+ * has no slot for can never land, and iOS's `scrollTo` to a missing id gives
+ * up in the same call; waiting for it instead would keep the request for the
+ * whole session and jump the page much later, once a slot appears.
+ *
+ * `hasReadOnlyColumn`: the gate and the intro draw the member's food,
+ * review and history under them only while consent stands and a day is
+ * read; the gate never draws the feedback (a lapsed member's monthly
+ * feedback is not offered). 'pending' while the skeleton holds the place:
+ * the body that answers is not known yet.
+ */
+export function planBodyAnchors(section: PlanSection, hasReadOnlyColumn: boolean): readonly PlanSectionAnchor[] | 'pending' {
+  switch (section) {
+    case 'loading':
+      return 'pending';
+    case 'minor':
+      return [];
+    case 'error':
+      return ['footer'];
+    case 'gate':
+      return hasReadOnlyColumn ? ['nutrition', 'appleHealth', 'review', 'history', 'footer'] : ['footer'];
+    case 'intro':
+      return hasReadOnlyColumn ? ['nutrition', 'appleHealth', 'review', 'feedback', 'history', 'footer'] : ['footer'];
+    case 'plan':
+      return PLAN_SECTION_ANCHORS;
+  }
+}

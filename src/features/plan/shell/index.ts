@@ -19,6 +19,10 @@
  * `installPlanOutbox` (RUN-1, MEAL-1), `installPlanFeedback` (FEED-1),
  * `installWeeklyCheckInOpener` (PLAN-5).
  *
+ * A section a notification can land on hands Plan the element TalkBack
+ * should move to (./focusTargets.ts), on its accessible heading:
+ *   <LPText ref={usePlanFocusTarget('review')} accessible accessibilityRole="header">  // PLAN-5
+ *
  * The status mark and the status word the week strip draws are shared with
  * the plan overview and the history (../week).
  */
@@ -36,6 +40,7 @@ export {
   type PlanOutboxSource,
   type WeeklyCheckInEntry,
 } from './bridges';
+export { usePlanFocusTarget } from './focusTargets';
 export { canAnswerPlanAction, isParkedActionExpired, scrollDecision } from './parkedActions';
 export {
   applySessionAction,
@@ -57,6 +62,7 @@ export { computePlanView, currentPlanView, usePlanView, type PlanViewModel } fro
 export {
   hasProgramToShow,
   PLAN_SECTION_ANCHORS,
+  planBodyAnchors,
   planSectionAnchor,
   resolvePlanSection,
   type PlanSection,

@@ -28,9 +28,8 @@
  */
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
-import * as WebBrowser from 'expo-web-browser';
-import { useCallback, useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { AccessibilityInfo, findNodeHandle, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ErrorState, showToast, TopBar } from '../../components/ui';
 import { isLiveStatus, selectHasLiveProgram, selectProposal, useHealthStore } from '../../health';
@@ -48,8 +47,8 @@ import AdoptedBanner from './banners/AdoptedBanner';
 import BookingsHintBanner from './banners/BookingsHintBanner';
 import PlanStatusBanner from './banners/PlanStatusBanner';
 import ProposalWaitingRow from './banners/ProposalWaitingRow';
+import { openTrialPage } from './gate/openTrial';
 import PlanGateCard from './gate/PlanGateCard';
-import { trialUrl } from './gate/gateRules';
 import { collapseIntro, useIntroCollapsed } from './intro/introCollapse';
 import PlanIntroCard from './intro/PlanIntroCard';
 import PlanMinorCard from './minor/PlanMinorCard';
@@ -62,6 +61,7 @@ import ProposalSection from './sections/Proposal';
 import TodaySection from './sections/Today';
 import WeeklyReviewSection from './sections/WeeklyReview';
 import { installedOutboxes, usePlanBridges } from './shell/bridges';
+import { focusPlanTarget } from './shell/focusTargets';
 import { scrollDecision } from './shell/parkedActions';
 import { PlanFooter, PlanSkeleton } from './shell/PlanChrome';
 import {
@@ -85,7 +85,7 @@ import {
   usePlanShell,
 } from './shell/planShell';
 import { usePlanView, type PlanViewModel } from './shell/planView';
-import type { PlanSectionAnchor } from './shell/sectionRule';
+import { planBodyAnchors, type PlanSectionAnchor } from './shell/sectionRule';
 import SectionSlot from './shell/SectionSlot';
 import PlanWeekStrip from './week/PlanWeekStrip';
 
@@ -94,6 +94,14 @@ const ROW_GAP = 24;
 const TOP_PADDING = 16;
 /** iOS leaves 140 pt under the page: the 76 pt tab bar floats over it, plus room to breathe. */
 const BOTTOM_ROOM = 64;
+/**
+ * TalkBack moves onto the review once the scroll has settled: Android's
+ * smooth scroll runs about 250 ms (iOS animates 0.25 s), and a focus event
+ * sent mid-scroll lands on a view still on its way. Without the animation
+ * (reduce motion) the next frames are enough.
+ */
+const FOCUS_AFTER_SCROLL_MS = 400;
+const FOCUS_AFTER_JUMP_MS = 60;
 
 export default function PlanScreen({ navigation }: TabRootProps<'PlanMain'>) {
   const { t } = useT();
@@ -201,6 +209,7 @@ export default function PlanScreen({ navigation }: TabRootProps<'PlanMain'>) {
       showsFeedbackSection: showsFeedbackSection(view),
       healthLoadState: loadState.kind,
       feedbackLoadState: feedbackBridge?.loadState() ?? 'idle',
+      bodyAnchors: planBodyAnchors(view.section, hasReadOnlyColumn(view)),
     });
     if (decision === 'drop') {
       finishPlanScroll(target, false);
@@ -208,7 +217,8 @@ export default function PlanScreen({ navigation }: TabRootProps<'PlanMain'>) {
     }
     if (decision === 'wait') return;
     const y = anchors.current[target];
-    // Drawn, but not laid out yet: its layout tries again.
+    // Drawn, but not laid out yet: its layout tries again. (A slot that
+    // empties or goes takes its y back, so this is never a stale one.)
     if (y === undefined) return;
     scrollRef.current?.scrollTo({ y, animated: !reduceMotion });
     finishPlanScroll(target, true);
@@ -226,12 +236,20 @@ export default function PlanScreen({ navigation }: TabRootProps<'PlanMain'>) {
     delete anchors.current[anchor];
   }, []);
 
-  // TalkBack follows a scroll onto the weekly review (iOS `reviewFocused`).
-  const reviewRef = useRef<View>(null);
+  // TalkBack follows a scroll onto the weekly review (iOS `reviewFocused`):
+  // onto the element the review card registered (./shell/focusTargets.ts),
+  // once the scroll has settled.
+  const reduceMotionRef = useRef(reduceMotion);
   useEffect(() => {
-    if (reviewFocusNonce === 0) return;
-    const node = findNodeHandle(reviewRef.current);
-    if (node !== null) AccessibilityInfo.setAccessibilityFocus(node);
+    reduceMotionRef.current = reduceMotion;
+  }, [reduceMotion]);
+  useEffect(() => {
+    if (reviewFocusNonce === 0) return undefined;
+    const timer = setTimeout(
+      () => focusPlanTarget('review'),
+      reduceMotionRef.current ? FOCUS_AFTER_JUMP_MS : FOCUS_AFTER_SCROLL_MS,
+    );
+    return () => clearTimeout(timer);
   }, [reviewFocusNonce]);
 
   const onRefresh = useCallback(async () => {
@@ -281,7 +299,7 @@ export default function PlanScreen({ navigation }: TabRootProps<'PlanMain'>) {
         <AdoptedBanner />
         <BookingsHintBanner />
 
-        <PlanBody view={view} slot={slot} reviewRef={reviewRef} />
+        <PlanBody view={view} slot={slot} />
 
         {view.section !== 'minor' ? (
           <SectionSlot anchor="footer" {...slot}>
@@ -307,6 +325,11 @@ function hasReviewSection(view: PlanViewModel): boolean {
   return day.review !== null;
 }
 
+/** The gate and the intro draw the member's own column under them (consent stands, a day is read). */
+function hasReadOnlyColumn(view: PlanViewModel): boolean {
+  return view.hasConsent && view.shownDay !== null;
+}
+
 /** The feedback card has something to draw for the day on screen (iOS `showsFeedbackSection`). */
 function showsFeedbackSection(view: PlanViewModel): boolean {
   if (!supportsFeedbackNow() || !view.hasConsent || !view.isShowingToday) return false;
@@ -318,7 +341,7 @@ function showsFeedbackSection(view: PlanViewModel): boolean {
 }
 
 /** The body for the section the rule chose. Fragments, so every slot is a row of the page. */
-function PlanBody({ view, slot, reviewRef }: { view: PlanViewModel; slot: SlotHandlers; reviewRef: RefObject<View | null> }) {
+function PlanBody({ view, slot }: { view: PlanViewModel; slot: SlotHandlers }) {
   switch (view.section) {
     case 'loading':
       return <PlanSkeleton />;
@@ -327,22 +350,22 @@ function PlanBody({ view, slot, reviewRef }: { view: PlanViewModel; slot: SlotHa
     case 'minor':
       return <PlanMinorCard />;
     case 'gate':
-      return <GateBody view={view} slot={slot} reviewRef={reviewRef} />;
+      return <GateBody view={view} slot={slot} />;
     case 'intro':
-      return <IntroBody view={view} slot={slot} reviewRef={reviewRef} />;
+      return <IntroBody view={view} slot={slot} />;
     case 'plan':
-      return <ActivePlanBody view={view} slot={slot} reviewRef={reviewRef} />;
+      return <ActivePlanBody view={view} slot={slot} />;
   }
 }
 
-type BodyProps = { view: PlanViewModel; slot: SlotHandlers; reviewRef: RefObject<View | null> };
+type BodyProps = { view: PlanViewModel; slot: SlotHandlers };
 
 /**
  * A member whose membership does not include the plan. A lapsed member whose
  * consent still stands keeps their history, read only: their plan is gone,
  * what they logged is not.
  */
-function GateBody({ view, slot, reviewRef }: BodyProps) {
+function GateBody({ view, slot }: BodyProps) {
   const { t, language } = useT();
   const trialEligible = useAppStore((s) => s.profile?.health?.trialEligible === true);
   return (
@@ -353,7 +376,7 @@ function GateBody({ view, slot, reviewRef }: BodyProps) {
         hasConsent={view.hasConsent}
         onChoosePlans={() => openPlanModal('Plans')}
         onOpenAccount={() => pushPlanRoute('Account')}
-        onStartTrial={() => void WebBrowser.openBrowserAsync(trialUrl(language)).catch(() => undefined)}
+        onStartTrial={() => openTrialPage(language)}
         onPlanMyDay={() => {
           const intents = useIntentStore.getState();
           intents.parkCoachPrompt(t('coach.chip.plan_day'));
@@ -361,15 +384,13 @@ function GateBody({ view, slot, reviewRef }: BodyProps) {
         }}
         onManageData={() => pushPlanRoute('BodyAndGoals', {})}
       />
-      {view.hasConsent && view.shownDay ? (
-        <ReadOnlyColumn slot={slot} reviewRef={reviewRef} withFeedback={false} />
-      ) : null}
+      {hasReadOnlyColumn(view) ? <ReadOnlyColumn slot={slot} withFeedback={false} /> : null}
     </>
   );
 }
 
 /** An entitled member without a plan: the proposal the Coach built, or the intro card. */
-function IntroBody({ view, slot, reviewRef }: BodyProps) {
+function IntroBody({ view, slot }: BodyProps) {
   const proposal = useHealthStore(selectProposal);
   const adoptedProposalId = usePlanShell((s) => s.adoptedProposalId);
   const loadFailed = useHealthStore((s) => s.loadState.kind === 'failed');
@@ -412,15 +433,13 @@ function IntroBody({ view, slot, reviewRef }: BodyProps) {
   return (
     <>
       {lead}
-      {view.hasConsent && view.shownDay ? (
-        <ReadOnlyColumn slot={slot} reviewRef={reviewRef} withFeedback />
-      ) : null}
+      {hasReadOnlyColumn(view) ? <ReadOnlyColumn slot={slot} withFeedback /> : null}
     </>
   );
 }
 
 /** Food, scores, the review, the feedback and the history: under the gate and the intro. */
-function ReadOnlyColumn({ slot, reviewRef, withFeedback }: { slot: SlotHandlers; reviewRef: RefObject<View | null>; withFeedback: boolean }) {
+function ReadOnlyColumn({ slot, withFeedback }: { slot: SlotHandlers; withFeedback: boolean }) {
   return (
     <>
       <SectionSlot anchor="nutrition" {...slot} testID="plan.slot.nutrition">
@@ -429,7 +448,7 @@ function ReadOnlyColumn({ slot, reviewRef, withFeedback }: { slot: SlotHandlers;
       <SectionSlot anchor="appleHealth" {...slot} testID="plan.slot.scores">
         <HealthScoresSection />
       </SectionSlot>
-      <SectionSlot anchor="review" ref={reviewRef} {...slot} testID="plan.slot.review">
+      <SectionSlot anchor="review" {...slot} testID="plan.slot.review">
         <WeeklyReviewSection />
       </SectionSlot>
       {withFeedback ? (
@@ -445,12 +464,17 @@ function ReadOnlyColumn({ slot, reviewRef, withFeedback }: { slot: SlotHandlers;
 }
 
 /** A live, paused or finished programme (3.4 rows 3 to 15). */
-function ActivePlanBody({ view, slot, reviewRef }: BodyProps) {
+function ActivePlanBody({ view, slot }: BodyProps) {
   const proposal = useHealthStore(selectProposal);
   const hasLiveProgram = useHealthStore(selectHasLiveProgram);
   const day = view.shownDay;
+  const week = day?.week ?? null;
+  // One handler per week, not per render: the strip's swipe is built from
+  // it, and a gesture rebuilt mid-drag (the read landing, a toast) drops the
+  // swipe the member is making.
+  const weekStartsOn = week?.weekStartsOn ?? null;
+  const onMoveWeek = useCallback((delta: -1 | 1) => movePlanWeek(delta, { weekStartsOn }), [weekStartsOn]);
   if (!day) return null;
-  const week = day.week;
   return (
     <>
       {proposal && hasLiveProgram ? <ProposalWaitingRow programId={proposal.program.id} /> : null}
@@ -474,7 +498,7 @@ function ActivePlanBody({ view, slot, reviewRef }: BodyProps) {
           todayDate={todayServerDay()}
           isPaused={day.program?.status === 'paused'}
           onSelect={selectPlanDate}
-          onMoveWeek={(delta) => movePlanWeek(delta, week)}
+          onMoveWeek={onMoveWeek}
         />
       ) : null}
 
@@ -484,7 +508,7 @@ function ActivePlanBody({ view, slot, reviewRef }: BodyProps) {
       <SectionSlot anchor="appleHealth" {...slot} testID="plan.slot.scores">
         <HealthScoresSection />
       </SectionSlot>
-      <SectionSlot anchor="review" ref={reviewRef} {...slot} testID="plan.slot.review">
+      <SectionSlot anchor="review" {...slot} testID="plan.slot.review">
         <WeeklyReviewSection />
       </SectionSlot>
       <SectionSlot anchor="feedback" {...slot} testID="plan.slot.feedback">

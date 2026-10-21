@@ -176,7 +176,9 @@ describe('where its buttons go', () => {
     signIn(memberProfile({ access: 'not_member', consent: false, trialEligible: true }));
     await renderPlan();
     await fireEvent.press(screen.getByRole('button', { name: en('plan.gate.cta_trial') }));
-    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://www.lifepass.is/en/plans?trial=1');
+    // In the app's own task, as every hosted page: a tab in a task of its
+    // own is dropped when the member leaves for their bank's app.
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://www.lifepass.is/en/plans?trial=1', { createTask: false });
     await fireEvent.press(screen.getByRole('button', { name: en('plan.gate.day_plan') }));
     expect(useIntentStore.getState().pendingCoachPrompt).toBe(en('coach.chip.plan_day'));
     expect(useIntentStore.getState().pendingTab).toBe('Coach');
@@ -274,14 +276,15 @@ describe('a parked notification action', () => {
 
   it('lands on the review instead when the check-in is done', async () => {
     signIn();
-    api.on('GET', '/health', Reply.ok(dayJSON(TODAY, { checkIn: { due: false }, review: { weekStartsOn: '2026-10-05', planned: 3, done: 3 } })));
+    api.on('GET', '/health', Reply.ok(dayJSON(TODAY, { checkIn: { due: false }, review: { id: 'r-1', weekStartsOn: '2026-10-05', sessionsPlanned: 3, sessionsDone: 3 } })));
     useIntentStore.getState().parkPlanAction({ kind: 'openWeeklyCheckIn' });
     await renderPlan();
     await act(async () => settle());
     // The review section is PLAN-5's and draws nothing yet, so the scroll
     // waits for it to be laid out rather than landing nowhere.
+    expect(useHealthStore.getState().loadState.kind).toBe('loaded');
+    expect(useHealthStore.getState().today?.review?.id).toBe('r-1');
     expect(usePlanShell.getState().scrollTarget).toBe('review');
-    expect(useHealthStore.getState().today?.review).not.toBeNull();
   });
 });
 
