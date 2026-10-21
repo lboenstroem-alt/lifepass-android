@@ -1,16 +1,12 @@
 // Session hooks for classes discovery: what this phone must forget when the member
 // signs out, claim when they sign in, or flush when the app comes back.
 //
-// Pre-created by F3 (plan 3.0, rule 7); CLASS-1 fills it in. Imported once at
-// startup by src/app/registrations.ts, so a hook registered here is in place
-// before any sign-in or sign-out can happen. The helpers and their rules are
-// in src/app/signOut.ts, for example:
+// Pre-created by F3 (plan 3.0, rule 7); imported once at startup by
+// src/app/registrations.ts.
 //
-//   import { registerSignOutCleaner } from '../../app/signOut';
-//
-//   registerSignOutCleaner('classes.cache', async ({ memberId }) => {
-//     await AsyncStorage.removeItem(`classes.cache.${memberId}`);
-//   });
-//
-// Nothing is registered yet.
+// CLASS-1 registers nothing, on purpose: the feed keeps nothing on the phone.
+// Its filters and classes live in memory for one visit (they reset per visit,
+// as on iOS), the feed is the same for every member (`GET /classes` is public
+// and nothing in it is caller-specific), and the member's position is read
+// from the location store, never stored here.
 export {};

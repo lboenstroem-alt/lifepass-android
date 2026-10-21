@@ -5,24 +5,28 @@
 // CLASS-2's to mount.
 // Keep the exported names and signatures; replace the bodies (and this marker).
 // `ClassSheetHost` is mounted once by F4's tabs shell.
+//
+// CLASS-1 (contract): the occurrence is the feed's own session type,
+// `ClassOccurrence` (../model/occurrence.ts, iOS ClassOccurrence.swift), as
+// the stub anticipated, and `onDismiss` lets the feed re-read once the sheet
+// has gone after a booking (iOS `.sheet(item:onDismiss:)`).
+import type { ClassOccurrence } from '../model/occurrence';
+
 export { default as ClassSheetHost } from './ClassSheetHost';
 
-/**
- * What the sheet needs to identify a session. CLASS-1's feed occurrence
- * satisfies it; CLASS-2 may require more of it (the feed type) once both exist.
- */
-export interface ClassSheetOccurrence {
-  /** The provider's event id (`eventId` in the booking body). */
-  readonly eventId: string;
-  readonly venueId: string;
-  readonly activityId: string;
-  /** ISO start. */
-  readonly startsAt: string;
-}
+/** What the sheet needs to identify a session: the feed's (or a Coach plan's) `ClassOccurrence`. */
+export type ClassSheetOccurrence = ClassOccurrence;
 
 export interface OpenClassSheetOptions {
   /** A booking landed (confirmed, or accepted and pending): the screen underneath refreshes. */
   readonly onBooked?: () => void;
+  /**
+   * The sheet has gone, however it closed: called exactly once per opening,
+   * on EVERY close path (its close button, hardware back, a swipe down, and
+   * before a page it opens), and after any `onBooked`. The feed re-reads here
+   * after a booking (iOS `.sheet(item:onDismiss:)`).
+   */
+  readonly onDismiss?: () => void;
 }
 
 /** Opens the class sheet over whatever is showing. A no-op until CLASS-2 lands. */
