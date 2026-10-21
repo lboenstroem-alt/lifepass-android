@@ -179,12 +179,13 @@ const styles = StyleSheet.create({
   tabs: {
     flexDirection: 'row',
     paddingHorizontal: 20,
-    paddingTop: 14,
     borderBottomWidth: hairline,
     borderBottomColor: colors.line,
     backgroundColor: colors.ink,
   },
-  tab: { flex: 1, alignItems: 'flex-start' },
+  // The row's top padding sits inside each tab, so the whole strip down to
+  // the underline takes the touch: at least Android's 48 dp target.
+  tab: { flex: 1, alignItems: 'flex-start', justifyContent: 'flex-end', paddingTop: 14, minHeight: 48 },
   tabLabel: { flexDirection: 'row', alignItems: 'baseline', gap: 6, paddingBottom: 12 },
   underline: { alignSelf: 'stretch', height: 2, backgroundColor: 'transparent' },
   underlineActive: { backgroundColor: colors.rust },

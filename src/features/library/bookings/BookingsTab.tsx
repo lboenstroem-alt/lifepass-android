@@ -248,6 +248,7 @@ function SegmentChip({
       accessibilityRole="tab"
       accessibilityLabel={`${title}, ${count}`}
       accessibilityState={{ selected: active }}
+      hitSlop={CHIP_HIT_SLOP}
       style={({ pressed }) => [styles.chip, active ? styles.chipActive : styles.chipIdle, pressed && styles.pressed]}
       testID={testID}
     >
@@ -260,6 +261,9 @@ function SegmentChip({
     </Pressable>
   );
 }
+
+/** The chips are drawn 36 dp tall, as iOS; the touch reaches Android's 48 dp. */
+const CHIP_HIT_SLOP = { top: 6, bottom: 6 };
 
 /** iOS `ProgressView().tint(Color.lpRust)`, which VoiceOver reads as loading. */
 export function LoadingSpinner() {
