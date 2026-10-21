@@ -361,12 +361,10 @@ export class PlanCheckoutModel {
     switch (result.kind) {
       case 'busy':
       case 'unresolved':
-        // Another page or payment held the rail (never with Plans on screen):
-        // nothing opened and nothing was paid; Continue is free again.
-        this.set(done);
-        return;
       case 'neverOpened':
-        // No browser could show the page: nothing can have been paid on it.
+        // No page came up: no browser could show it, or (Android only, and
+        // not while Plans is on top) another payment held the rail. Nothing
+        // can have been paid on this checkout; the member can try again.
         this.set({ ...done, error: { message: t('payment.err.checkout'), cta: null } });
         return;
       case 'verified':

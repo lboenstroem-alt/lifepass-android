@@ -19,6 +19,7 @@ import { lookup, setCurrentLanguage, translate } from '../../../../i18n';
 import { MerchantInfo } from '../../../../config/merchantInfo';
 import { expectSentToMatchContract, stubApiClientPerTest } from '../../../../api/testing';
 import { flush, freshPaymentsPerTest, signIn, usageJSON } from '../../../../payments/__tests__/paymentsHarness';
+import { openHostedPage } from '../../../../payments/hostedPage';
 import { useAppStore } from '../../../../stores/appStore';
 import { MEMBER_A, PLUS_SUBSCRIPTION } from '../../../../stores/__tests__/storeHarness';
 import { planForSlug } from '../../plans';
@@ -635,6 +636,19 @@ describe('the return on Android', () => {
     await vm.purchasePlan(explorer, { saveCard: true });
     await vm.openCheckout();
     expect(api.sentAll('/payments/checkout-sessions/confirm')).toHaveLength(0);
+    expect(vm.state.error).toEqual({ message: en('payment.err.checkout'), cta: null });
+    expect(vm.state.pageOpen).toBe(false);
+  });
+
+  it('another page already open holds the rail: no second page, and the member is told to try again', async () => {
+    answerCheckout(OPENED);
+    // A page some other flow opened, still up.
+    openPage.mockImplementationOnce(() => new Promise(() => undefined));
+    void openHostedPage('https://pay.kling.is/other', 'payment');
+    const vm = model();
+    await vm.purchasePlan(explorer, { saveCard: true });
+    await vm.openCheckout();
+    expect(openPage).toHaveBeenCalledTimes(1);
     expect(vm.state.error).toEqual({ message: en('payment.err.checkout'), cta: null });
     expect(vm.state.pageOpen).toBe(false);
   });
