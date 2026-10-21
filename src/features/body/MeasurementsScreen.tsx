@@ -56,8 +56,21 @@ export default function MeasurementsScreen({ navigation }: SharedRouteProps<'Mea
   const [state, setState] = useState<HistoryState>(INITIAL);
   const [pendingDelete, setPendingDelete] = useState<Measurement | null>(null);
   const mounted = useRef(true);
-  /** Which first-page read is the current one: an older answer lands nowhere. */
+  /**
+   * Which first-page read is the current one: an older answer lands nowhere,
+   * and neither does a next page asked for before it (its cursor belongs to
+   * the list the reload replaces).
+   */
   const generation = useRef(0);
+  /**
+   * Set before the first await, so a second tap on "Show older entries" that
+   * lands before the re-render that disables the row asks for nothing (two
+   * reads of one cursor would append the page twice). Cleared by the read
+   * that set it, or by a reload, which owns the row from then on.
+   */
+  const loadingMore = useRef(false);
+  /** A first-page read is running: the cursor on screen is about to be replaced. */
+  const loadingFirst = useRef(false);
 
   const patch = useCallback((next: Partial<HistoryState>) => {
     if (mounted.current) setState((s) => ({ ...s, ...next }));
@@ -66,13 +79,20 @@ export default function MeasurementsScreen({ navigation }: SharedRouteProps<'Mea
   const reload = useCallback(async () => {
     generation.current += 1;
     const mine = generation.current;
-    patch({ isLoading: true, errorKey: null });
+    // A next page still in flight is now stale and returns without touching
+    // the row, so the reload frees it here (iOS clears `isLoadingMore` on
+    // every path of `loadMore`; a stale answer has no path of its own here).
+    loadingMore.current = false;
+    loadingFirst.current = true;
+    patch({ isLoading: true, isLoadingMore: false, errorKey: null });
     try {
       const page = await fetchMeasurementsPage(null);
       if (mine !== generation.current) return;
+      loadingFirst.current = false;
       patch({ rows: page.data, cursor: page.nextCursor, hasMore: page.hasMore, isLoading: false });
     } catch (error) {
       if (mine !== generation.current) return;
+      loadingFirst.current = false;
       patch({ isLoading: false });
       if (error instanceof ApiError) {
         if (error.isCancellation) return;
@@ -91,15 +111,22 @@ export default function MeasurementsScreen({ navigation }: SharedRouteProps<'Mea
   }, [reload]);
 
   const loadMore = async () => {
-    const { cursor, isLoadingMore } = state;
-    if (!cursor || isLoadingMore) return;
+    const { cursor } = state;
+    if (!cursor || loadingMore.current || loadingFirst.current) return;
+    loadingMore.current = true;
     const mine = generation.current;
     patch({ isLoadingMore: true });
     try {
       const page = await fetchMeasurementsPage(cursor);
-      if (mine !== generation.current || !mounted.current) return;
+      // Overtaken by a reload: it has already freed the row and owns the list.
+      if (mine !== generation.current) return;
+      loadingMore.current = false;
+      if (!mounted.current) return;
       setState((s) => ({ ...s, rows: [...s.rows, ...page.data], cursor: page.nextCursor, hasMore: page.hasMore, isLoadingMore: false }));
     } catch (error) {
+      // A stale failure says nothing over the fresh first page.
+      if (mine !== generation.current) return;
+      loadingMore.current = false;
       patch({ isLoadingMore: false });
       if (error instanceof ApiError && error.isCancellation) return;
       patch({ errorKey: 'common.error_body' });

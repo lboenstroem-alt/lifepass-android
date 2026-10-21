@@ -3,10 +3,12 @@
  * lines, the 30-row pages, the empty and error states, and the delete, by
  * TalkBack's action or the swipe's button, with its question (and the
  * connected-app note), the profile read after it, a row already gone removed
- * silently (404), and any other failure reloading page one.
+ * silently (404), and any other failure reloading page one; a next page
+ * asked for twice in one breath, or overtaken by that reload, never sticks
+ * or doubles the list.
  */
-import { fireEvent, screen, waitFor } from '@testing-library/react-native';
-import { api, Reply } from '@test/server';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
+import { api, Reply, type StubReply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { resetHealthStoreForTests, useHealthStore } from '../../../health/store';
@@ -53,6 +55,17 @@ async function show() {
   await renderPushed('Measurements', MeasurementsScreen, { below: 'BodyAndGoals' });
   await settle();
 }
+
+/** A reply the test hands over when it chooses. */
+function heldReply() {
+  let release: (reply: StubReply) => void = () => undefined;
+  const reply = new Promise<StubReply>((resolve) => {
+    release = resolve;
+  });
+  return { reply, release: (answer: StubReply) => release(answer) };
+}
+
+const loadMoreRow = () => screen.getByTestId('measurements.loadMore');
 
 async function rowDeleteAction(id: string) {
   await fireEvent(screen.getByTestId(`measurements.row.${id}`), 'accessibilityAction', { nativeEvent: { actionName: 'delete' } });
@@ -201,6 +214,77 @@ describe('deleting a weigh-in', () => {
     await fireEvent.press(screen.getByTestId('measurements.delete.confirm'));
     await settle();
     expect(api.sentAll('/health/measurements')).toHaveLength(pageReads + 1);
+    expect(screen.getByTestId('measurements.row.m-1')).toBeTruthy();
+  });
+});
+
+describe('older pages, raced', () => {
+  it('a double tap on "Show older entries" reads the next page once and appends it once', async () => {
+    api.once('GET', '/health/measurements', Reply.ok(measurementsPage([weighIn('m-1', 72.5)], 'cursor-2')));
+    await show();
+    const held = heldReply();
+    api.once('GET', '/health/measurements', () => held.reply);
+    // Both taps land before the re-render that disables the row: two clicks
+    // in one turn (a test's press re-renders between taps, a phone may not).
+    const row = loadMoreRow();
+    await act(async () => {
+      row.props.onClick({ nativeEvent: {} });
+      row.props.onClick({ nativeEvent: {} });
+    });
+    held.release(Reply.ok(measurementsPage([weighIn('m-31', 75)])));
+    await settle();
+    expect(api.sentAll('/health/measurements').filter((r) => r.query.cursor === 'cursor-2')).toHaveLength(1);
+    expect(screen.getAllByTestId('measurements.row.m-31')).toHaveLength(1);
+  });
+
+  it('a next page overtaken by a reload (a failed delete) never leaves the row spinning, and lands nowhere', async () => {
+    let held = heldReply();
+    api.on('GET', '/health/measurements', (request) =>
+      request.query.cursor ? held.reply : Reply.ok(measurementsPage([weighIn('m-1', 72.5), weighIn('m-2', 73)], 'cursor-2')),
+    );
+    api.on('DELETE', '/health/measurements/:id', Reply.problem(500, 'internal_error'));
+    await show();
+
+    await fireEvent.press(loadMoreRow());
+    await settle();
+    expect(loadMoreRow().props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+
+    // The delete fails while that page is still on its way: page one again.
+    await rowDeleteAction('m-1');
+    await fireEvent.press(screen.getByTestId('measurements.delete.confirm'));
+    await settle();
+    expect(loadMoreRow().props.accessibilityState).toMatchObject({ busy: false, disabled: false });
+
+    // The stale page answers: it is not appended to the fresh first page, and
+    // a stale failure would say nothing either.
+    held.release(Reply.ok(measurementsPage([weighIn('m-31', 75)])));
+    await settle();
+    expect(screen.queryByTestId('measurements.row.m-31')).toBeNull();
+    expect(loadMoreRow().props.accessibilityState).toMatchObject({ busy: false, disabled: false });
+
+    // And the row works again.
+    held = heldReply();
+    await fireEvent.press(loadMoreRow());
+    held.release(Reply.ok(measurementsPage([weighIn('m-32', 76)])));
+    await settle();
+    expect(screen.getByTestId('measurements.row.m-32')).toBeTruthy();
+    expect(screen.queryByTestId('measurements.loadMore')).toBeNull();
+  });
+
+  it('a next page that fails after a reload took over shows no error over the fresh list', async () => {
+    const held = heldReply();
+    api.on('GET', '/health/measurements', (request) =>
+      request.query.cursor ? held.reply : Reply.ok(measurementsPage([weighIn('m-1', 72.5), weighIn('m-2', 73)], 'cursor-2')),
+    );
+    api.on('DELETE', '/health/measurements/:id', Reply.problem(500, 'internal_error'));
+    await show();
+    await fireEvent.press(loadMoreRow());
+    await rowDeleteAction('m-1');
+    await fireEvent.press(screen.getByTestId('measurements.delete.confirm'));
+    await settle();
+    held.release(Reply.problem(500, 'internal_error'));
+    await settle();
+    expect(screen.queryByText(en('common.error_body'))).toBeNull();
     expect(screen.getByTestId('measurements.row.m-1')).toBeTruthy();
   });
 });
