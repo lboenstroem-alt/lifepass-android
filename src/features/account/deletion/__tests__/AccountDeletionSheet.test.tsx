@@ -281,7 +281,7 @@ describe('the wipe when whatever holds the sheet goes away', () => {
     return jest.spyOn(console, 'error');
   }
   const unmountedWarnings = (spy: jest.SpyInstance) =>
-    spy.mock.calls.filter((args) => args.some((arg) => typeof arg === 'string' && /unmounted/i.test(arg)));
+    spy.mock.calls.filter((args: unknown[]) => args.some((arg) => typeof arg === 'string' && /unmounted/i.test(arg)));
 
   it('a request that answers after the sheet has unmounted still wipes the phone and reads the profile', async () => {
     signIn();
