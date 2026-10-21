@@ -2,21 +2,48 @@
  * Home's Outside card (iOS HomeOutsideCard with HomeView's loading and pick
  * rules): hidden without top picks, the heading and distances only with a
  * granted fix around Iceland, the ODbL credit, a failed refresh that keeps
- * the card, the language re-read, the return re-read, and the taps.
+ * the card, the language re-read, the re-read at every Home read (a focus, a
+ * pull to refresh), and the taps.
  */
-import { NavigationContext } from '@react-navigation/native';
-import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
+import { act, configure, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
-import type { ReactElement } from 'react';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { setCurrentLanguage } from '../../../i18n';
 import { locationStore } from '../../../stores/locationStore';
 import HomeOutsideCard from '../HomeOutsideCard';
-import { attractionMarkersStore, loadAttractionMarkers, resetAttractionMarkers } from '../markersStore';
+import { attractionMarkersStore, loadAttractionMarkers, resetAttractionMarkers, useAttractionMarkers } from '../markersStore';
 import { AKUREYRI, LONDON, markerJson, REYKJAVIK } from './fixtures';
 
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
+
+// Home's reads (HOME-1's `useOnHomeRead`, published by ../../home): Home
+// signals at each focus and each pull to refresh. Signalling is Home's alone
+// and not exported, so the card's side is driven here, with the contract's
+// rules: the latest callback runs once per read, never at mount by itself.
+const mockHomeReaders = new Set<{ current: () => void }>();
+jest.mock('../../home', () => {
+  const { useEffect: mockUseEffect, useRef: mockUseRef } = jest.requireActual<typeof import('react')>('react');
+  return {
+    useOnHomeRead: (onRead: () => void) => {
+      const latest = mockUseRef(onRead);
+      latest.current = onRead;
+      mockUseEffect(() => {
+        mockHomeReaders.add(latest);
+        return () => {
+          mockHomeReaders.delete(latest);
+        };
+      }, [latest]);
+    },
+  };
+});
+
+/** Home reads again (a focus or a pull to refresh). */
+async function homeReads() {
+  await act(async () => {
+    mockHomeReaders.forEach((reader) => reader.current());
+  });
+}
 
 stubApiClientPerTest({ token: null });
 
@@ -41,8 +68,8 @@ function serveFeed(feed: object[] = FEED) {
 const onOpenSight = jest.fn();
 const onSeeAllOnMap = jest.fn();
 
-async function renderCard(wrap: (card: ReactElement) => ReactElement = (card) => card) {
-  await render(wrap(<HomeOutsideCard onOpenSight={onOpenSight} onSeeAllOnMap={onSeeAllOnMap} />));
+async function renderCard() {
+  await render(<HomeOutsideCard onOpenSight={onOpenSight} onSeeAllOnMap={onSeeAllOnMap} />);
 }
 
 function grantFix(position: { latitude: number; longitude: number } | null, permission: 'granted' | 'denied' = 'granted') {
@@ -181,30 +208,98 @@ describe('reading again', () => {
     expect(screen.getByRole('button', { name: 'Sjá allt á kortinu' })).toBeOnTheScreen();
   });
 
-  it('re-reads whenever Home comes back to the front, never on the first arrival', async () => {
-    const listeners = new Map<string, () => void>();
-    const navigation = {
-      isFocused: () => true,
-      addListener: (event: string, listener: () => void) => {
-        listeners.set(event, listener);
-        return () => listeners.delete(event);
-      },
-    };
-    serveFeed();
-    await renderCard((card) => <NavigationContext.Provider value={navigation as never}>{card}</NavigationContext.Provider>);
+  it("Home's first focus joins the read the card started: one request", async () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    api.on('GET', '/attractions', async (request) => {
+      await held;
+      return Reply.ok({ attractions: FEED, locale: request.query.locale, attribution: 'ODbL' });
+    });
+    await renderCard();
+    await homeReads();
+    release();
     await screen.findByTestId('home.outside');
     expect(sentFeeds()).toHaveLength(1);
-    await act(async () => listeners.get('focus')?.());
+  });
+
+  it('re-reads at every Home read (each focus, each pull), and a failed pull keeps the picks', async () => {
+    serveFeed();
+    await renderCard();
+    await screen.findByTestId('home.outside');
     expect(sentFeeds()).toHaveLength(1);
+
+    // A pull brings the feed as it is now: Skógafoss has gone from it.
+    serveFeed(FEED.filter((marker) => marker.slug !== 'skogafoss'));
+    await homeReads();
+    await waitFor(() => expect(screen.queryByTestId('home.outside.pick.skogafoss')).toBeNull());
+    expect(sentFeeds()).toHaveLength(2);
+    expect(sentFeeds()[1].query).toEqual({ locale: 'en' });
+
+    api.on('GET', '/attractions', Reply.problem(503, 'attractions-unavailable'));
+    await homeReads();
+    await waitFor(() => expect(sentFeeds()).toHaveLength(3));
+    // Wait the failed read out (joining it, or failing once more).
     await act(async () => {
-      listeners.get('blur')?.();
-      listeners.get('focus')?.();
+      await loadAttractionMarkers('en');
     });
-    await waitFor(() => expect(sentFeeds()).toHaveLength(2));
+    expect(screen.getAllByTestId(/^home\.outside\.pick\./).map((row) => row.props.testID)).toEqual([
+      'home.outside.pick.seljalandsfoss',
+      'home.outside.pick.godafoss',
+      'home.outside.pick.glymur',
+    ]);
+  });
+
+  it('a pull after a failed first read brings the card in', async () => {
+    api.on('GET', '/attractions', Reply.problem(503, 'attractions-unavailable', {}, { 'retry-after': '30' }));
+    await renderCard();
+    await waitFor(() => expect(sentFeeds()).toHaveLength(1));
+    await act(async () => {
+      await loadAttractionMarkers('en');
+    });
+    expect(screen.queryByTestId('home.outside')).toBeNull();
+
+    serveFeed();
+    await homeReads();
+    expect(await screen.findByTestId('home.outside')).toBeOnTheScreen();
+  });
+
+  it('a Home read asks in the language of the moment', async () => {
+    serveFeed();
+    await renderCard();
+    await screen.findByTestId('home.outside');
+    await act(async () => setCurrentLanguage('is'));
+    await waitFor(() => expect(attractionMarkersStore.getState().locale).toBe('is'));
+    const before = sentFeeds().length;
+    await homeReads();
+    await waitFor(() => expect(sentFeeds()).toHaveLength(before + 1));
+    expect(sentFeeds()[before].query).toEqual({ locale: 'is' });
   });
 });
 
 describe('the shared feed', () => {
+  it('a read that brings back the same feed changes nothing for its readers', async () => {
+    serveFeed();
+    await loadAttractionMarkers('en');
+    const { result } = await renderHook(() => useAttractionMarkers());
+    const first = result.current;
+    expect(first).toHaveLength(FEED.length);
+
+    const again = await loadAttractionMarkers('en');
+    expect(sentFeeds()).toHaveLength(2);
+    expect(result.current).toBe(first);
+    expect(again.ok && again.page.attractions).toBe(first);
+
+    // One field moved: the new feed lands.
+    serveFeed(FEED.map((marker, index) => (index === 0 ? { ...marker, rankScore: 10 } : marker)));
+    await act(async () => {
+      await loadAttractionMarkers('en');
+    });
+    expect(result.current).not.toBe(first);
+    expect(result.current[0].rankScore).toBe(10);
+  });
+
   it('two readers at once make one request', async () => {
     serveFeed();
     const [a, b] = await Promise.all([loadAttractionMarkers('en'), loadAttractionMarkers('en')]);

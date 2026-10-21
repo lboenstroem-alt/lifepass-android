@@ -7,10 +7,14 @@
  *
  * THE DATA. The card reads the marker feed itself (./markersStore.ts) in the
  * account language: when it mounts, again when the language changes, and
- * again whenever Home comes back to the front (iOS re-runs Home's `.task` on
- * every appear). A failure is silent and keeps what is shown; with nothing
- * loaded the card is hidden. Picks are `picksForHome` (./rules.ts): top tier
- * only, up to six.
+ * again at every Home read, which is each time Home comes to the front and
+ * each pull to refresh (Home's `useOnHomeRead`; iOS calls
+ * `loadOutsideMarkers` in Home's `.task` and in its `.refreshable`). Mount
+ * and Home's first focus land in the same moment and make one request: the
+ * store joins a read already on its way. A failure is silent and keeps what
+ * is shown, so a failed first read leaves the card hidden until a later read
+ * (a pull) succeeds. Picks are `picksForHome` (./rules.ts): top tier only, up
+ * to six.
  *
  * THE ORIGIN. The member's position is used ONLY when location permission is
  * ALREADY granted and the fix is around Iceland (`useGrantedLocation`,
@@ -30,12 +34,13 @@
  * `onSeeAllOnMap` parks the sights intent and switches to Explore.
  */
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useCallback, useEffect, useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { AttractionMarker } from '../../api/attractions';
 import { Kicker, LPText } from '../../components/ui';
 import { useT } from '../../i18n';
+import { useOnHomeRead } from '../home';
 import { distanceMeters, type Coordinate } from '../../lib/geo';
 import { useGrantedLocation } from '../../stores/locationStore';
 import { colors, hairline, radius } from '../../theme';
@@ -44,7 +49,6 @@ import { homeDistanceLabel } from './format';
 import { loadAttractionMarkers, useAttractionMarkers } from './markersStore';
 import { isHike, sightDisplayName } from './model';
 import { isAroundIceland, kindRegionLine, picksForHome } from './rules';
-import { useOnReturn } from './useOnReturn';
 
 export interface HomeOutsideCardProps {
   /** Open a sight's card (`AttractionDetail`). */
@@ -74,9 +78,9 @@ export default function HomeOutsideCard({ onOpenSight, onSeeAllOnMap }: HomeOuts
   useEffect(() => {
     void loadAttractionMarkers(language);
   }, [language]);
-  // And whenever Home comes back to the front.
-  const reload = useCallback(() => void loadAttractionMarkers(language), [language]);
-  useOnReturn(reload);
+  // And at every Home read: each focus and each pull to refresh.
+  // The latest callback runs, so a read asks in the language of the moment.
+  useOnHomeRead(() => void loadAttractionMarkers(language));
 
   const picks = useMemo(() => picksForHome(markers, origin), [markers, origin]);
   if (picks.length === 0) return null;
