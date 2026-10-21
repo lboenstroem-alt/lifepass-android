@@ -1,12 +1,19 @@
-// @f4-stub (plan 3.0.2): route `FeedbackHistory`, filled by FEED-1.
-//
-// Past months of feedback.
-// Keep the default export and its props type; replace the body (and this
-// marker). Until then a development build shows a placeholder and a release
-// build shows nothing.
-import { StubScreen } from '../../navigation/stubs';
+/**
+ * Route `FeedbackHistory` (plan 3.0.2): "Your past months", pushed on Plan's
+ * stack from the card and the report (iOS `PlanRoute.feedbackHistory`). A row
+ * pushes its report, which offers its actions as on the Plan card. The
+ * history in Body and goals is its own sheet (./FeedbackHistorySheet.tsx).
+ */
 import type { SharedRouteProps } from '../../navigation/types';
 
-export default function FeedbackHistoryScreen({ route }: SharedRouteProps<'FeedbackHistory'>) {
-  return <StubScreen route={route.name} owner="FEED-1" />;
+import FeedbackHistoryView from './FeedbackHistoryView';
+
+export default function FeedbackHistoryScreen({ navigation }: SharedRouteProps<'FeedbackHistory'>) {
+  return (
+    <FeedbackHistoryView
+      onBack={() => navigation.goBack()}
+      onOpen={(reportId) => navigation.push('FeedbackReport', { reportId })}
+      testID="feedback.history"
+    />
+  );
 }
