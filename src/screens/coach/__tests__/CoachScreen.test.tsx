@@ -37,6 +37,12 @@ import { fakeSpeech } from './fakeSpeech';
 // nested under expo/ where Jest's resolver cannot see it; Metro resolves it.
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 jest.mock('expo-speech-recognition', () => ({ ExpoSpeechRecognitionModule: require('./fakeSpeech').fakeSpeech }));
+// The venue wizard (COACH-2) would take this file's venue-word prompts ("a
+// sauna near me", Home's gym card); it is held to the stub that takes
+// nothing, and tested on screen in features/coach/flows/__tests__.
+jest.mock('../../../features/coach/flows/venueWizard', () => ({
+  venueWizardFlow: jest.requireActual('../../../features/coach/flows/types').inactiveFlow('venueWizard'),
+}));
 // The hearts are VENUE-2's store; here a heart only has to draw.
 jest.mock('../../../features/favourites', () => ({
   useFavourite: () => ({ isFavourite: false, loading: false, toggle: async () => undefined }),
