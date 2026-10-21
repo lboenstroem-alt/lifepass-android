@@ -227,7 +227,16 @@ export default function MealCaptureScreen({ navigation, route }: MealCaptureScre
       allowsOlderThan30Days: model.state.mode !== 'photo',
       doneLabel: t('common.done'),
       cancelLabel: t('common.cancel'),
-      onPick: (picked) => model.setDate(picked),
+      onPick: (picked) => {
+        const before: MealCaptureMode = model.state.mode;
+        model.setDate(picked);
+        const after: MealCaptureMode = model.state.mode;
+        // An older day has no Photo: the switch to Search is remembered, as iOS's `switchMode(.search)` is.
+        if (before === 'photo' && after === 'search') {
+          rememberMode('search');
+          track('meal_mode_switched', { mode: 'search' });
+        }
+      },
     });
   }, [model, t]);
 
