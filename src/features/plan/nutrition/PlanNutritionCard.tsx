@@ -269,7 +269,8 @@ function TargetRowView({
           accessibilityRole="button"
           accessibilityLabel={label}
           accessibilityState={{ disabled }}
-          style={({ pressed }) => [styles.buttonRow, disabled && styles.disabled, pressed && styles.pressed]}
+          // Disabled, not faded: iOS `targetButton` draws no dimming (only Scan fades).
+          style={({ pressed }) => [styles.buttonRow, pressed && styles.pressed]}
           testID={`${testID}.set_${row.kind === 'setBody' ? 'targets' : 'goal'}`}
         >
           <LPText size={14} color={colors.rust} style={styles.flex}>
@@ -333,7 +334,8 @@ function TargetWeightRowView({
         accessibilityRole="button"
         accessibilityLabel={cta}
         accessibilityState={{ disabled }}
-        style={({ pressed }) => [styles.minRow, disabled && styles.disabled, pressed && styles.pressed]}
+        // As the line above: disabled without a fade, as iOS draws it.
+        style={({ pressed }) => [styles.minRow, pressed && styles.pressed]}
         testID={`${testID}.target_weight.cta`}
       >
         <LPText size={13} weight="semibold" color={colors.rust}>

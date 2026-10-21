@@ -341,7 +341,7 @@ describe('the actions', () => {
     expect(screen.getByText(`route:Diary:${JSON.stringify({ date: TODAY })}`)).toBeOnTheScreen();
   });
 
-  it('a member who is not entitled reads: no Scan or Add, the diary stays, and the way to targets is greyed', async () => {
+  it('a member who is not entitled reads: no Scan or Add, the diary stays, and the way to targets is disabled', async () => {
     signIn(memberProfile({ access: 'past_due' }));
     api.on('GET', '/health', Reply.ok(day({ meals: { ...MEALS, target: null } })));
     await renderPlan();
@@ -349,9 +349,11 @@ describe('the actions', () => {
     expect(card().queryByRole('button', { name: en('plan.nutrition.add') })).toBeNull();
     expect(card().getByRole('button', { name: en('plan.nutrition.diary') })).toBeOnTheScreen();
     expect(card().getByRole('button', { name: en('plan.nutrition.no_target_body') })).toBeDisabled();
+    // Disabled without a fade, as iOS draws `targetButton` (only Scan fades).
+    expect(card().getByRole('button', { name: en('plan.nutrition.no_target_body') })).not.toHaveStyle({ opacity: 0.4 });
   });
 
-  it('offline: Scan and Add are greyed, with the hint; the diary still opens', async () => {
+  it('offline: Scan and Add are disabled, with the hint; the diary still opens', async () => {
     signIn();
     api.on('GET', '/health', Reply.ok(day()));
     await renderPlan();
