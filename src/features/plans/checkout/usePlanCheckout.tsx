@@ -254,6 +254,7 @@ export function usePlanCheckout(events: PlanCheckoutEvents): PlanCheckout {
           onClearCode={() => model.clearCodeTapped()}
           creating={state.isLoading || state.checkoutInFlight}
           onContinue={continueToPayment}
+          returnFocusRef={events.returnFocusRef}
         />
       ) : null}
       <VerificationOverlay visible={state.isVerifying} onCancel={() => model.dismissOverlay()} />

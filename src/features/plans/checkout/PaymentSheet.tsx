@@ -21,7 +21,7 @@
  * be closed (pan, backdrop and back are refused) and the box takes no input.
  */
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import {
   AccessibilityInfo,
   findNodeHandle,
@@ -62,6 +62,8 @@ export interface PaymentSheetProps {
   /** The checkout is being created: spinner, no closing, the box disabled. */
   readonly creating: boolean;
   readonly onContinue: () => void;
+  /** TalkBack focus goes back here once the sheet has gone (the Plans screen's Continue). */
+  readonly returnFocusRef?: RefObject<unknown>;
 }
 
 export default function PaymentSheet({
@@ -78,6 +80,7 @@ export default function PaymentSheet({
   onClearCode,
   creating,
   onContinue,
+  returnFocusRef,
 }: PaymentSheetProps) {
   const { t } = useT();
   const titleRef = useRef<View>(null);
@@ -109,6 +112,7 @@ export default function PaymentSheet({
       snapPoints={subscription ? HALF_HEIGHT : undefined}
       fullHeight={!subscription}
       initialFocusRef={titleRef}
+      returnFocusRef={returnFocusRef}
       testID="plans.payment_sheet"
       footer={
         <PrimaryButton

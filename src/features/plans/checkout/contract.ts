@@ -3,7 +3,7 @@
  * PLANS-2 keeps these two interfaces and `usePlanCheckout`'s signature
  * (./index.ts) when it replaces the interim checkout behind them.
  */
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 
 import type { Plan } from '../plans';
 
@@ -18,6 +18,13 @@ export interface PlanCheckoutEvents {
   readonly onKennitalaRequired: (plan: Plan, discountCode: string) => void;
   /** The purchase is confirmed and the member took the welcome's button: close Plans. */
   readonly onFinished: () => void;
+  /**
+   * Optional: the screen's Continue, which opens the payment sheet. TalkBack
+   * focus goes back to it once the sheet has gone (closed by the member, or
+   * for the page, the Kenni sheet or an alert), as VoiceOver's does when a
+   * SwiftUI sheet is dismissed. Attach it to the Continue control's `ref`.
+   */
+  readonly returnFocusRef?: RefObject<unknown>;
 }
 
 /** What the Plans screen reads from the checkout. */
