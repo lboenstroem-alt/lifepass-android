@@ -1,13 +1,17 @@
 /**
  * The capture page's tray (iOS MealTraySnapshot and MealTrayStore): picked
  * items survive a phone call for a day, per member, and nothing older or
- * empty is offered back.
+ * empty is offered back. A save is refused unless it is for the member
+ * signed in, with their health data standing (Android only: a save after a
+ * sign-out or a wipe would make the file again).
  */
 import { fileSystemState } from '@test/mocks/expoFileSystem';
 
+import { decodeProfile } from '../../../../api/profile';
 import * as localStore from '../../../../health/localStore';
+import { resetAppStoreForTests, useAppStore } from '../../../../stores/appStore';
 import { draftFromChoice, quickAddDraft, type FoodChoice, type MealItemDraft } from '../../types';
-import { clearTray, isTrayFresh, MEAL_TRAY_LIFETIME_MS, restoreTray, saveTray, type MealTraySnapshot } from '../trayStore';
+import { clearTray, isTrayFresh, mayWriteTray, MEAL_TRAY_LIFETIME_MS, restoreTray, saveTray, type MealTraySnapshot } from '../trayStore';
 
 const MEMBER = '8c2c1b36-2a7e-4b1f-9e0e-2f1c4f0a9c11';
 const OTHER = '3c4c1b36-2a7e-4b1f-9e0e-2f1c4f0a9c22';
@@ -45,6 +49,17 @@ function snapshot(savedAt: Date, overrides: Partial<MealTraySnapshot> = {}): Mea
   return { items: items(), slot: 'lunch', date: '2026-10-18', source: 'search', savedAt, ...overrides };
 }
 
+/** `member` signed in; `health` is the profile's health block (null: it did not load). */
+function signIn(member: string = MEMBER, health: Record<string, unknown> | null = { access: 'entitled', consent: { version: '2026-09-v1' } }): void {
+  const profile = decodeProfile({ id: member, locale: 'en', kennitalaVerified: true, marketingConsent: false, ...(health ? { health } : {}) });
+  useAppStore.setState({ isAuthenticated: true, userId: member, profile });
+}
+
+beforeEach(() => {
+  resetAppStoreForTests();
+  signIn();
+});
+
 afterEach(async () => {
   await localStore.settled();
 });
@@ -81,6 +96,36 @@ describe('the tray', () => {
     await saveTray(snapshot(now), MEMBER);
     expect(await restoreTray(OTHER, now)).toBeNull();
     expect(await restoreTray(MEMBER, now)).not.toBeNull();
+  });
+
+  it('is written for the member signed in, by the session’s user before the profile has loaded', async () => {
+    useAppStore.setState({ profile: null });
+    expect(mayWriteTray(MEMBER.toUpperCase())).toBe(true);
+    // A health block that did not load is not evidence that consent is gone.
+    signIn(MEMBER, null);
+    await expect(saveTray(snapshot(new Date()), MEMBER)).resolves.toBe(true);
+  });
+
+  it('is refused after a sign-out, so the member who left gets no file back', async () => {
+    useAppStore.setState({ isAuthenticated: false, userId: null, profile: null });
+    await expect(saveTray(snapshot(new Date()), MEMBER)).resolves.toBe(false);
+    await localStore.settled();
+    expect(fileSystemState.exists(`health/${MEMBER}`)).toBe(false);
+  });
+
+  it('is refused for anyone but the member signed in', async () => {
+    await expect(saveTray(snapshot(new Date()), OTHER)).resolves.toBe(false);
+    await localStore.settled();
+    expect(fileSystemState.read(`health/${OTHER}/tray.json`)).toBeNull();
+  });
+
+  it('is refused once consent is withdrawn or the member is a verified minor', async () => {
+    signIn(MEMBER, { access: 'entitled', consent: null });
+    await expect(saveTray(snapshot(new Date()), MEMBER)).resolves.toBe(false);
+    signIn(MEMBER, { access: 'minor', consent: { version: '2026-09-v1' } });
+    await expect(saveTray(snapshot(new Date()), MEMBER)).resolves.toBe(false);
+    await localStore.settled();
+    expect(fileSystemState.read(`health/${MEMBER}/tray.json`)).toBeNull();
   });
 
   it('is gone after a save or a discard clears it', async () => {

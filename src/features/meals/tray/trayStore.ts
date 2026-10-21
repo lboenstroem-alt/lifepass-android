@@ -14,11 +14,20 @@
  * data (the local wipe deletes the profile folder). There is nothing of it in
  * memory here.
  *
+ * A SAVE IS REFUSED (resolves false, nothing written) unless `profileId` is
+ * the member signed in on this phone and their health data stands: after a
+ * sign-out (a capture page saving as it unmounts during the reset to the
+ * sign-in screens), or once consent is withdrawn or the member is a verified
+ * minor, a save would make the file again for someone whose data just went.
+ * iOS saves unguarded; its capture view is torn down in the same turn as the
+ * signed-in views.
+ *
  * Writes and reads run on the health store's one serial queue
  * (src/health/localStore.ts), so a restore always sees the save before it.
  */
 import { arrayOf, instant, object, opt, req, string } from '../../../health/decode';
 import * as localStore from '../../../health/localStore';
+import { useAppStore } from '../../../stores/appStore';
 import { decodeMealItemDraft, type MealItemDraft } from '../types/draft';
 
 /** What the capture page had picked, and for which meal. */
@@ -65,8 +74,24 @@ export function decodeTraySnapshot(json: unknown): MealTraySnapshot {
   };
 }
 
-/** Queues a write of the tray. Resolves to whether it was written. */
+/**
+ * The tray may be written for `profileId`: they are the member signed in
+ * here (the profile, else the session's user on an offline cold start), and
+ * their profile does not say consent is gone or that they are a minor. A
+ * health block that did not load is not evidence either way.
+ */
+export function mayWriteTray(profileId: string): boolean {
+  const app = useAppStore.getState();
+  if (!app.isAuthenticated) return false;
+  const member = app.profile?.id ?? app.userId;
+  if (!member || member.trim().toLowerCase() !== profileId.trim().toLowerCase()) return false;
+  const health = app.profile?.health;
+  return !health || (health.consent !== null && health.access !== 'minor');
+}
+
+/** Queues a write of the tray. Resolves to whether it was written (false when refused, see above). */
 export function saveTray(snapshot: MealTraySnapshot, profileId: string): Promise<boolean> {
+  if (!mayWriteTray(profileId)) return Promise.resolve(false);
   // A draft carries the wire's field names and explicit nulls; `savedAt` is
   // written as an ISO instant (src/api/wire.ts `encodeBody`).
   return localStore.write(snapshot, 'tray', profileId);
