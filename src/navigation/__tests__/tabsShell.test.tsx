@@ -404,7 +404,9 @@ describe('every route of plan 3.0.2', () => {
         expect(currentRouteName()).toBe(TAB_ROOT_SCREEN[tab]);
       }
     }
-  });
+    // Every tab times every shared route: about 2 s alone, but it can pass Jest's 5 s default
+    // when the whole repo's suites run side by side. A real failure still fails.
+  }, 60_000);
 
   it('every root modal opens over the tabs', async () => {
     signedIn();
