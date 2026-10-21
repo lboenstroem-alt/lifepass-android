@@ -18,12 +18,19 @@ import { DialogHost } from '../../../../components/ui/Dialog';
 import { lookup, setCurrentLanguage, translate } from '../../../../i18n';
 import { MerchantInfo } from '../../../../config/merchantInfo';
 import { expectSentToMatchContract, stubApiClientPerTest } from '../../../../api/testing';
-import { flush, freshPaymentsPerTest, signIn, usageJSON } from '../../../../payments/__tests__/paymentsHarness';
+import { recoverPayments } from '../../../../payments';
+import {
+  flush,
+  freshPaymentsPerTest,
+  signIn,
+  storedRecords,
+  usageJSON,
+} from '../../../../payments/__tests__/paymentsHarness';
 import { openHostedPage } from '../../../../payments/hostedPage';
 import { useAppStore } from '../../../../stores/appStore';
 import { MEMBER_A, PLUS_SUBSCRIPTION } from '../../../../stores/__tests__/storeHarness';
 import { planForSlug } from '../../plans';
-import { PlanCheckoutModel } from '../checkoutModel';
+import { PlanCheckoutModel, resetPlanChecksForTests } from '../checkoutModel';
 import {
   discountCodeMessageKey,
   isWellFormedDiscountCode,
@@ -61,6 +68,7 @@ function profileBody(passes: string[] = []): Record<string, unknown> {
 beforeEach(() => {
   setCurrentLanguage('en');
   signIn();
+  resetPlanChecksForTests();
   openPage.mockReset();
   // What refreshCredits reads after money moved.
   api.on('GET', '/profile', Reply.ok(profileBody()));
@@ -602,13 +610,13 @@ describe('the return on Android', () => {
     expect(vm.state.welcome).not.toBeNull();
   });
 
-  it('an earlier checkout of the same plan still unverified is verified first, and no second page opens', async () => {
+  /** A first checkout of Plus whose return could not be verified (a gateway page): its attempt stays saved. */
+  async function anUnverifiedCheckoutOfPlus(): Promise<void> {
     let session = 0;
     api.on('POST', '/payments/checkout-sessions', () => {
       session += 1;
       return Reply.ok({ checkoutUrl: `https://pay.kling.is/c/cs_${session}`, externalSessionId: `cs_${session}` }, 201);
     });
-    // The first return: the status check meets a gateway page, so nothing is known (the attempt is kept).
     api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'processing' }));
     api.on('GET', '/payments/status', Reply.raw(504, '<html>504</html>'));
     returnFromPage('lifepass://payment-success');
@@ -617,16 +625,135 @@ describe('the return on Android', () => {
     await first.openCheckout();
     expect(first.state.error?.message).toBe(en('error.server'));
     expect(openPage).toHaveBeenCalledTimes(1);
+    expect(checkouts()).toHaveLength(1);
+    expect(await storedRecords()).toHaveLength(1);
+  }
 
-    // The member tries again: the earlier payment, under its own session, is checked instead.
+  it('an earlier checkout of the same plan still unverified is verified instead: no second session, no second page', async () => {
+    await render(<DialogHost />);
+    await anUnverifiedCheckoutOfPlus();
+
+    // The member tries again: nothing is created, the earlier payment is checked under its own session.
     api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'fulfilled' }));
     const again = model();
     await again.purchasePlan(plus);
-    await again.openCheckout();
+    expect(checkouts()).toHaveLength(1);
+    expect(again.state.checkoutReady).toBe(false);
+    expect(again.state.earlierPending).toBe(true);
+    expect(again.state.error).toBeNull();
+
+    // Once the sheet has gone: "Confirming your payment…" until the answer.
+    const followed = again.followEarlierCheckout();
+    expect(again.state.isVerifying).toBe(true);
+    expect(again.isCheckRunning).toBe(true);
+    await act(() => followed);
+
+    expect(checkouts()).toHaveLength(1);
     expect(openPage).toHaveBeenCalledTimes(1);
     expect(api.sent('/payments/checkout-sessions/confirm').body).toEqual({ externalSessionId: 'cs_1' });
-    expect(again.state.welcome).toEqual({ name: 'Plus', isPass: false });
     expect(again.state.isVerifying).toBe(false);
+    expect(again.state.verificationRunning).toBe(false);
+    expect(again.state.earlierPending).toBe(false);
+    expect(again.state.error).toBeNull();
+    // The rails' plan presenter says it, in the Plans screen's words, once.
+    expect(screen.getAllByText(en('plans.welcome_title'))).toHaveLength(1);
+    expect(screen.getByText(en('plans.success.subscription', { name: 'Plus' }))).toBeOnTheScreen();
+    expect(await storedRecords()).toHaveLength(0);
+  });
+
+  it('an earlier checkout that still cannot be verified is said, kept, and still no session is made', async () => {
+    await render(<DialogHost />);
+    await anUnverifiedCheckoutOfPlus();
+
+    const again = model();
+    await again.purchasePlan(plus);
+    await act(() => again.followEarlierCheckout());
+
+    expect(checkouts()).toHaveLength(1);
+    expect(openPage).toHaveBeenCalledTimes(1);
+    expect(again.state.isVerifying).toBe(false);
+    expect(again.state.error).toEqual({ message: en('payment.err.checkout'), cta: null });
+    // Said once, here: the quiet check the rails ran says nothing of its own.
+    expect(screen.queryByText(en('plans.payment_issue'))).toBeNull();
+    expect(await storedRecords()).toHaveLength(1);
+  });
+
+  it('an earlier checkout confirmed while the tap waited is not bought again, and its welcome is said once', async () => {
+    await render(<DialogHost />);
+    await anUnverifiedCheckoutOfPlus();
+
+    // A return to the app starts the rails' recovery; the pull answers only when let go.
+    let answer: () => void = () => undefined;
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    api.on('POST', '/payments/checkout-sessions/confirm', async () => {
+      await answered;
+      return Reply.ok({ status: 'fulfilled' });
+    });
+    const recovery = recoverPayments(MEMBER_A, 'foreground');
+    await flush(2);
+
+    const again = model();
+    const tapped = again.purchasePlan(plus);
+    await flush(2);
+    // The tap waits for the recovery, with the sheet's spinner up.
+    expect(again.isCreatingCheckout).toBe(true);
+    answer();
+    await act(() => Promise.all([recovery, tapped]));
+
+    expect(checkouts()).toHaveLength(1);
+    expect(again.state.earlierPending).toBe(true);
+    await act(() => again.followEarlierCheckout());
+    expect(openPage).toHaveBeenCalledTimes(1);
+    expect(again.state.welcome).toBeNull();
+    expect(screen.getAllByText(en('plans.welcome_title'))).toHaveLength(1);
+  });
+
+  it('a check a closed Plans left running is followed by the next Plans, never answered with a second checkout', async () => {
+    await render(<DialogHost />);
+    answerCheckout(OPENED);
+    let answer: () => void = () => undefined;
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    api.on('POST', '/payments/checkout-sessions/confirm', async () => {
+      await answered;
+      return Reply.ok({ status: 'fulfilled' });
+    });
+    returnFromPage('lifepass://payment-success');
+    let alive = true;
+    const first = new PlanCheckoutModel({ inAppCheckout: true, isScreenAlive: () => alive });
+    await first.purchasePlan(plus);
+    const done = first.openCheckout();
+    await until(() => first.state.isVerifying);
+    // Cancel on the overlay, then Plans is closed.
+    first.dismissOverlay();
+    alive = false;
+
+    // Plans opened again: Continue brings "Confirming your payment…" back.
+    const reopened = model();
+    expect(reopened.isCheckRunning).toBe(true);
+    reopened.showOverlay();
+    expect(reopened.state.isVerifying).toBe(true);
+    expect(reopened.state.verificationRunning).toBe(true);
+    reopened.dismissOverlay();
+
+    // Even a purchase that reached the model makes no session while the check runs.
+    const another = model();
+    await another.purchasePlan(explorer, { saveCard: true });
+    expect(checkouts()).toHaveLength(1);
+    expect(another.state.earlierPending).toBe(true);
+    const followed = another.followEarlierCheckout();
+    expect(another.state.isVerifying).toBe(true);
+
+    answer();
+    await act(() => done);
+    await act(() => followed);
+    await until(() => !reopened.state.verificationRunning && !another.state.verificationRunning);
+    expect(another.state.isVerifying).toBe(false);
+    expect(another.state.error).toBeNull();
+    expect(reopened.isCheckRunning).toBe(false);
+    expect(openPage).toHaveBeenCalledTimes(1);
+    // The closed screen's purchase is said by the rails, once.
+    expect(first.state.welcome).toBeNull();
+    expect(screen.getAllByText(en('plans.welcome_title'))).toHaveLength(1);
   });
 
   it('a page that never opened is the payment alert, and nothing is verified', async () => {
@@ -648,6 +775,8 @@ describe('the return on Android', () => {
     const vm = model();
     await vm.purchasePlan(explorer, { saveCard: true });
     await vm.openCheckout();
+    // Asked before the create: no session is made that could not open.
+    expect(checkouts()).toHaveLength(0);
     expect(openPage).toHaveBeenCalledTimes(1);
     expect(vm.state.error).toEqual({ message: en('payment.err.checkout'), cta: null });
     expect(vm.state.pageOpen).toBe(false);

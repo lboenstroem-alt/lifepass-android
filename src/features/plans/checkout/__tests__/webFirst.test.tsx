@@ -24,6 +24,7 @@ import { freshPaymentsPerTest, usageJSON } from '../../../../payments/__tests__/
 import { useAppStore } from '../../../../stores/appStore';
 import { MEMBER_A, profileJSON } from '../../../../stores/__tests__/storeHarness';
 import { resetPlanCatalog } from '../../catalogStore';
+import { resetPlanChecksForTests } from '../checkoutModel';
 import PlansView from '../../PlansView';
 import { CATALOGUE_WITHOUT_POOL } from '../../__tests__/fixtures';
 
@@ -60,6 +61,7 @@ function profileWith(passes: string[]) {
 beforeEach(() => {
   bottomSheetMock.reset();
   resetPlanCatalog();
+  resetPlanChecksForTests();
   setCurrentLanguage('en');
   openPage.mockReset();
   openPage.mockResolvedValue({ type: 'dismiss' } as WebBrowser.WebBrowserAuthSessionResult);

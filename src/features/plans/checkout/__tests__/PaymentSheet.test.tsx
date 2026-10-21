@@ -28,6 +28,7 @@ import { useAppStore } from '../../../../stores/appStore';
 import { MEMBER_A, profileJSON } from '../../../../stores/__tests__/storeHarness';
 import { openKenniSheet, type KenniSheetOptions } from '../../../kenni';
 import { resetPlanCatalog } from '../../catalogStore';
+import { resetPlanChecksForTests } from '../checkoutModel';
 import PlansView from '../../PlansView';
 import { CATALOGUE_WITHOUT_POOL } from '../../__tests__/fixtures';
 
@@ -41,6 +42,9 @@ jest.mock('../../../kenni', () => ({ openKenniSheet: jest.fn() }));
 
 stubApiClientPerTest();
 freshPaymentsPerTest();
+// Each case drives the whole Plans screen in a native stack: on a busy
+// machine (the full suite runs its workers in parallel) 5 s is too tight.
+jest.setTimeout(20_000);
 
 const openKenni = jest.mocked(openKenniSheet);
 const openPage = jest.mocked(WebBrowser.openAuthSessionAsync);
@@ -107,6 +111,7 @@ const lastSheet = () => bottomSheetMock.latest();
 beforeEach(() => {
   bottomSheetMock.reset();
   resetPlanCatalog();
+  resetPlanChecksForTests();
   setCurrentLanguage('en');
   openKenni.mockReset();
   openPage.mockReset();
@@ -214,8 +219,9 @@ describe('the discount code', () => {
 
     // The test renderer has no native views: give the box a tag.
     const reactNative: typeof ReactNative = jest.requireActual('react-native');
-    jest.spyOn(reactNative, 'findNodeHandle').mockImplementation(((instance: unknown) =>
-      instance != null ? 77 : null) as typeof ReactNative.findNodeHandle);
+    const nodeHandle = jest
+      .spyOn(reactNative, 'findNodeHandle')
+      .mockImplementation(((instance: unknown) => (instance != null ? 77 : null)) as typeof ReactNative.findNodeHandle);
     setFocus.mockClear();
     jest.useFakeTimers();
     try {
@@ -229,6 +235,8 @@ describe('the discount code', () => {
       expect(setFocus).toHaveBeenCalledWith(77);
     } finally {
       jest.useRealTimers();
+      // The rest of this test (and the next) reads the real views again.
+      nodeHandle.mockRestore();
     }
 
     // Continuing now pays the full price, by the member's choice: no code sent.
@@ -391,6 +399,64 @@ describe('after the sheet', () => {
     await act(async () => answer());
     expect(await screen.findByText(en('plans.welcome_title'))).toBeOnTheScreen();
     expect(checkouts()).toHaveLength(1);
+  });
+
+  it('Plans closed and opened again while the check runs: Continue brings the overlay back, and no second checkout is made', async () => {
+    api.on('POST', '/payments/checkout-sessions', OPENED);
+    let answer: () => void = () => undefined;
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    api.on('POST', '/payments/checkout-sessions/confirm', async () => {
+      await answered;
+      return Reply.ok({ status: 'fulfilled' });
+    });
+    openPage.mockResolvedValue({ type: 'success', url: 'lifepass://payment-success' } as WebBrowser.WebBrowserAuthSessionResult);
+    await renderPlans();
+    await fireEvent.press(continueButton());
+    await fireEvent.press(payButton());
+    await screen.findByText(en('plans.confirming'));
+    await fireEvent.press(screen.getByRole('button', { name: en('common.cancel') }));
+
+    // The member leaves Plans while the check runs on, then comes back to it.
+    await pressBack();
+    expect(currentRoute()).toBe('Main');
+    await act(async () => navigationRef.navigate('Plans', undefined));
+    expect(currentRoute()).toBe('Plans');
+
+    await fireEvent.press(continueButton());
+    expect(sheetFor('plan-plus')).toBeNull();
+    expect(screen.getByText(en('plans.confirming'))).toBeOnTheScreen();
+
+    await act(async () => answer());
+    // The first Plans is gone, so the rails say its welcome; the overlay goes with the check.
+    expect(await screen.findByText(en('plans.welcome_title'))).toBeOnTheScreen();
+    await waitFor(() => expect(screen.queryByText(en('plans.confirming'))).toBeNull());
+    expect(checkouts()).toHaveLength(1);
+    expect(openPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('a checkout of the same plan that could not be verified is verified on the next Continue, with no second checkout', async () => {
+    api.on('POST', '/payments/checkout-sessions', OPENED);
+    api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'processing' }));
+    api.on('GET', '/payments/status', Reply.raw(504, '<html>504</html>'));
+    openPage.mockResolvedValue({ type: 'success', url: 'lifepass://payment-success' } as WebBrowser.WebBrowserAuthSessionResult);
+    await renderPlans();
+    await fireEvent.press(continueButton());
+    await fireEvent.press(payButton());
+    const alert = await screen.findByTestId('plans.payment_issue');
+    expect(within(alert).getByText(en('error.server'))).toBeOnTheScreen();
+    await fireEvent.press(within(alert).getByRole('button', { name: en('common.ok') }));
+
+    // The server answers now: the next Continue checks the earlier payment under its own session.
+    api.on('POST', '/payments/checkout-sessions/confirm', Reply.ok({ status: 'fulfilled' }));
+    await fireEvent.press(continueButton());
+    await fireEvent.press(payButton());
+    expect(await screen.findByText(en('plans.welcome_title'))).toBeOnTheScreen();
+    expect(screen.getByText(en('plans.success.subscription', { name: 'Plus' }))).toBeOnTheScreen();
+    expect(sheetFor('plan-plus')).toBeNull();
+    expect(screen.queryByText(en('plans.confirming'))).toBeNull();
+    expect(checkouts()).toHaveLength(1);
+    expect(openPage).toHaveBeenCalledTimes(1);
+    expect(api.sent('/payments/checkout-sessions/confirm').body).toEqual({ externalSessionId: 'cs_1' });
   });
 
   it('a purchase refusal keeps its next step: Manage membership opens Account', async () => {

@@ -27,6 +27,15 @@
  *    copy naming the support address, the status check's refusal in the
  *    member's words, or (web-first fallback) the quiet "check again" chip.
  *
+ * NO SESSION THE RAILS WILL NOT OPEN (Android only). iOS opens every checkout
+ * it creates. Here the money rails refuse a new page while an earlier
+ * checkout of the same plan is still unverified (they verify that one
+ * instead) or while a plan check is still running, so asking the server for
+ * a session first would leave a Kling session and a pending order nobody
+ * ever opens. `purchasePlan` therefore asks before it creates
+ * (`earlierCheckoutOf`), and such a tap follows the earlier checkout
+ * (`followEarlierCheckout`) instead of making a new one.
+ *
  * Nothing here is stored: the attempt itself is saved by src/payments, which
  * wipes it on sign-out.
  */
@@ -49,9 +58,15 @@ import { track } from '../../../lib/analytics';
 import {
   checkCheckoutAgain,
   checkoutOnHostedPage,
+  isHostedPageOpen,
+  readInflight,
   recheckPlanPurchase,
+  recoverPayments,
+  unresolvedPayments,
   type CheckoutResult,
+  type InflightRecord,
   type PlanAttemptContext,
+  type PlanInflight,
 } from '../../../payments';
 import { useAppStore } from '../../../stores/appStore';
 
@@ -91,6 +106,12 @@ export interface PlanCheckoutState {
   readonly isLoading: boolean;
   /** A page is ready to open (iOS `checkoutURL`), once the payment sheet has gone. */
   readonly checkoutReady: boolean;
+  /**
+   * No new checkout was made: an earlier checkout of this plan (still
+   * unverified, still being checked, or confirmed a moment ago) is followed
+   * instead, once the payment sheet has gone (`followEarlierCheckout`).
+   */
+  readonly earlierPending: boolean;
   /** The hosted page is opening or open. */
   readonly pageOpen: boolean;
   /** "Confirming your payment…" is on screen (iOS `isVerifying`). Its Cancel hides it; the check goes on. */
@@ -116,6 +137,7 @@ const INITIAL: PlanCheckoutState = Object.freeze({
   checkoutInFlight: false,
   isLoading: false,
   checkoutReady: false,
+  earlierPending: false,
   pageOpen: false,
   isVerifying: false,
   verificationRunning: false,
@@ -155,8 +177,78 @@ interface Purchase {
   readonly externalSessionId: string | null;
 }
 
+/** What an earlier checkout of the same plan says before a new one is made (`earlierCheckoutOf`). */
+type EarlierCheckout =
+  /** A plan check is still running (this Plans screen's, or one a closed Plans left behind). */
+  | { readonly kind: 'running' }
+  /** An earlier checkout of this plan was never verified (its status check did not answer). */
+  | { readonly kind: 'unresolved'; readonly memberId: string; readonly attemptId: string }
+  /** It was confirmed while this tap waited; `presented`: the rails have said the welcome. */
+  | { readonly kind: 'paid'; readonly presented: boolean }
+  /** Another hosted page is open: no checkout can start. */
+  | { readonly kind: 'busy' };
+
 function isPassSlug(slug: string): boolean {
   return slug.startsWith('pass-');
+}
+
+/** The member the money rails save attempts under, or null when signed out. */
+function currentMemberId(): string | null {
+  const { userId, profile } = useAppStore.getState();
+  return userId ?? profile?.id ?? null;
+}
+
+/** The member's saved checkouts of `slug` (the rails' in-flight records); none when they can't be read. */
+async function planRecords(memberId: string, slug: string): Promise<PlanInflight[]> {
+  let records: InflightRecord[];
+  try {
+    records = await readInflight(memberId);
+  } catch {
+    return [];
+  }
+  return records.filter((record): record is PlanInflight => record.rail === 'plan' && record.plan.productSlug === slug);
+}
+
+// ---- The plan checks running in this process ------------------------------
+//
+// A check (the page and its verification, or an earlier checkout verified
+// again) outlives the Plans screen that started it: Cancel on "Confirming
+// your payment…" lets it run on, and the member may then close Plans and open
+// it again. The rails open no new page while it runs, so every Plans screen
+// must know of it, not only the one that started it.
+
+const runningChecks = new Map<string, Set<Promise<void>>>();
+
+/** Notes `check` as running for `memberId` until it settles; returns it as is. */
+function trackCheck<T>(memberId: string, check: Promise<T>): Promise<T> {
+  const id = memberId.toLowerCase();
+  let checks = runningChecks.get(id);
+  if (!checks) {
+    checks = new Set();
+    runningChecks.set(id, checks);
+  }
+  const entry = check.then(
+    () => undefined,
+    () => undefined,
+  );
+  checks.add(entry);
+  void entry.then(() => {
+    checks.delete(entry);
+    if (checks.size === 0 && runningChecks.get(id) === checks) runningChecks.delete(id);
+  });
+  return check;
+}
+
+/** Settles once every plan check running for `memberId` has ended; null when none runs. */
+function runningCheck(memberId: string | null): Promise<void> | null {
+  const checks = memberId ? runningChecks.get(memberId.toLowerCase()) : undefined;
+  if (!checks || checks.size === 0) return null;
+  return Promise.all([...checks]).then(() => undefined);
+}
+
+/** Tests only: forget the running checks (as a new process would). */
+export function resetPlanChecksForTests(): void {
+  runningChecks.clear();
 }
 
 export class PlanCheckoutModel {
@@ -164,6 +256,10 @@ export class PlanCheckoutModel {
   readonly inAppCheckout: boolean;
   private readonly isScreenAlive: () => boolean;
   private purchase: Purchase | null = null;
+  /** The earlier checkout this purchase follows instead of a new one (`earlierPending`). */
+  private earlier: EarlierCheckout | null = null;
+  /** The running check this screen's overlay is following (one a closed Plans left running). */
+  private followed: Promise<void> | null = null;
   /** The catalogue re-read after a `product_not_on_sale` refusal (kept so a test can wait for it). */
   catalogRefresh: Promise<void> | null = null;
 
@@ -252,8 +348,9 @@ export class PlanCheckoutModel {
         prePurchaseSubSlug: subscription && isSubscriptionActive(subscription) ? subscription.productSlug : null,
       };
       this.purchase = { plan, context, url: null, externalSessionId: null };
+      this.earlier = null;
       // A new attempt starts clean: no alert, no chip, no page from the last one.
-      this.set({ isLoading: true, error: null, verificationPending: false, checkoutReady: false });
+      this.set({ isLoading: true, error: null, verificationPending: false, checkoutReady: false, earlierPending: false });
       track('begin_checkout', { plan_id: plan.id, mode: plan.mode });
 
       // Web-first fallback: the web plans page preselects this product (and
@@ -265,17 +362,124 @@ export class PlanCheckoutModel {
         return;
       }
 
-      try {
-        const session = await createCheckout(plan.id, { saveCard: options.saveCard ?? null, promotionCode: sentCode });
-        this.purchase = { ...this.purchase, url: session.url, externalSessionId: session.externalSessionId };
-        this.set({ checkoutReady: true });
-      } catch (error) {
-        this.refused(plan, error, sentCode);
+      // Asked with the sheet's spinner still up, BEFORE a session is made
+      // (see "NO SESSION THE RAILS WILL NOT OPEN").
+      const memberId = currentMemberId();
+      const earlier = memberId ? await this.earlierCheckoutOf(plan, memberId) : null;
+      if (earlier?.kind === 'busy') {
+        this.set({ error: { message: t('payment.err.checkout'), cta: null } });
+      } else if (earlier) {
+        this.earlier = earlier;
+        this.set({ earlierPending: true });
+      } else {
+        try {
+          const session = await createCheckout(plan.id, { saveCard: options.saveCard ?? null, promotionCode: sentCode });
+          this.purchase = { ...this.purchase, url: session.url, externalSessionId: session.externalSessionId };
+          this.set({ checkoutReady: true });
+        } catch (error) {
+          this.refused(plan, error, sentCode);
+        }
       }
       this.set({ isLoading: false });
     } finally {
       this.set({ checkoutInFlight: false });
     }
+  }
+
+  /**
+   * What the rails would do with a new checkout of `plan` before its page
+   * opens (src/payments attempts `begin`), asked before the session exists so
+   * none is made in vain. Null: make the checkout.
+   *
+   * - A plan check still running: the rails open no page meanwhile.
+   * - Another hosted page open: likewise.
+   * - A saved checkout of this plan: first wait for whatever the rails'
+   *   recovery is settling for the member (it may be this very one). Then it
+   *   is either confirmed (the member just paid: no second purchase), still
+   *   unverified (the rails allow no new session while it is unknown, so it is
+   *   verified again instead), or gone for another reason (a timeout, a page
+   *   never paid): a new checkout is then the member's choice.
+   */
+  private async earlierCheckoutOf(plan: Plan, memberId: string): Promise<EarlierCheckout | null> {
+    if (runningCheck(memberId)) return { kind: 'running' };
+    if (isHostedPageOpen()) return { kind: 'busy' };
+    const before = await planRecords(memberId, plan.id);
+    if (before.length === 0) return null;
+    let found: Awaited<ReturnType<typeof unresolvedPayments>>;
+    try {
+      found = await unresolvedPayments(memberId);
+    } catch {
+      // The rails' own check still runs before the page; nothing is claimed here.
+      return null;
+    }
+    const paid = found.resolved.find(
+      (entry) =>
+        entry.resolution.rail === 'plan' && before.some((record) => record.attemptId === entry.resolution.record.attemptId),
+    );
+    if (paid) return { kind: 'paid', presented: paid.presented };
+    const unknown = found.unresolved.find((record) => record.rail === 'plan' && record.plan.productSlug === plan.id);
+    if (unknown) return { kind: 'unresolved', memberId, attemptId: unknown.attemptId };
+    if (runningCheck(memberId)) return { kind: 'running' };
+    return null;
+  }
+
+  /**
+   * After the payment sheet has gone, when `purchasePlan` made no checkout
+   * because an earlier one decides this tap (`earlierPending`). Never throws.
+   */
+  async followEarlierCheckout(): Promise<void> {
+    const earlier = this.earlier;
+    const purchase = this.purchase;
+    this.earlier = null;
+    if (!this.state.earlierPending) return;
+    this.set({ earlierPending: false });
+    if (!earlier || !purchase) return;
+    switch (earlier.kind) {
+      case 'running':
+        this.showOverlay();
+        return;
+      case 'paid':
+        // Confirmed a moment ago, while the tap waited: the welcome (once).
+        if (!earlier.presented) this.set({ verificationPending: false, welcome: welcomeFor(purchase) });
+        return;
+      case 'unresolved':
+        await this.verifyEarlier(earlier.memberId, earlier.attemptId);
+        return;
+      case 'busy':
+        return;
+    }
+  }
+
+  /**
+   * Verifies again the earlier checkout of this plan that was never verified,
+   * under "Confirming your payment…". The rails' recovery settles it (it is
+   * the attempt's owner while no screen holds it). It runs as a quiet check,
+   * so the rails draw no second "Confirming" over this one; a confirmed
+   * purchase or the timeout is still said, by the rails' plan presenter in
+   * the Plans screen's words. A check that still does not answer is said here,
+   * and the attempt stays saved for the next try.
+   */
+  private async verifyEarlier(memberId: string, attemptId: string): Promise<void> {
+    this.startVerifying();
+    await trackCheck(
+      memberId,
+      recoverPayments(memberId, 'foreground').then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    let stillUnknown: boolean;
+    try {
+      stillUnknown = (await readInflight(memberId)).some((record) => record.attemptId === attemptId);
+    } catch {
+      stillUnknown = false;
+    }
+    this.set({
+      pageOpen: false,
+      isVerifying: false,
+      verificationRunning: false,
+      ...(stillUnknown ? { error: { message: t('payment.err.checkout'), cta: null } } : {}),
+    });
   }
 
   /** How a refused checkout is said (iOS `purchasePlan`'s catches, in order). */
@@ -319,39 +523,43 @@ export class PlanCheckoutModel {
    */
   async openCheckout(): Promise<void> {
     const purchase = this.purchase;
-    if (!this.state.checkoutReady || !purchase?.url) return;
+    const url = purchase?.url;
+    if (!this.state.checkoutReady || !purchase || !url) return;
     this.set({ checkoutReady: false, pageOpen: true });
-    const { userId, profile } = useAppStore.getState();
-    const memberId = userId ?? profile?.id ?? null;
+    const memberId = currentMemberId();
     if (!memberId) {
       this.finish({ kind: 'neverOpened' }, purchase);
       return;
     }
-    let result: CheckoutResult;
-    try {
-      result = await checkoutOnHostedPage({
-        memberId,
-        url: purchase.url,
-        externalSessionId: purchase.externalSessionId,
-        plan: purchase.context,
-        isScreenAlive: this.isScreenAlive,
-        onVerifying: () => this.startVerifying(),
-      });
-      if (result.kind === 'unresolved') {
-        // An earlier checkout of this same plan or pass was never verified (its
-        // status check did not answer): no second page opened. Verify that
-        // one now, on screen, under its own session.
+    const run = async (): Promise<CheckoutResult> => {
+      try {
+        const opened = await checkoutOnHostedPage({
+          memberId,
+          url,
+          externalSessionId: purchase.externalSessionId,
+          plan: purchase.context,
+          isScreenAlive: this.isScreenAlive,
+          onVerifying: () => this.startVerifying(),
+        });
+        if (opened.kind !== 'unresolved') return opened;
+        // An earlier checkout of this same plan or pass was never verified
+        // (its status check did not answer) and no second page opened. Asked
+        // before the create (`earlierCheckoutOf`), so this is the web-first
+        // fallback or a record saved in between. Verify that one now, on
+        // screen, under its own session.
         this.startVerifying();
-        result = await checkCheckoutAgain(result.attempt, this.isScreenAlive);
+        return await checkCheckoutAgain(opened.attempt, this.isScreenAlive);
+      } catch (error) {
+        // The rails are written never to throw; should they, nothing is claimed.
+        return { kind: 'verified', verification: { kind: 'failed', error }, presented: false };
       }
-    } catch (error) {
-      // The rails are written never to throw; should they, nothing is claimed.
-      result = { kind: 'verified', verification: { kind: 'failed', error }, presented: false };
-    }
-    this.finish(result, purchase);
+    };
+    this.finish(await trackCheck(memberId, run()), purchase);
   }
 
   private startVerifying(): void {
+    // This screen's own check from here on: a check it was following no longer clears the overlay.
+    this.followed = null;
     this.set({ pageOpen: false, isVerifying: true, verificationRunning: true, error: null });
   }
 
@@ -363,8 +571,10 @@ export class PlanCheckoutModel {
       case 'unresolved':
       case 'neverOpened':
         // No page came up: no browser could show it, or (Android only, and
-        // not while Plans is on top) another payment held the rail. Nothing
-        // can have been paid on this checkout; the member can try again.
+        // not while Plans is on top) another kind of payment, a booking's or
+        // a walk-in's, was being settled at that moment (a plan's own earlier
+        // checkout is asked about before the create). Nothing can have been
+        // paid on this checkout; the member can try again.
         this.set({ ...done, error: { message: t('payment.err.checkout'), cta: null } });
         return;
       case 'verified':
@@ -431,9 +641,36 @@ export class PlanCheckoutModel {
     this.set({ isVerifying: false });
   }
 
-  /** Brings the overlay back while a check is still running (a tap on Continue meanwhile). */
+  /**
+   * A plan check is still running: this screen's (behind a cancelled
+   * overlay), or one a Plans screen that has since closed left running. The
+   * rails open no new page until it ends.
+   */
+  get isCheckRunning(): boolean {
+    return this.state.verificationRunning || runningCheck(currentMemberId()) !== null;
+  }
+
+  /**
+   * Brings "Confirming your payment…" back while a check is still running (a
+   * tap on Continue meanwhile), rather than a second checkout over a payment
+   * that may just have gone through. A check another Plans screen left
+   * running is followed until it ends; the rails tell its outcome themselves,
+   * that screen being gone.
+   */
   showOverlay(): void {
-    if (this.state.verificationRunning) this.set({ isVerifying: true });
+    if (this.state.verificationRunning) {
+      this.set({ isVerifying: true });
+      return;
+    }
+    const running = runningCheck(currentMemberId());
+    if (!running) return;
+    this.followed = running;
+    this.set({ isVerifying: true, verificationRunning: true });
+    void running.then(() => {
+      if (this.followed !== running) return;
+      this.followed = null;
+      this.set({ isVerifying: false, verificationRunning: false });
+    });
   }
 
   /** The payment alert was answered; its next step goes with it. */

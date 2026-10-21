@@ -22,9 +22,12 @@
  * page is open or it is being verified, and Plans cannot be closed meanwhile
  * (`busy`). The overlay's Cancel lets the member go while the check runs on
  * behind it; a tap on Continue before it has finished brings the overlay
- * back rather than a second payment sheet, so a member who has just paid is
- * never walked into paying twice. If Plans has gone by the time the answer
- * arrives, the money rails tell the member themselves (src/payments).
+ * back rather than a second payment sheet (also after Plans was closed and
+ * opened again), so a member who has just paid is never walked into paying
+ * twice. If Plans has gone by the time the answer arrives, the money rails
+ * tell the member themselves (src/payments). A Continue that finds an
+ * earlier checkout of the same plan still unverified verifies that one
+ * instead of making a new one (./checkoutModel.ts).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
@@ -52,7 +55,14 @@ interface SheetState {
 
 /** A checkout is being created, its page is open or about to open, or its return is on screen. */
 function isBusy(state: PlanCheckoutState): boolean {
-  return state.isLoading || state.checkoutInFlight || state.checkoutReady || state.pageOpen || state.isVerifying;
+  return (
+    state.isLoading ||
+    state.checkoutInFlight ||
+    state.checkoutReady ||
+    state.earlierPending ||
+    state.pageOpen ||
+    state.isVerifying
+  );
 }
 
 /** The welcome's words (iOS PlansView's `purchaseComplete` alert). */
@@ -93,18 +103,25 @@ export function usePlanCheckout(events: PlanCheckoutEvents): PlanCheckout {
     setSheet(next);
   }, []);
 
-  /** After the checkout's create, with no sheet on screen: the page, or the Kenni gate. */
+  /**
+   * After the checkout's create, with no sheet on screen: the page, the
+   * earlier checkout of this plan that decides the tap instead of a new one,
+   * or the Kenni gate.
+   */
   const followCreate = useCallback(() => {
     if (model.state.checkoutReady) void model.openCheckout();
+    else if (model.state.earlierPending) void model.followEarlierCheckout();
     const blocked = model.takeKennitalaRefusal();
     if (blocked && mounted.current) latestEvents.current.onKennitalaRequired(blocked, model.state.discountCode);
   }, [model]);
 
   const begin = useCallback(
     (plan: Plan, discountCode: string) => {
-      // The last payment is still being confirmed behind a cancelled overlay:
-      // show that again, never a second checkout over it.
-      if (model.state.verificationRunning) {
+      // A payment is still being confirmed behind a cancelled overlay (this
+      // screen's, or one a closed Plans left running): show that again, never
+      // a second checkout over it. The money rails would open no page for it
+      // anyway while that check runs.
+      if (model.isCheckRunning) {
         model.showOverlay();
         return;
       }
