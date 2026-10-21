@@ -42,6 +42,13 @@ import { choice, MEMBER, myFoods, myOats, offline, presets, problem, signIn, sto
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 jest.mock('@gorhom/bottom-sheet', () => require('../../../../components/ui/testing/bottomSheetMock').bottomSheetModule);
 jest.mock('../../describe', () => ({ openDescribe: jest.fn(), DescribeHost: () => null }));
+// Under Reanimated's Jest mock the swipe's callbacks are not worklets and the
+// gesture library says so on every My foods row; the swipe itself is not
+// under test here (TalkBack's action is).
+jest.mock('react-native-gesture-handler/ReanimatedSwipeable', () => ({
+  __esModule: true,
+  default: ({ children }: { children: unknown }) => children,
+}));
 jest.mock('../../../../health/consent/presenter', () => ({
   ...jest.requireActual('../../../../health/consent/presenter'),
   openHealthConsent: jest.fn(() => true),
@@ -169,6 +176,15 @@ describe('a lunch by search', () => {
     await act(async () => fireEvent.press(screen.getByText('Food diary')));
     expect(useIntentStore.getState().pendingPlanAction?.action).toEqual({ kind: 'openDiary', date: TODAY });
     expect(useIntentStore.getState().pendingTab).toBe('Plan');
+  });
+
+  it('without the item editor wired in, a row’s tap adds its usual portion', async () => {
+    useApi();
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getAllByTestId(`food.open.${choice().key}`).length).toBeGreaterThan(0));
+    await act(async () => fireEvent.press(screen.getAllByTestId(`food.open.${choice().key}`)[0]!));
+    expect(within(screen.getByTestId('meal.trayBar')).getByText('1 item · 107 kcal')).toBeOnTheScreen();
   });
 
   it('Undo takes the last add back out of the tray', async () => {

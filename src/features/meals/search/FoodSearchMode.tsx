@@ -112,6 +112,10 @@ export default function FoodSearchMode({ model }: FoodSearchModeProps) {
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const field = useRef<TextInput>(null);
+  // The food last opened in the editor, kept while its sheet slides away.
+  const lastEditing = useRef<FoodChoice | null>(null);
+  if (editing) lastEditing.current = editing;
+  const shownEditing = lastEditing.current;
 
   const trimmed = trimmedQuery(query);
   const querying = isQuerying(query);
@@ -415,16 +419,18 @@ export default function FoodSearchMode({ model }: FoodSearchModeProps) {
         }}
         onClose={() => setShowCreate(false)}
       />
-      {NewItemEditor && editing ? (
+      {NewItemEditor && shownEditing ? (
         <NewItemEditor
-          visible
-          item={draftFromChoice(editing)}
-          offBarcode={editing.source === 'off' ? editing.barcode : null}
+          // A fresh editor per food (iOS `.sheet(item:)`).
+          key={shownEditing.key}
+          visible={editing !== null}
+          item={draftFromChoice(shownEditing)}
+          offBarcode={shownEditing.source === 'off' ? shownEditing.barcode : null}
           onAdd={(item) =>
             add(
               [item],
-              entrySourceFor(editing, null, presets, mineLists),
-              fromValueFor(editing, presets, mineLists, querying),
+              entrySourceFor(shownEditing, null, presets, mineLists),
+              fromValueFor(shownEditing, presets, mineLists, querying),
               false,
             )
           }

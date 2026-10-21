@@ -51,7 +51,7 @@ import FoodSearchMode from '../search/FoodSearchMode';
 
 import CaptureHeader, { CAPTURE_HEADER_HEIGHT } from './CaptureHeader';
 import { CAPTURE_MODES, MealCaptureModel, modeUsesCamera, pageToastOffset, photoAllowed, type CaptureCloseTray } from './captureModel';
-import { pageKeyOf, registerCapturePage, takeEditorHandoff, useCapture } from './capturePages';
+import { pageKeyOf, peekEditorHandoff, registerCapturePage, takeEditorHandoff, useCapture } from './capturePages';
 import { openMealDatePicker } from './datePicker';
 import { rememberMode } from './lastMode';
 import MealTrayBar from './MealTrayBar';
@@ -105,7 +105,7 @@ export default function MealCaptureScreen({ navigation, route }: MealCaptureScre
         mode: openingMode(params.mode),
         slot: params.slot ? { kind: 'fixed', slot: params.slot } : { kind: 'auto' },
         date: params.date && params.date <= todayServerDay() ? params.date : todayServerDay(),
-        onAddToMeal: params.origin === 'editor' ? takeEditorHandoff() : null,
+        onAddToMeal: params.origin === 'editor' ? peekEditorHandoff() : null,
       }),
   );
   const mode = useCapture(model, (s) => s.mode);
@@ -142,8 +142,10 @@ export default function MealCaptureScreen({ navigation, route }: MealCaptureScre
     [navigation],
   );
 
-  // The page's own hooks into its model.
+  // The page's own hooks into its model. An editor page has taken its
+  // handoff now: the next page opened for an editor gets its own.
   useEffect(() => {
+    if (model.origin === 'editor') takeEditorHandoff();
     const pageKey = pageKeyOf(navigation);
     const unregister = pageKey ? registerCapturePage(pageKey, model) : () => undefined;
     model.bind({

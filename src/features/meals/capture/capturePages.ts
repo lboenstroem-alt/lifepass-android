@@ -100,6 +100,11 @@ export function setEditorHandoff(onAddToMeal: ((items: readonly MealItemDraft[])
   pendingEditorHandoff = onAddToMeal;
 }
 
+/** The parked handoff, left in place (a render may run twice before it mounts). */
+export function peekEditorHandoff(): ((items: readonly MealItemDraft[]) => void) | null {
+  return pendingEditorHandoff;
+}
+
 /** The parked handoff, taken once by the `editor` page that opens next. */
 export function takeEditorHandoff(): ((items: readonly MealItemDraft[]) => void) | null {
   const handoff = pendingEditorHandoff;
