@@ -1,19 +1,22 @@
 /**
  * The phone's half of an account deletion, run once the deletion sheet has
- * gone (iOS `AccountDeletionSheet.finishDeletionIfNeeded`).
+ * gone (iOS `AccountDeletionSheet.finishDeletionIfNeeded`), in iOS's order:
+ *
+ * 1. The health store's `wipeLocal` with the reason `account_deletion`: the
+ *    health files, outboxes, reminders and notifications, then every
+ *    package's health-wipe hook (the Coach drops the health turns of a chat
+ *    still on screen).
+ * 2. The Coach's saved chats, and their owner: iOS calls
+ *    `CoachViewModel.forgetSavedSessions()` here by name. They are the
+ *    member's typed words, often about their health, and the sheet has just
+ *    said the health data is deleted at once. A sign-out would take them
+ *    too, but deletion does not sign out. Called whatever the wipe did, and
+ *    even when the wipe could name nobody, as iOS calls it unconditionally.
+ * 3. The profile, read again, so every screen shows the account as the
+ *    server now has it.
  *
  * The server deleted every health row in the same transaction as the
- * request; what is left here is a cache, and it goes now: the health files,
- * outboxes, reminders and notifications (the health store's `wipeLocal`,
- * which also runs every package's health-wipe hook with the reason
- * `account_deletion`), then the profile is read again so every screen shows
- * the account as the server now has it.
- *
- * THE COACH'S SAVED CHATS go through that same hook. iOS calls
- * `CoachViewModel.forgetSavedSessions()` here by name; on Android the Coach
- * owns its chats and forgets them from its own health-wipe hook when the
- * reason is `account_deletion` (src/features/coach/register.ts, COACH-1),
- * so this file never reaches into the Coach's storage.
+ * request; what is left here is a cache.
  *
  * WHY AFTER THE SHEET, NOT AT THE ANSWER. The wipe resets what screens show
  * and can take the presenting screen with it; run first, the member who
@@ -26,6 +29,7 @@
  */
 import { useHealthStore } from '../../../health';
 import { useAppStore } from '../../../stores/appStore';
+import { forgetSavedCoachSessions } from '../../coach';
 
 /**
  * Whose data the wipe is for: the profile's id when it loaded, else the
@@ -37,13 +41,19 @@ export function memberForDeletionWipe(): string | null {
   return app.profile?.id ?? app.userId ?? null;
 }
 
-/** Wipes this phone's copy of the member's health data, then re-reads the profile. Never throws. */
+/** Wipes this phone's copy of the member's health data and saved Coach chats, then re-reads the profile. Never throws. */
 export async function finishAccountDeletionOnPhone(profileId: string | null): Promise<void> {
   try {
     await useHealthStore.getState().wipeLocal({ profileId, reason: 'account_deletion' });
   } catch {
-    // A wipe that fails part-way still lets the profile read below put the
-    // screens right; the next reconcile takes what is left.
+    // A wipe that fails part-way still lets the steps below run; the next
+    // reconcile takes what is left.
+  }
+  try {
+    await forgetSavedCoachSessions();
+  } catch {
+    // Storage that refuses the delete must not keep the profile read below
+    // from putting the screens right; the next sign-out deletes them again.
   }
   await useAppStore.getState().loadProfile();
 }
