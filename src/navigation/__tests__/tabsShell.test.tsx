@@ -13,6 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen } from '@testing-library/react-native';
 
 import { handleNotificationResponse, useNotificationRouter } from '../../app/notificationRouter';
+import { usePlanShell } from '../../features/plan/shell';
 import { setAnalyticsObserver, type AnalyticsParams } from '../../lib/analytics';
 import { useAppStore } from '../../stores/appStore';
 import { useIntentStore } from '../../stores/intentStore';
@@ -191,7 +192,10 @@ describe('a notification tap', () => {
     tapNotification('plan.checkin');
     await renderShell();
     expect(currentTab()).toBe('Plan');
-    expect(useIntentStore.getState().takePlanAction()?.action).toEqual({ kind: 'openWeeklyCheckIn' });
+    // Plan's screen (PLAN-1) takes the action off the intent store as it
+    // appears and holds it until its read can answer it.
+    const planAction = usePlanShell.getState().parked?.action ?? useIntentStore.getState().takePlanAction()?.action;
+    expect(planAction).toEqual({ kind: 'openWeeklyCheckIn' });
     // iOS testANotificationStillRoutesFromALaunchOntoExplore.
     expect(screen.queryByText(/^Explore, filters/, { includeHiddenElements: true })).toBeNull();
     expect(useIntentStore.getState().exploreLaunchPresentation).toBe(false);
@@ -395,6 +399,10 @@ describe('every route of plan 3.0.2', () => {
     expect(SHARED_ROUTE_NAMES).toEqual(sharedRoutes);
   });
 
+  // 21 routes in 5 tabs, each back to the tab's first screen: on Plan that is
+  // the real Plan screen appearing again every time (PLAN-1). About 1.5 s on
+  // an idle machine, but over 20 s on one loaded by parallel suites, so the
+  // default five seconds (and even twenty) fails a correct run.
   it('every shared route opens in every tab, on top of that tab’s own first screen', async () => {
     signedIn('Home');
     await renderShell();
@@ -412,8 +420,6 @@ describe('every route of plan 3.0.2', () => {
         expect(currentRouteName()).toBe(TAB_ROOT_SCREEN[tab]);
       }
     }
-    // Every tab times every shared route: about 2 s alone, but it can pass Jest's 5 s default
-    // when the whole repo's suites run side by side. A real failure still fails.
   }, 60_000);
 
   it('every root modal opens over the tabs', async () => {
