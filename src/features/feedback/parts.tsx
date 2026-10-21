@@ -45,7 +45,11 @@ export function FeedbackActionButton({ action, onPress }: { action: ShownFeedbac
   );
 }
 
-/** The card's filled capsule ("See your month", "Choose what is in it", "Include food and weight"). */
+/**
+ * The card's filled capsule ("See your month", "Choose what is in it",
+ * "Include food and weight"). 40 tall as on iOS, but it grows and wraps
+ * rather than clip a label at a large font size or on a narrow phone.
+ */
 export function FeedbackFilledButton({ label, onPress, testID }: { label: string; onPress: () => void; testID: string }) {
   return (
     <Pressable
@@ -56,7 +60,7 @@ export function FeedbackFilledButton({ label, onPress, testID }: { label: string
       style={({ pressed }) => [styles.filled, pressed && styles.pressed]}
       testID={testID}
     >
-      <LPText size={13} weight="semibold" color={colors.onAccent}>
+      <LPText size={13} weight="semibold" color={colors.onAccent} align="center">
         {label}
       </LPText>
     </Pressable>
@@ -108,8 +112,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   filled: {
-    height: 40,
+    minHeight: 40,
+    flexShrink: 1,
     paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 999,
     backgroundColor: colors.rust,
     justifyContent: 'center',
