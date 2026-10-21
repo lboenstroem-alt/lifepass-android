@@ -15,8 +15,7 @@
  *   the foreground, whatever tab is showing (../register.ts, background: it
  *   never presents anything);
  * - on Plan's load and pull, after the workout outbox (`mealOutboxPlanSource`,
- *   foreground), once PLAN-1's bridge installs it: a merge gate, see
- *   ../register.ts.
+ *   foreground), through PLAN-1's bridge, installed by ../register.ts.
  * After a background flush that sent a meal for TODAY, the Today read
  * reloads, so Plan and Home count it.
  *
@@ -406,8 +405,7 @@ export interface MealOutboxPlanItem {
 /**
  * Plan's view of this outbox, shaped as PLAN-1's `PlanOutboxSource`
  * (src/features/plan/shell/bridges.ts) so it installs as it is, through
- * Plan's feature index once PLAN-1 exports it there (../register.ts, the
- * merge gate):
+ * Plan's feature index (../register.ts):
  *
  *   installPlanOutbox('meal', mealOutboxPlanSource);
  *

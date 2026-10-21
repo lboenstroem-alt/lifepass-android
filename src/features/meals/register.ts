@@ -18,29 +18,25 @@
 //   in the background (iOS MainTabView's `.task(id: profile.id)` and
 //   ContentView's activation flush). Never a sheet.
 //
-// MERGE GATE: PLAN'S FAILED-ITEM BANNER IS NOT WIRED ON THIS BRANCH. iOS
-// installs the meal half of `PlanOutboxBridge` in `MealOutbox.activate`;
-// here that is PLAN-1's `installPlanOutbox`, in a file that is not on
-// feat/ios-parity yet (src/features/plan/shell/bridges.ts, parity/plan-1).
-// Until it is, a meal the server refuses is marked failed and shown nowhere,
-// counts toward the ten, and Plan's load and pull never flush meals as the
-// member's own action. Contract request to PLAN-1 (RUN-1 raised the same):
-// export `installPlanOutbox` and `installedOutboxes` from
-// src/features/plan/index.ts, the only door the feature-boundaries rule
-// leaves open. Whichever of parity/plan-1 and parity/meal-1 merges SECOND
-// then adds, at module load below:
-//
-//   import { installPlanOutbox } from '../plan';
-//   installPlanOutbox('meal', mealOutboxPlanSource);
-//
-// (with `mealOutboxPlanSource` from './outbox/mealOutbox'). The register
-// test turns on by itself once bridges.ts exists and fails until then.
+// PLAN'S OUTBOX BRIDGE: the meal half of iOS `PlanOutboxBridge` (installed
+// in `MealOutbox.activate` there) is installed below, at module load, so
+// Plan's load and pull flush meals as the member's own action after the
+// workout outbox, and a meal the server refuses shows in Plan's failed-item
+// banner with Discard (../__tests__/register.test.ts).
 import { registerActivationHook, registerSignOutCleaner } from '../../app/signOut';
 import * as localStore from '../../health/localStore';
 import { registerHealthWipeHook } from '../../health/wipe';
+import { installPlanOutbox } from '../plan';
 
 import { foodsCacheProfileId, resetFoodsCacheMemory } from './foodsCache/foodsCache';
-import { activateMealOutbox, mealOutboxProfileId, resetMealOutboxMemory } from './outbox/mealOutbox';
+import {
+  activateMealOutbox,
+  mealOutboxPlanSource,
+  mealOutboxProfileId,
+  resetMealOutboxMemory,
+} from './outbox/mealOutbox';
+
+installPlanOutbox('meal', mealOutboxPlanSource);
 
 /** The meal files a member's folder can hold. */
 export const MEAL_LOCAL_FILES = ['mealOutbox', 'tray', 'foods'] as const;

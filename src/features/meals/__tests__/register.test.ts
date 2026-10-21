@@ -5,8 +5,7 @@
  * on its native cleanup; a sign-out removes the outbox, the tray and the
  * foods cache of the member who left, even when it could name nobody; an
  * activation loads the member's queue and sends it in the background; and
- * once PLAN-1's bridges are on the branch, the meal half of Plan's
- * failed-item banner is installed (the merge gate).
+ * the meal half of Plan's failed-item banner is installed.
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -240,13 +239,11 @@ it('an activation loads the member’s queue and sends it in the background', as
 });
 
 // ---------------------------------------------------------------------------
-// MERGE GATE: Plan's failed-item banner (see ../register.ts)
+// Plan's failed-item banner (see ../register.ts)
 //
-// PLAN-1 owns the bridge (src/features/plan/shell/bridges.ts), not on this
-// branch yet. Once it is, this runs, and fails until PLAN-1's feature index
-// exports the bridge (the contract request RUN-1 raised too: the boundary
-// rule leaves only `../plan` open) and ../register.ts installs the meal
-// source into it.
+// PLAN-1 owns the bridge (src/features/plan/shell/bridges.ts) and exports it
+// through its feature index (the boundary rule leaves only `../plan` open);
+// ../register.ts installs the meal source into it at module load.
 
 /** The part of PLAN-1's feature index this checks. */
 interface PlanFeatureIndex {
@@ -263,7 +260,7 @@ const planBridgesOnThisBranch = existsSync(join(__dirname, '../../plan/shell/bri
   const plan = require('../../plan') as PlanFeatureIndex;
   expect(typeof plan.installedOutboxes).toBe('function');
   const source = plan.installedOutboxes?.().find((installed) => installed === mealOutboxPlanSource);
-  // Fails until register.ts calls installPlanOutbox('meal', mealOutboxPlanSource).
+  // register.ts calls installPlanOutbox('meal', mealOutboxPlanSource).
   expect(source).toBe(mealOutboxPlanSource);
   seedMemberFiles([entry('f', 'failed')]);
   await activateMealOutbox({ profileId: MEMBER });
