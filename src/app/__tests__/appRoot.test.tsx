@@ -22,9 +22,9 @@ jest.mock('expo-font', () => ({ ...jest.requireActual('expo-font'), useFonts: ()
 jest.mock('../../features/auth/authCallback', () => ({ handleAuthCallback: jest.fn() }));
 
 /* eslint-disable @typescript-eslint/no-require-imports */
-jest.mock('../../screens/auth/OnboardingScreen', () => require('../../navigation/__tests__/standIn').standInScreen('Onboarding'));
-jest.mock('../../screens/auth/LoginScreen', () => require('../../navigation/__tests__/standIn').standInScreen('Login'));
-jest.mock('../../screens/auth/SignUpScreen', () => require('../../navigation/__tests__/standIn').standInScreen('SignUp'));
+jest.mock('../../features/auth/screens/OnboardingScreen', () => require('../../navigation/__tests__/standIn').standInScreen('Onboarding'));
+jest.mock('../../features/auth/screens/LoginScreen', () => require('../../navigation/__tests__/standIn').standInScreen('Login'));
+jest.mock('../../features/auth/screens/SignUpScreen', () => require('../../navigation/__tests__/standIn').standInScreen('SignUp'));
 // The first build's screens read the network or native views at load; the root only needs them to exist.
 jest.mock('../../screens/home/HomeScreen', () => require('../../navigation/__tests__/standIn').standInScreen('Home'));
 jest.mock('../../screens/explore/ExploreScreen', () => require('../../navigation/__tests__/standIn').standInScreen('Explore'));
