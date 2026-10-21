@@ -2,9 +2,10 @@
  * The deletion sheet (iOS AccountDeletionSheet): the active and pending
  * states, the confirm alert, the request with no body and one key per
  * presentation (reused on a retry), the answer shown BEFORE the local wipe,
- * the wipe and profile read once the sheet has gone, Keep my account with a
- * fresh key, the error lines, the lock while a request runs, and the web
- * link to /profile.
+ * the wipe and profile read once the sheet has gone (closed, or unmounted by
+ * whatever held it, even mid-request: iOS `onDisappear`), Keep my account
+ * with a fresh key, the error lines, the lock while a request runs, and the
+ * web link to /profile.
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { api, Reply, type StubReply } from '@test/server';
@@ -269,6 +270,74 @@ describe('requesting the deletion', () => {
       .map((r) => r.headers['idempotency-key']);
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBe(keys[1]);
+  });
+});
+
+describe('the wipe when whatever holds the sheet goes away', () => {
+  /** React's warnings about state set after an unmount, which neither case may produce. */
+  function watchConsoleErrors(): jest.SpyInstance {
+    return jest.spyOn(console, 'error');
+  }
+  const unmountedWarnings = (spy: jest.SpyInstance) =>
+    spy.mock.calls.filter((args) => args.some((arg) => typeof arg === 'string' && /unmounted/i.test(arg)));
+
+  it('a request that answers after the sheet has unmounted still wipes the phone and reads the profile', async () => {
+    signIn();
+    api.on('GET', '/account/deletion', Reply.ok(ACTIVE));
+    const post = held(Reply.ok(REQUESTED));
+    api.on('POST', '/account/deletion', post.responder);
+    const errors = watchConsoleErrors();
+    const view = await render(<Harness />);
+    await screen.findByTestId('deletion.active');
+    await fireEvent.press(deleteButton());
+    await fireEvent.press(confirmDelete());
+    await waitFor(() => expect(api.sentAll('/account/deletion').filter((r) => r.method === 'POST')).toHaveLength(1));
+    const profileReadsBefore = api.sentAll('/profile').length;
+
+    // The screen holding the sheet goes (the tabs unmount on a sign-out, say)
+    // while the request is still on its way.
+    await view.unmount();
+    expect(wipe).not.toHaveBeenCalled();
+    await act(async () => post.release());
+
+    await waitFor(() => expect(wipe).toHaveBeenCalledWith({ profileId: MEMBER, reason: 'account_deletion' }));
+    expect(wipe).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.sentAll('/profile').length).toBeGreaterThan(profileReadsBefore));
+    // The answer reached the app even with no sheet to show it.
+    expect(useAppStore.getState().profile?.health?.consent ?? null).toBeNull();
+    expect(unmountedWarnings(errors)).toEqual([]);
+  });
+
+  it('a sheet unmounted after a successful request, without closing, wipes once', async () => {
+    signIn();
+    api.on('GET', '/account/deletion', Reply.ok(ACTIVE));
+    api.on('POST', '/account/deletion', Reply.ok(REQUESTED));
+    const closed = jest.fn();
+    const errors = watchConsoleErrors();
+    const view = await render(<Harness onClosed={closed} />);
+    await screen.findByTestId('deletion.active');
+    await fireEvent.press(deleteButton());
+    await fireEvent.press(confirmDelete());
+    await screen.findByTestId('deletion.pending');
+    expect(wipe).not.toHaveBeenCalled();
+
+    await view.unmount();
+
+    await waitFor(() => expect(wipe).toHaveBeenCalledWith({ profileId: MEMBER, reason: 'account_deletion' }));
+    await act(async () => undefined);
+    expect(wipe).toHaveBeenCalledTimes(1);
+    expect(closed).not.toHaveBeenCalled();
+    expect(unmountedWarnings(errors)).toEqual([]);
+  });
+
+  it('a sheet unmounted with nothing requested wipes nothing', async () => {
+    signIn();
+    api.on('GET', '/account/deletion', Reply.ok(ACTIVE));
+    const view = await render(<Harness />);
+    await screen.findByTestId('deletion.active');
+    await view.unmount();
+    await act(async () => undefined);
+    expect(wipe).not.toHaveBeenCalled();
   });
 });
 
