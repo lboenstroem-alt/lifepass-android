@@ -10,6 +10,9 @@ import type { VisitChoiceOption } from '../../../../api/bookings';
 import { lookup, setCurrentLanguage } from '../../../../i18n';
 import VisitChoicePicker, { visitChoiceLabelKey } from '../VisitChoicePicker';
 
+// The UI kit's icons load fonts, whose loader needs expo-asset.
+jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
+
 const OPTIONS: VisitChoiceOption[] = [
   { choice: 'spend_visit', priceIsk: 1_500, consumesVisit: true, surchargeReason: 'premium_subscriber_visit', breakdown: null },
   { choice: 'keep_visit', priceIsk: 4_900, consumesVisit: false, surchargeReason: 'premium_visit_kept', breakdown: null },
