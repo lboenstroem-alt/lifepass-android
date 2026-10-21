@@ -40,7 +40,7 @@
  * model, so it keeps working at the free-tier lock and the daily cap.
  */
 import { isApiError } from '../../../api';
-import { fetchVenues, VENUE_PAGE_LIMIT } from '../../../api/venues';
+import { fetchVenues } from '../../../api/venues';
 import {
   apiCategory,
   applyLocationFilter,
@@ -62,6 +62,12 @@ import type { CoachFlow, CoachFlowEntry, CoachSendOptions } from './types';
 
 /** At most this many venue cards under one answer (iOS `prefix(10)`). */
 export const MAX_VENUE_CARDS = 10;
+/**
+ * The wizard's own page size (iOS `queryVenues` asks for `limit: 100`). Kept
+ * here, not borrowed from the general page default, so the location filter
+ * always has as many rows to choose from as on iOS.
+ */
+export const WIZARD_FETCH_LIMIT = 100;
 
 /** The wizard in progress (iOS `CoachQAFlow`), or null. */
 interface WizardState {
@@ -163,12 +169,12 @@ export async function runVenueQuery(category: string, answers: readonly string[]
     const override = coachCategoryOverride(answers);
     // A generous page (the API has no geo filter), so the location filter has
     // enough to choose from before the cards are trimmed to 10.
-    let all: readonly Venue[] = await fetchVenues({ category: override ?? broad, limit: VENUE_PAGE_LIMIT });
+    let all: readonly Venue[] = await fetchVenues({ category: override ?? broad, limit: WIZARD_FETCH_LIMIT });
     // Whether the narrow category produced what is shown: the sentence says
     // what is shown, not what was asked for.
     let usedOverride = override !== null;
     if (all.length === 0 && override !== null) {
-      all = await fetchVenues({ category: broad, limit: VENUE_PAGE_LIMIT });
+      all = await fetchVenues({ category: broad, limit: WIZARD_FETCH_LIMIT });
       usedOverride = false;
     }
     // iOS reads the last fix as the filter runs (no wait): the warm-up at the

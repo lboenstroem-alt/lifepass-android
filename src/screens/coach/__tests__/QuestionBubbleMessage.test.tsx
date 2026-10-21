@@ -4,8 +4,10 @@
  * server's limit as they are typed.
  */
 import { fireEvent, render, screen } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 
 import { lookup } from '../../../i18n';
+import { fonts } from '../../../theme';
 import QuestionBubbleMessage from '../QuestionBubbleMessage';
 
 // expo-font (behind @expo/vector-icons) imports expo-asset, which npm left
@@ -76,4 +78,15 @@ it('"Other" with nothing typed sends nothing', async () => {
   await fireEvent.changeText(screen.getByTestId('coach.question.other_input'), '   ');
   await fireEvent.press(screen.getByRole('button', { name: en('coach.a11y.send_message') }));
   expect(onSelect).not.toHaveBeenCalled();
+});
+
+it('the question has no width cap (a message bubble has 75%), and "Other" is typed in Inter Tight', async () => {
+  await render(<QuestionBubbleMessage question="Where?" options={OPTIONS} answered={false} onSelect={jest.fn()} />);
+  // iOS QuestionBubbleView sets no maxWidth on the question: it takes what the avatar leaves.
+  for (let node = screen.getByText('Where?').parent; node; node = node.parent) {
+    expect(StyleSheet.flatten(node.props.style)?.maxWidth).toBeUndefined();
+  }
+  await fireEvent.press(screen.getByRole('button', { name: en('coach.other.label') }));
+  // iOS `.font(.lpSans(size: 13))`.
+  expect(screen.getByTestId('coach.question.other_input')).toHaveStyle({ fontFamily: fonts.sans, fontSize: 13 });
 });
