@@ -16,7 +16,7 @@ import { HealthFormat, type Lang } from '../../i18n';
 import type { BodyAndGoalsAnchor } from '../../navigation/types';
 
 import type { WeightTrendWeek, WeightTrendWeeks } from './api';
-import { TargetWeightRules } from './sheets';
+import { TargetWeightRules } from './target/rules';
 
 export type Translate = (key: string, params?: Readonly<Record<string, string | number>>) => string;
 

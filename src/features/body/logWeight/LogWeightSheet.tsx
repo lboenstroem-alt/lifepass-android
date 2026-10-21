@@ -29,7 +29,7 @@ import { HealthFormat, useT } from '../../../i18n';
 import { track } from '../../../lib/analytics';
 import { colors } from '../../../theme';
 
-import { BODY_WEIGHT_RANGE } from '../sheets';
+import { BODY_WEIGHT_RANGE } from '../sheet/types';
 
 export type LogWeightSheetProps = {
   readonly visible: boolean;
