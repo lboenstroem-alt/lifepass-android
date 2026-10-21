@@ -6,7 +6,7 @@
  */
 import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { act, render } from '@testing-library/react-native';
+import { act, render, screen } from '@testing-library/react-native';
 import type { ComponentType } from 'react';
 import { Text, View } from 'react-native';
 
@@ -104,12 +104,39 @@ export function renderPushed(name: string, component: ComponentType<never>, opti
   );
 }
 
-/** Lets msw answers and the state they set land. */
-export async function settle(turns = 6): Promise<void> {
-  for (let i = 0; i < turns; i += 1) {
+/** What the member sees and hears of a rendered tree: the types, texts, ids and accessibility props. */
+function treeSignature(node: unknown): string {
+  if (node === null || node === undefined) return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(treeSignature).join('|');
+  const { type, props, children } = node as { type?: string; props?: Record<string, unknown>; children?: unknown };
+  const facts = ['testID', 'accessibilityLabel', 'accessibilityHint', 'accessibilityState', 'accessibilityValue']
+    .map((key) => {
+      const value = props?.[key];
+      return value === undefined ? '' : `${key}=${typeof value === 'object' ? JSON.stringify(value) : String(value)}`;
+    })
+    .join(',');
+  return `<${type ?? ''} ${facts}>${treeSignature(children)}</>`;
+}
+
+/**
+ * Lets msw answers and the state they set land: a few turns at once, then
+ * turns a few milliseconds apart until the tree has not changed for three of
+ * them (at most about two seconds). Counting a fixed number of turns was not
+ * enough on a busy machine, where an answer can take longer than six turns.
+ */
+export async function settle(minTurns = 6): Promise<void> {
+  let last = '';
+  let stable = 0;
+  for (let turn = 0; turn < 200; turn += 1) {
     await act(async () => {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await new Promise<void>((resolve) => setTimeout(resolve, turn < minTurns ? 0 : 10));
     });
+    if (turn < minTurns) continue;
+    const now = treeSignature(screen.toJSON());
+    stable = now === last ? stable + 1 : 0;
+    last = now;
+    if (stable >= 3) return;
   }
 }
 

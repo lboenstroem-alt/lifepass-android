@@ -43,6 +43,7 @@ import { isLiveProgramStatus, type HealthConsent } from '../../api/profile';
 import { Dialog } from '../../components/ui';
 import {
   consentWithdrawalBody,
+  healthLocalStore,
   livePlanGoal,
   mayTakeTarget,
   setHealthConsent,
@@ -181,6 +182,12 @@ export default function BodyAndGoalsScreen({ navigation, route }: SharedRoutePro
     });
     return () => subscription.remove();
   }, [refreshPermission]);
+
+  // An export the share sheet never got to delete (Android killed the app
+  // while another app had the file) goes the next time this page opens.
+  useEffect(() => {
+    void healthLocalStore.clearExports();
+  }, []);
 
   // A page that goes away with the wipe still owed (the screen was removed
   // under the sheet) still wipes: the server has deleted everything.

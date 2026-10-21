@@ -25,6 +25,9 @@ jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset')
 
 stubApiClientPerTest();
 
+// A page with a navigator, sheets and the network: room for a busy machine.
+jest.setTimeout(30_000);
+
 const en = (key: string, params?: Record<string, string>) => translate(key, 'en', params);
 
 const weighInState = (overrides: Partial<WeighInState> = {}): WeighInState => ({

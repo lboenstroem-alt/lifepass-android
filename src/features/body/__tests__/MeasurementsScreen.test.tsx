@@ -5,7 +5,7 @@
  * connected-app note), the profile read after it, a row already gone removed
  * silently (404), and any other failure reloading page one.
  */
-import { fireEvent, screen } from '@testing-library/react-native';
+import { fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../api/testing';
@@ -20,6 +20,9 @@ jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset')
 
 stubApiClientPerTest();
 
+// A page with a navigator, sheets and the network: room for a busy machine.
+jest.setTimeout(30_000);
+
 const en = (key: string, params?: Record<string, string>) => translate(key, 'en', params);
 
 /**
@@ -28,12 +31,17 @@ const en = (key: string, params?: Record<string, string>) => translate(key, 'en'
  * the Babel plugin does it. That one message is not about this screen.
  */
 const WORKLET_NOTICE = 'Some of the callbacks in the gesture are worklets';
+/** Taken once, before any test spies on it: a spy that called the previous spy would call itself. */
+const consoleError = console.error;
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
 
 beforeEach(() => {
-  const realError = console.error;
   jest.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
     if (typeof args[0] === 'string' && args[0].includes(WORKLET_NOTICE)) return;
-    realError(...args);
+    consoleError(...args);
   });
   resetAppStoreForTests();
   resetHealthStoreForTests();
@@ -146,7 +154,8 @@ describe('deleting a weigh-in', () => {
     expect(screen.queryByTestId('measurements.row.m-1')).toBeNull();
     expect(screen.getByTestId('measurements.row.m-2')).toBeTruthy();
     expect(track).toHaveBeenCalledWith('measurement_deleted');
-    expect(api.sentAll('/profile').length).toBe(profileReads + 1);
+    await waitFor(() => expect(api.sentAll('/profile').length).toBe(profileReads + 1));
+    await settle();
   });
 
   it('Cancel deletes nothing', async () => {
