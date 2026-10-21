@@ -1,26 +1,18 @@
-// @f4-stub (F4, for refusal steps): the account-deletion sheet's opener, filled by ACCT-4.
+// In-app account deletion (ACCT-4): the opener other packages call. No UI
+// here, so navigation code can import it without loading the sheet, the
+// bottom sheet library, the health store or the app store.
 //
-// A refusal's "Cancel deletion" opens the deletion sheet (iOS
-// `RefusalStepPresenter` `.deletion` → `AccountDeletionSheet`). Not in plan
-// 3.0.3: F4 added it so src/navigation/refusalSteps.ts has something to call.
-// Keep the exported names and signature; replace the body (and this marker).
+// - `openAccountDeletion({ onClose })` (F4's contract, for refusal steps):
+//   a refusal's "Cancel deletion" opens the deletion sheet over the refusing
+//   screen (iOS `RefusalStepPresenter` `.deletion` → `AccountDeletionSheet`).
+//   Answers whether it opened the sheet; when it did, `onClose` runs once
+//   when the sheet closes (cancelled, deletion cancelled, or anything else),
+//   so a booking screen or the scanner re-checks the refused selection: the
+//   sheet opens over the refusing screen, so no focus change tells that
+//   screen it is back. It answers false until the tabs shell mounts
+//   `AccountDeletionHost`, and the refusal step then takes the member to
+//   Account instead, where the same sheet lives behind the Delete account row.
 //
-// Answers whether it opened the sheet. When it did, it calls `onClose` once
-// when the sheet closes (cancelled, deletion cancelled, or anything else):
-// iOS runs the refusing screen's `onSheetDismiss` for the deletion sheet as
-// for every other step, so a booking screen or the scanner re-checks the
-// refused selection after "Cancel deletion". The sheet opens over the
-// refusing screen, so no focus change tells that screen it is back.
-//
-// Until ACCT-4 lands it opens nothing (and never calls `onClose`), and the
-// refusal step takes the member to Account instead.
-
-export interface AccountDeletionOptions {
-  /** The sheet closed. Called once, and only when this call opened the sheet. */
-  readonly onClose: () => void;
-}
-
-export function openAccountDeletion(options: AccountDeletionOptions): boolean {
-  void options;
-  return false;
-}
+// The UI is in ./ui.ts: `AccountDeletionHost` (mounted once by the tabs
+// shell, beside the other sheet hosts) and `AccountDeletionSheet`.
+export { openAccountDeletion, isAccountDeletionHostMounted, type AccountDeletionOptions } from './presenter';
