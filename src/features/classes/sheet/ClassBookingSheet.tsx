@@ -216,14 +216,21 @@ export default function ClassBookingSheet({
 
   // --- Pages ------------------------------------------------------------------
 
-  /** Back where the sheet was: it comes back and checks the same class again. */
-  const comeBack = useCallback(() => {
-    stopWatch.current?.();
-    stopWatch.current = null;
-    if (phaseRef.current !== 'away') return;
-    goTo('shown');
-    void store.getState().recheckAfterPlans();
-  }, [store, goTo]);
+  /**
+   * Back where the sheet was: it comes back, and checks the same class again
+   * after a page that may have changed the answer (a plan bought, a
+   * membership resumed). A page that never opened changed nothing.
+   */
+  const comeBack = useCallback(
+    (recheck: boolean) => {
+      stopWatch.current?.();
+      stopWatch.current = null;
+      if (phaseRef.current !== 'away') return;
+      goTo('shown');
+      if (recheck) void store.getState().recheckAfterPlans();
+    },
+    [store, goTo],
+  );
 
   /** Steps aside for a page, and watches for the member coming back. */
   const stepAside = useCallback(() => {
@@ -231,7 +238,7 @@ export default function ClassBookingSheet({
     stopWatch.current?.();
     stopWatch.current = pages.watchForReturn((how) => {
       stopWatch.current = null;
-      if (how === 'back') comeBack();
+      if (how === 'back') comeBack(true);
       else finish('closed');
     });
   }, [pages, goTo, comeBack, finish]);
@@ -295,7 +302,7 @@ export default function ClassBookingSheet({
           onClosed: () => void store.getState().recheckAfterPlans(),
         },
       );
-      if (steppedAside && !opened) comeBack();
+      if (steppedAside && !opened) comeBack(false);
     },
     [pages, store, openOtherTimes, stepAside, comeBack],
   );

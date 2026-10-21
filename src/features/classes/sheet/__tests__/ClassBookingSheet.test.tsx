@@ -275,6 +275,10 @@ it('a page that could not open leaves the sheet where it was', async () => {
   await fireEvent.press(await screen.findByRole('button', { name: en('booking.err.view_plans') }));
   expect(await screen.findByTestId('classsheet.header')).toBeOnTheScreen();
   expect(pages.watching()).toBe(false);
+  // Nothing opened, so nothing changed: the class is not checked again.
+  await flush();
+  expect(requests('/classes')).toHaveLength(1);
+  expect(requests('/booking-preview')).toHaveLength(1);
 });
 
 it('a booking in flight holds the sheet: no close, no swipe, no back, and no second sheet over it', async () => {
