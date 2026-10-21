@@ -8,12 +8,11 @@
  */
 import { api, Reply, type StubReply, type StubRequest } from '@test/server';
 
-import { ActionKeys } from '../../../api';
+import { ActionKeys, errorMessage, HttpStatusError, ProblemError, TransportError } from '../../../api';
 import type { MemberBooking } from '../../../api/bookingsList';
 import { installStubApiClient, stubApiClientPerTest } from '../../../api/testing';
 import { t } from '../../../i18n';
 import { createMyBookingsStore, endsTheAttempt, sortByStart, type MyBookingsDeps } from '../bookings/myBookings';
-import { errorMessage, HttpStatusError, ProblemError, TransportError } from '../../../api';
 
 stubApiClientPerTest();
 

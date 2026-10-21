@@ -24,7 +24,7 @@ jest.mock('../../screens/coach/CoachScreen', () => require('./standIn').standInS
 // The scanners (CHECKIN-1) take a parked check-in link; the shell's tests stand them in so the link stays parked.
 jest.mock('../../features/checkin/scan/ScanScreen', () => require('./standIn').standInScreen('CheckIn'));
 jest.mock('../../features/checkin/scan/ScanPushedScreen', () => require('./standIn').standInScreen('ScanPushed'));
-jest.mock('../../screens/bookings/BookingsScreen', () => require('./standIn').standInScreen('Library'));
+jest.mock('../../features/library/ProfileScreen', () => require('./standIn').standInScreen('Library'));
 jest.mock('../../screens/account/AccountScreen', () => require('./standIn').standInScreen('LegacyAccount'));
 jest.mock('../../screens/venue/VenueDetailScreen', () => require('./standIn').standInScreen('LegacyVenue'));
 jest.mock('../../screens/booking/BookingFlowScreen', () => require('./standIn').standInScreen('LegacyBooking'));
