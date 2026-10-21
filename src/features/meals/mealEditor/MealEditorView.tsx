@@ -120,18 +120,18 @@ export default function MealEditorView({ mode, onChanged, testID = 'mealEditor' 
     recordRef.current = next;
     setRecordState(next);
   };
-  const [draftItems, setDraftItemsState] = useState<readonly MealItemDraft[]>([]);
-  const draftItemsRef = useRef<readonly MealItemDraft[]>([]);
+  // A handed draft is on screen from the first frame, with the page's tray
+  // joined to it (iOS applies it in `.task`, a frame later).
+  const [initial] = useState(() => initialEditorState(mode));
+  const [draftItems, setDraftItemsState] = useState<readonly MealItemDraft[]>(initial.items);
+  const draftItemsRef = useRef<readonly MealItemDraft[]>(initial.items);
   const setDraftItems = (next: readonly MealItemDraft[]): void => {
     draftItemsRef.current = next;
     setDraftItemsState(next);
   };
-  const initialTray = mode.kind === 'tray' ? mode.capture.store.getState() : null;
-  const [slot, setSlot] = useState<MealSlot>(initialTray?.slot ?? 'snack');
-  const [logDate, setLogDate] = useState(initialTray?.date ?? todayServerDay());
-  const [loggedAt, setLoggedAt] = useState<Date>(
-    initialTray ? (initialTray.chosenLoggedAt ?? loggedAtFor(initialTray.date)) : new Date(),
-  );
+  const [slot, setSlot] = useState<MealSlot>(initial.slot);
+  const [logDate, setLogDate] = useState(initial.logDate);
+  const [loggedAt, setLoggedAt] = useState<Date>(initial.loggedAt);
   const [loaded, setLoaded] = useState(mode.kind !== 'stored');
   const [loadFailed, setLoadFailed] = useState(false);
   const [isSaving, setSaving] = useState(false);
@@ -152,8 +152,8 @@ export default function MealEditorView({ mode, onChanged, testID = 'mealEditor' 
   const leaving = useRef(false);
   /** The removal the member started (Android back) while the leave question is up. */
   const pendingLeave = useRef<NavigationAction | null>(null);
-  /** The tray joins a draft read inside a meal page once, on its first read. */
-  const trayJoined = useRef(false);
+  /** The tray joins a draft inside a meal page once: a handed draft at once, one read by id on its first read. */
+  const trayJoined = useRef(mode.kind === 'draft');
 
   const sourceKind = mode.kind;
   const kind = editorKind(sourceKind, record);
@@ -261,8 +261,7 @@ export default function MealEditorView({ mode, onChanged, testID = 'mealEditor' 
         return;
       case 'draft': {
         setThumbnail(draftThumbnail(mode.meal.id));
-        apply(mode.meal);
-        joinTray();
+        onChangedRef.current?.();
         const description = isMealFromDescription(mode.meal);
         track('meal_editor_opened', { mode: description ? 'text_draft' : 'photo_draft' });
         track('meal_estimate_opened', { entry: description ? 'describe' : 'scan' });
@@ -894,6 +893,35 @@ export default function MealEditorView({ mode, onChanged, testID = 'mealEditor' 
 
 // ---------------------------------------------------------------------------
 // Pieces
+
+interface InitialEditorState {
+  readonly items: readonly MealItemDraft[];
+  readonly slot: MealSlot;
+  readonly logDate: string;
+  readonly loggedAt: Date;
+}
+
+/** What the editor shows before anything is read: the page's slot and time, or the handed draft with the tray. */
+function initialEditorState(mode: MealEditorMode): InitialEditorState {
+  switch (mode.kind) {
+    case 'tray': {
+      const page = mode.capture.store.getState();
+      return { items: [], slot: page.slot, logDate: page.date, loggedAt: page.chosenLoggedAt ?? loggedAtFor(page.date) };
+    }
+    case 'draft': {
+      const meal = mode.meal;
+      const tray = mode.capture?.store.getState().tray ?? [];
+      return {
+        items: [...meal.items.map(draftFromRecord), ...tray],
+        slot: meal.slot,
+        logDate: meal.logDate,
+        loggedAt: meal.loggedAt ?? loggedAtFor(meal.logDate),
+      };
+    }
+    case 'stored':
+      return { items: [], slot: 'snack', logDate: todayServerDay(), loggedAt: new Date() };
+  }
+}
 
 function Section({ children }: { children: ReactNode }) {
   return <View style={styles.section}>{children}</View>;
