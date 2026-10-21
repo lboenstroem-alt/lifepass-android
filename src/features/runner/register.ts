@@ -24,23 +24,21 @@
 //   own memory and its own two files at every sign-out too; when the health
 //   wipe also runs, the second pass finds nothing.
 //
-// MERGE CHECKLIST (PLAN-1 owns `installPlanOutbox`, not on this branch): once
-// parity/plan-1 is in, and its feature index exports the bridge (contract
-// request to PLAN-1: `installPlanOutbox` and `installedOutboxes` from
-// src/features/plan/index.ts, the only door the feature-boundaries rule
-// leaves open), add here
-//   import { installPlanOutbox } from '../plan';
-//   import { workoutPlanOutboxSource } from './outbox/planSource';
-//   installPlanOutbox('workout', workoutPlanOutboxSource);
-// ./outbox/__tests__/planBridgeInstall.test.ts fails until both are in.
+// PLAN'S OUTBOX BRIDGE: the workout half of iOS PlanOutboxBridge is
+// installed below, so Plan's load flushes the queue with foreground semantics
+// and shows the failed-item banner (./outbox/__tests__/planBridgeInstall.test.ts).
 import { registerActivationHook, registerSignOutCleaner } from '../../app/signOut';
 import { registerHealthWipeHook } from '../../health/wipe';
 import { useAppStore } from '../../stores/appStore';
+import { installPlanOutbox } from '../plan';
 
 import { wipeRunnerLocal } from './outbox/localWipe';
+import { workoutPlanOutboxSource } from './outbox/planSource';
 import { activateWorkoutRunnerSupport } from './outbox/support';
 import { activateWorkoutOutbox, useWorkoutOutbox } from './outbox/workoutOutbox';
 import { useRunnerProgress } from './persistence/progressIndex';
+
+installPlanOutbox('workout', workoutPlanOutboxSource);
 
 registerActivationHook('runner.outbox', async ({ memberId, trigger }) => {
   if (!useAppStore.getState().profile) return;
