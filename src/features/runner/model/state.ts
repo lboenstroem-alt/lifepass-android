@@ -675,7 +675,22 @@ export function swap(
 // ---------------------------------------------------------------------------
 // Finish
 
-/** The finish sheet opens: the Save key is minted once and kept for every retry of the same Save. */
+/**
+ * The finish sheet opens (iOS `prepareFinish`): the Save key is minted only
+ * when there is none, and kept for every retry of the same Save, across
+ * reopenings of the sheet and relaunches. A Save that timed out after the
+ * server recorded it is then sent again under the SAME key, and counted once.
+ * `mint` runs only when a key is needed. Returns `state` itself when it has one.
+ */
+export function ensureFinishKey(state: RunnerState, mint: () => string): RunnerState {
+  return state.finishKey === null ? { ...state, finishKey: mint() } : state;
+}
+
+/**
+ * Replaces the Save key, on purpose: only "Save as extra" (a new Save of the
+ * same workout) and the `idempotency_key_reused` retry (iOS `saveAsExtra`,
+ * `retryWithNewKey`). Opening the sheet uses `ensureFinishKey`.
+ */
 export function withFinishKey(state: RunnerState, key: string): RunnerState {
   return { ...state, finishKey: key };
 }

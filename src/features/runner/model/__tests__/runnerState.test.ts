@@ -14,6 +14,7 @@ import {
   advance,
   completeNextSet,
   endRestIfDue,
+  ensureFinishKey,
   finishTimerIfDue,
   isExpired,
   isResting,
@@ -43,7 +44,9 @@ import {
   undoSkip,
   untick,
   withCompletedAt,
+  withFinishKey,
 } from '../state';
+import { decodeRunnerState, encodeRunnerState } from '../codec';
 import { isPerSideTimer, switchStartsAt, timerPhase } from '../timer';
 import type { RunnerState } from '../types';
 import { encodeBody } from '../../../../api/wire';
@@ -590,6 +593,27 @@ describe('what Save sends', () => {
     expect(performed(state)).toHaveLength(20);
   });
 
+  it('the Save key: minted once when the sheet opens, kept on every reopening; replaced only on purpose', () => {
+    let minted = 0;
+    const mint = (): string => {
+      minted += 1;
+      return `key-${minted}`;
+    };
+    const opened = ensureFinishKey(fresh(), mint);
+    expect(opened.finishKey).toBe('key-1');
+    // Reopened after a Save that timed out (the server may have it): the
+    // same key, so a retry is counted once.
+    const reopened = ensureFinishKey(opened, mint);
+    expect(reopened).toBe(opened);
+    expect(minted).toBe(1);
+    // And after a relaunch, through runner.json.
+    const relaunched = ensureFinishKey(decodeRunnerState(JSON.parse(encodeRunnerState(reopened))), mint);
+    expect(relaunched.finishKey).toBe('key-1');
+    expect(minted).toBe(1);
+    // "Save as extra" and the reused-key retry mint a new one deliberately.
+    expect(withFinishKey(relaunched, 'key-extra').finishKey).toBe('key-extra');
+  });
+
   it('the runner body: the moment of the first attempt, a feeling only when given, no empty performed', () => {
     let state = withCompletedAt(ticked(fresh(), 0, 0, t0), at(600));
     state = withCompletedAt(state, at(900));
@@ -625,8 +649,11 @@ describe('the active clock (V8b)', () => {
   it('testAResumedWorkoutDoesNotClaimTheTimeAway', () => {
     const state = pauseClock(fresh(), at(20 * 60), false);
     expect(activeSeconds(state, at(4 * 3600))).toBe(20 * 60);
+    // Through runner.json, as iOS's JSONEncoder/JSONDecoder round trip: a
+    // "Finish later" pause (no `clockAwaySince`) read back after a relaunch
+    // still credits no time away.
     const back = at(4 * 3600);
-    const restored = recoverClock(state, back);
+    const restored = recoverClock(decodeRunnerState(JSON.parse(encodeRunnerState(state))), back);
     expect(activeSeconds(restored, back)).toBe(20 * 60);
     expect(activeSeconds(restored, at(4 * 3600 + 10 * 60))).toBe(30 * 60);
     expect(suggestedMinutes(restored, at(4 * 3600 + 10 * 60))).toBe(30);
