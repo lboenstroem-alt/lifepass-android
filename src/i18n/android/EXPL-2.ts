@@ -6,6 +6,12 @@
 import { definePack } from './pack';
 
 export default definePack({
-  en: {},
-  is: {},
+  en: {
+    // The map's locate button. iOS uses MapKit's own button, whose name the
+    // system supplies; Android draws its own and names it here.
+    'explore.android.map.locate': 'Show where I am',
+  },
+  is: {
+    'explore.android.map.locate': 'Sýna hvar ég er',
+  },
 });
