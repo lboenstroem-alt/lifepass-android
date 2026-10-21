@@ -1,16 +1,24 @@
 /**
- * Mapbox is set up before the first map is drawn: telemetry off (LifePass
- * does not track, and the member's position never leaves the phone), then
- * the runtime token; once. And the regions the map opens on.
+ * Mapbox is set up before the first map is drawn: the runtime token first,
+ * then telemetry off once Mapbox has taken it (LifePass does not track, and
+ * the member's position never leaves the phone); once. On Android the
+ * telemetry switch builds a throwaway native map, which throws without a
+ * token, so the order is the difference between a launch and a crash. And
+ * the regions the map opens on.
  */
 import { TEST_MAPBOX_TOKEN } from '@test/server/testEnv';
 
-import { configureMapbox, resetMapboxSetupForTests } from '../mapbox';
+import { configureMapbox, hasMapboxToken, resetMapboxSetupForTests } from '../mapbox';
 import { ICELAND_REGION, regionBounds, regionZoom, REYKJAVIK_REGION } from '../regions';
 
+async function settle() {
+  for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+}
+
 describe('the Mapbox setup', () => {
-  it('switches telemetry off on import, before it hands over the token', () => {
+  it('on import, hands over the token first and switches telemetry off once Mapbox has it', async () => {
     const calls: string[] = [];
+    let resolveToken: (token: string | null) => void = () => undefined;
     jest.isolateModules(() => {
       jest.doMock('@rnmapbox/maps', () => ({
         __esModule: true,
@@ -18,33 +26,61 @@ describe('the Mapbox setup', () => {
           setTelemetryEnabled: (enabled: boolean) => calls.push(`telemetry ${enabled}`),
           setAccessToken: (token: string | null) => {
             calls.push(`token ${token}`);
-            return Promise.resolve(token);
+            return new Promise<string | null>((resolve) => {
+              resolveToken = resolve;
+            });
           },
         },
       }));
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       require('../mapbox');
     });
-    expect(calls).toEqual(['telemetry false', `token ${TEST_MAPBOX_TOKEN}`]);
+    // Not before Mapbox has taken the token: the switch would build a map without one.
+    await settle();
+    expect(calls).toEqual([`token ${TEST_MAPBOX_TOKEN}`]);
+    resolveToken(TEST_MAPBOX_TOKEN);
+    await settle();
+    expect(calls).toEqual([`token ${TEST_MAPBOX_TOKEN}`, 'telemetry false']);
   });
 
-  it('does it once', () => {
+  it('does it once', async () => {
     resetMapboxSetupForTests();
     const target = { setTelemetryEnabled: jest.fn(), setAccessToken: jest.fn() };
-    configureMapbox(target, 'pk.one');
-    configureMapbox(target, 'pk.two');
+    await configureMapbox(target, 'pk.one');
+    await configureMapbox(target, 'pk.two');
     expect(target.setTelemetryEnabled).toHaveBeenCalledTimes(1);
     expect(target.setTelemetryEnabled).toHaveBeenCalledWith(false);
     expect(target.setAccessToken).toHaveBeenCalledWith('pk.one');
     expect(target.setAccessToken).toHaveBeenCalledTimes(1);
   });
 
-  it('a build without a token still sets up, to a blank map rather than a crash', () => {
+  it('a build without a token touches neither: there is no map to set up', async () => {
+    for (const token of [null, '', '   ']) {
+      resetMapboxSetupForTests();
+      const target = { setTelemetryEnabled: jest.fn(), setAccessToken: jest.fn() };
+      await expect(configureMapbox(target, token)).resolves.toBeUndefined();
+      expect(target.setAccessToken).not.toHaveBeenCalled();
+      expect(target.setTelemetryEnabled).not.toHaveBeenCalled();
+    }
+    expect(hasMapboxToken(null)).toBe(false);
+    expect(hasMapboxToken('pk.one')).toBe(true);
+  });
+
+  it('a token Mapbox refuses leaves telemetry alone, and never throws', async () => {
     resetMapboxSetupForTests();
-    const target = { setTelemetryEnabled: jest.fn(), setAccessToken: jest.fn(() => Promise.reject(new Error('no'))) };
-    expect(() => configureMapbox(target, null)).not.toThrow();
-    expect(target.setTelemetryEnabled).toHaveBeenCalledWith(false);
-    expect(target.setAccessToken).toHaveBeenCalledWith(null);
+    const rejecting = { setTelemetryEnabled: jest.fn(), setAccessToken: jest.fn(() => Promise.reject(new Error('no'))) };
+    await expect(configureMapbox(rejecting, 'pk.bad')).resolves.toBeUndefined();
+    expect(rejecting.setTelemetryEnabled).not.toHaveBeenCalled();
+
+    resetMapboxSetupForTests();
+    const throwing = {
+      setTelemetryEnabled: jest.fn(),
+      setAccessToken: jest.fn(() => {
+        throw new Error('no');
+      }),
+    };
+    await expect(configureMapbox(throwing, 'pk.bad')).resolves.toBeUndefined();
+    expect(throwing.setTelemetryEnabled).not.toHaveBeenCalled();
   });
 });
 

@@ -5,11 +5,21 @@
 // track: iOS draws its map with MapKit and has no Mapbox at all since 2.5.0,
 // and the member's precise fix never leaves the phone. So telemetry is
 // switched off here, at import, which is app start: the tab shell imports
-// the Explore screen, and with it this module, before any tab is drawn.
+// the Explore screen, and with it this module, long before Explore can draw
+// a map.
+//
+// THE ORDER MATTERS. On Android, @rnmapbox/maps turns telemetry off by
+// building a throwaway native MapView (RNMBXModule.setTelemetryEnabled), and
+// a Mapbox MapView built while the SDK has no token throws
+// MapboxConfigurationException on the UI thread: a crash at launch. So the
+// token goes first, and telemetry is switched off once Mapbox has taken it.
+// Both run on the UI queue, in that order, before Explore mounts its map.
 //
 // THE TOKEN. The public `pk.` token is read at runtime (`env.mapboxToken`,
 // restricted to this app; config/fragments/mapbox.js says where it lives). A
-// build without it draws a blank map, never a crash.
+// build without it never builds a Mapbox view at all: no telemetry call here
+// (there is no map, so nothing to collect), and ExploreMap draws a plain
+// ink area in place of the map (`hasMapboxToken`).
 import Mapbox from '@rnmapbox/maps';
 
 import { env } from '../../../config/env';
@@ -27,16 +37,35 @@ export interface MapboxSetupTarget {
   setAccessToken(token: string | null): unknown;
 }
 
+/** Whether this build can draw a Mapbox map at all (it has a runtime token). */
+export function hasMapboxToken(token: string | null = env.mapboxToken): boolean {
+  return typeof token === 'string' && token.trim().length > 0;
+}
+
 let configured = false;
 
-/** Switches telemetry off and hands Mapbox the token. Once; later calls do nothing. */
-export function configureMapbox(target: MapboxSetupTarget = Mapbox, token: string | null = env.mapboxToken): void {
-  if (configured) return;
+/**
+ * Hands Mapbox the token, then switches telemetry off once it has taken it.
+ * Without a token, neither: no map is drawn. Once; later calls do nothing.
+ * Returns when both are done (the app does not wait for it).
+ */
+export function configureMapbox(
+  target: MapboxSetupTarget = Mapbox,
+  token: string | null = env.mapboxToken,
+): Promise<void> {
+  if (configured) return Promise.resolve();
   configured = true;
-  // Telemetry first, so nothing is collected under the token.
-  target.setTelemetryEnabled(false);
-  const set = target.setAccessToken(token);
-  if (set instanceof Promise) set.catch(() => undefined);
+  if (!hasMapboxToken(token)) return Promise.resolve();
+  let set: unknown;
+  try {
+    set = target.setAccessToken(token);
+  } catch {
+    // A token Mapbox refuses: no map will draw, so there is no telemetry to stop.
+    return Promise.resolve();
+  }
+  return Promise.resolve(set)
+    .then(() => target.setTelemetryEnabled(false))
+    .catch(() => undefined);
 }
 
 /** Tests only: lets `configureMapbox` run again. */
@@ -44,4 +73,4 @@ export function resetMapboxSetupForTests(): void {
   configured = false;
 }
 
-configureMapbox();
+void configureMapbox();
