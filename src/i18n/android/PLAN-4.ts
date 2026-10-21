@@ -23,6 +23,6 @@ export default definePack({
   },
   is: {
     'plan4.reminder_time': 'Tími áminningar',
-    'plan4.done_source.synced': 'Talið út frá æfingu í heilsuappi',
+    'plan4.done_source.synced': 'Talið út frá æfingu í heilsuforriti',
   },
 });
