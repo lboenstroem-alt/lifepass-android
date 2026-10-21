@@ -6,8 +6,9 @@
 // - HEALTH WIPE (sign-out, withdrawal here or elsewhere, a verified minor, an
 //   account deletion): the health store deletes the member's whole profile
 //   folder, which holds meal-outbox.json, tray.json and foods.json; here the
-//   copies in memory go too (iOS: the outbox and the foods cache observe
-//   `.healthLocalDataWiped`).
+//   copies in memory go, and the folder is deleted once more (see
+//   `wipeMealAfterHealthWipe`). iOS: the outbox and the foods cache observe
+//   `.healthLocalDataWiped`.
 // - SIGN-OUT: the same three files and the memory, by name, for the member
 //   who left. The health store's own wipe already covers the files when its
 //   sign-out cleaner is registered (src/health/register.ts); this makes the
@@ -17,9 +18,23 @@
 //   in the background (iOS MainTabView's `.task(id: profile.id)` and
 //   ContentView's activation flush). Never a sheet.
 //
-// Plan's failed-item banner takes `mealOutboxPlanSource` through PLAN-1's
-// `installPlanOutbox('meal', ...)` (src/features/plan/shell/bridges.ts),
-// installed here once that contract is on the branch.
+// MERGE GATE: PLAN'S FAILED-ITEM BANNER IS NOT WIRED ON THIS BRANCH. iOS
+// installs the meal half of `PlanOutboxBridge` in `MealOutbox.activate`;
+// here that is PLAN-1's `installPlanOutbox`, in a file that is not on
+// feat/ios-parity yet (src/features/plan/shell/bridges.ts, parity/plan-1).
+// Until it is, a meal the server refuses is marked failed and shown nowhere,
+// counts toward the ten, and Plan's load and pull never flush meals as the
+// member's own action. Contract request to PLAN-1 (RUN-1 raised the same):
+// export `installPlanOutbox` and `installedOutboxes` from
+// src/features/plan/index.ts, the only door the feature-boundaries rule
+// leaves open. Whichever of parity/plan-1 and parity/meal-1 merges SECOND
+// then adds, at module load below:
+//
+//   import { installPlanOutbox } from '../plan';
+//   installPlanOutbox('meal', mealOutboxPlanSource);
+//
+// (with `mealOutboxPlanSource` from './outbox/mealOutbox'). The register
+// test turns on by itself once bridges.ts exists and fails until then.
 import { registerActivationHook, registerSignOutCleaner } from '../../app/signOut';
 import * as localStore from '../../health/localStore';
 import { registerHealthWipeHook } from '../../health/wipe';
@@ -46,7 +61,40 @@ export async function wipeMealLocal(memberId: string | null): Promise<void> {
   await Promise.all(MEAL_LOCAL_FILES.map((file) => localStore.remove(file, id)));
 }
 
-registerHealthWipeHook('meals.memory', () => forgetMealMemory());
+/**
+ * The food log's part of a health wipe: forget the memory, then delete the
+ * member's folder once more.
+ *
+ * WHY ONCE MORE: the health store queues the folder's deletion, waits on its
+ * native cleanup (the background task, the notifications, the keys), and
+ * only then runs this hook. iOS does all of it in one main-actor turn, so
+ * nothing can write in between; here, a meal write that landed in that wait
+ * (a send's answer marking a meal failed, a foods refresh, a Save, a tray
+ * save) was queued after the deletion and made the file, and the folder,
+ * again. This deletion is queued after every such write, and with the
+ * memory gone nothing here writes after it. The whole folder rather than
+ * the three files: an empty folder still counts as local health state, so
+ * the next profile read would wipe again and say "turned off elsewhere" a
+ * second time.
+ *
+ * A wipe that could name nobody (a sign-out with no member known) leaves the
+ * health files alone; the food log still removes those of the queue or the
+ * lists that were open.
+ *
+ * Contract request (F7): a synchronous wipe-start phase run before
+ * `wipeLocal` queues the deletion would let the memory go before any write
+ * could be queued at all, as on iOS; this deletion would then be a no-op.
+ */
+export async function wipeMealAfterHealthWipe(memberId: string | null): Promise<void> {
+  if (!memberId) {
+    await wipeMealLocal(null);
+    return;
+  }
+  forgetMealMemory();
+  await localStore.deleteProfileFolder(memberId);
+}
+
+registerHealthWipeHook('meals.memory', ({ profileId }) => wipeMealAfterHealthWipe(profileId));
 
 registerSignOutCleaner('meals.local', ({ memberId }) => wipeMealLocal(memberId));
 
