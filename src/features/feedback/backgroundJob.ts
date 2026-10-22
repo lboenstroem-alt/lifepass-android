@@ -108,9 +108,18 @@ export async function syncFeedbackNotificationsForApp(
   const app = useAppStore.getState();
   const profileId = app.profile?.id;
   if (!app.isAuthenticated || !profileId) return;
+  const isCurrent = (): boolean => {
+    const now = useAppStore.getState();
+    return now.isAuthenticated && now.profile?.id === profileId;
+  };
   const eligible = feedbackEligible(app);
   if (eligible) {
     await Promise.all([writeKey(FeedbackKeys.lastProfileId, profileId), rememberNotificationLanguage(app.language)]);
+    // A sign-out that landed meanwhile has already removed the member the
+    // background reads for; writing it back would keep reading for them.
+    if (!isCurrent() && (await readKey(FeedbackKeys.lastProfileId)) === profileId) {
+      await writeKey(FeedbackKeys.lastProfileId, null);
+    }
   } else {
     await writeKey(FeedbackKeys.lastProfileId, null);
   }
@@ -122,6 +131,7 @@ export async function syncFeedbackNotificationsForApp(
     appActive,
     now: options.now,
     calendar: options.calendar,
+    isCurrent,
   });
 }
 
@@ -195,6 +205,10 @@ export async function runFeedbackBackgroundCheck(options: FeedbackCheckOptions =
     }
     return 'failed';
   }
+  // A sign-out in a live process removes the recorded member (the wipe):
+  // nothing more is written for them, not even the time of this read.
+  const stillRecorded = async (): Promise<boolean> => (await readKey(FeedbackKeys.lastProfileId)) === profileId;
+  if (!(await stillRecorded())) return 'no-member';
   await writeKey(checkKey, isoInstant(now));
   await syncFeedbackNotifications({
     summary,
@@ -204,6 +218,7 @@ export async function runFeedbackBackgroundCheck(options: FeedbackCheckOptions =
     appActive: false,
     now,
     calendar: options.calendar,
+    isCurrent: stillRecorded,
   });
   return 'read';
 }

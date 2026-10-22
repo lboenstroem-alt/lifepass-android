@@ -222,6 +222,23 @@ describe('the background read (FeedbackBackgroundCheckTests)', () => {
     expect(readMarks(await AsyncStorage.getItem(FeedbackKeys.notified('p-1'))).has(MONTHLY)).toBe(true);
   });
 
+  it('a sign-out while the read is on the way writes nothing more for the member who left', async () => {
+    clockAt('2026-10-01T10:00:00Z');
+    await recordMember();
+    const outcome = await runFeedbackBackgroundCheck({
+      calendar: ICELAND,
+      fetchSummary: async () => {
+        // The wipe of a sign-out in a live process.
+        await AsyncStorage.removeItem(FeedbackKeys.lastProfileId);
+        return decodeFeedbackSummary(summaryJSON({ note: null, nextReport: null }), 'feedback');
+      },
+    });
+    expect(outcome).toBe('no-member');
+    expect(await AsyncStorage.getItem(FeedbackKeys.lastCheck('p-1'))).toBeNull();
+    expect(await AsyncStorage.getItem(FeedbackKeys.notified('p-1'))).toBeNull();
+    expect(scheduledIds()).toEqual([]);
+  });
+
   it('a server that no longer advertises the feedback removes every feedback notification', async () => {
     await recordMember();
     await scheduleAt(MONTHLY, new Date(Date.now() + 3600_000), { title: 't', body: 'b' }, 'health');
@@ -352,6 +369,23 @@ describe('the foreground', () => {
 
     signIn({ profile: memberProfile({ consent: false }) });
     await syncFeedbackNotificationsForApp(true);
+    expect(await AsyncStorage.getItem(FeedbackKeys.lastProfileId)).toBeNull();
+  });
+
+  it('a sign-out while the member is being recorded does not leave them recorded', async () => {
+    signIn();
+    const setItem = jest.mocked(AsyncStorage.setItem);
+    const original = setItem.getMockImplementation();
+    setItem.mockImplementation(async (key: string, value: string) => {
+      await original?.(key, value);
+      // The sign-out lands while the write is on the way; its wipe has already run.
+      if (key === FeedbackKeys.lastProfileId) useAppStore.setState({ isAuthenticated: false, profile: null });
+    });
+    try {
+      await syncFeedbackNotificationsForApp(true);
+    } finally {
+      if (original) setItem.mockImplementation(original);
+    }
     expect(await AsyncStorage.getItem(FeedbackKeys.lastProfileId)).toBeNull();
   });
 

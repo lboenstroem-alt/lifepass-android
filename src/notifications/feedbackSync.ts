@@ -63,6 +63,15 @@ export interface FeedbackSyncInput {
   readonly appActive: boolean;
   readonly now?: Date;
   readonly calendar?: PhoneCalendar;
+  /**
+   * Whether the member this sync is for is still the one on the phone, asked
+   * again before anything is written. A sign-out (or a wipe) can land while a
+   * sync is between its reads and its writes; the wipe has removed every
+   * `health.*` notification and the marks by then, and a request or a mark
+   * written after it would outlive the member. Such a sync stops, and takes
+   * back what it scheduled. Always current when not given.
+   */
+  readonly isCurrent?: () => boolean | Promise<boolean>;
 }
 
 /** The words and the tap data a planned notification becomes. Fixed words only. */
@@ -95,6 +104,15 @@ async function storeMarks(profileId: string, marks: ReadonlyMap<string, Date>): 
   }
 }
 
+async function stillCurrent(input: FeedbackSyncInput): Promise<boolean> {
+  if (!input.isCurrent) return true;
+  try {
+    return (await input.isCurrent()) === true;
+  } catch {
+    return false;
+  }
+}
+
 async function performSync(input: FeedbackSyncInput): Promise<void> {
   const now = input.now ?? new Date();
   const calendar = input.calendar ?? deviceCalendar;
@@ -121,6 +139,7 @@ async function performSync(input: FeedbackSyncInput): Promise<void> {
     case 'schedule':
       break;
   }
+  if (!(await stillCurrent(input))) return;
 
   const wanted = new Set(decision.notifications.map((item) => item.identifier));
   const stale = [...pending].filter((id) => !wanted.has(id));
@@ -131,6 +150,7 @@ async function performSync(input: FeedbackSyncInput): Promise<void> {
   const updated = new Map(marks);
   for (const item of decision.notifications) {
     if (item.isAlreadyPending) continue;
+    if (!(await stillCurrent(input))) break;
     const scheduled = await scheduleAt(
       item.identifier,
       item.fireDate,
@@ -145,6 +165,11 @@ async function performSync(input: FeedbackSyncInput): Promise<void> {
   for (const id of stale) {
     const fire = updated.get(id);
     if (fire && fire.getTime() > now.getTime()) updated.delete(id);
+  }
+  if (!(await stillCurrent(input))) {
+    // The member left meanwhile: nothing of theirs stays scheduled or written.
+    await removeAllFeedbackNotifications();
+    return;
   }
   await storeMarks(input.profileId, updated);
 

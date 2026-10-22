@@ -267,6 +267,28 @@ describe('removing', () => {
     expect(marks.has('health.feedback.note.old-29')).toBe(true);
   });
 
+  it('a member who leaves while a sync runs keeps nothing: no request, no mark', async () => {
+    clockAt('2026-10-01T10:00:00Z');
+    let checks = 0;
+    // Current when the sync starts; signed out (the wipe done) by the time it writes.
+    const isCurrent = () => {
+      checks += 1;
+      return checks <= 2;
+    };
+    await syncFeedbackNotifications(input({ isCurrent }));
+    expect(checks).toBeGreaterThan(2);
+    expect(scheduledIds()).toEqual([]);
+    expect(await AsyncStorage.getItem(FeedbackKeys.notified('p-1'))).toBeNull();
+  });
+
+  it('a member gone before anything is written changes nothing at all', async () => {
+    clockAt('2026-10-01T10:00:00Z');
+    await scheduleAt('health.workoutday.2026-10-02', at('2026-10-02T08:00:00Z'), { title: 't', body: 'b' }, 'health');
+    await syncFeedbackNotifications(input({ isCurrent: async () => false }));
+    expect(scheduledIds()).toEqual(['health.workoutday.2026-10-02']);
+    expect(await AsyncStorage.getItem(FeedbackKeys.notified('p-1'))).toBeNull();
+  });
+
   it('removeAll takes pending and delivered feedback notifications only', async () => {
     clockAt('2026-10-01T10:00:00Z');
     await syncFeedbackNotifications(input());
