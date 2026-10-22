@@ -1,12 +1,23 @@
-// @f4-stub (plan 3.0.2): route `Review`, filled by MEAL-4.
-//
-// The tray, reviewed as a new meal (inside the meal page).
-// Keep the default export and its props type; replace the body (and this
-// marker). Until then a development build shows a placeholder and a release
-// build shows nothing.
-import { StubScreen } from '../../../navigation/stubs';
+/**
+ * Route `Review` inside the meal page (iOS `MealCaptureRoute.review`): the
+ * page's tray, reviewed as a new meal before its first save. The tray, its
+ * slot and date, and the save belong to the page (MEAL-2's capture model);
+ * this screen is the editor over them.
+ */
+import { useEffect } from 'react';
+
 import type { MealCaptureScreenProps } from '../../../navigation/types';
 
-export default function MealReviewScreen({ route }: MealCaptureScreenProps<'Review'>) {
-  return <StubScreen route={route.name} owner="MEAL-4" />;
+import { useMealCaptureLink } from './captureLink';
+import MealEditorView from './MealEditorView';
+
+export default function MealReviewScreen({ navigation }: MealCaptureScreenProps<'Review'>) {
+  const capture = useMealCaptureLink();
+  // Pushed only from the page's tray bar, so the page is there; should it
+  // not be, there is nothing to review and the member goes back to it.
+  useEffect(() => {
+    if (!capture && navigation.canGoBack()) navigation.goBack();
+  }, [capture, navigation]);
+  if (!capture) return null;
+  return <MealEditorView mode={{ kind: 'tray', capture }} testID="mealReview" />;
 }

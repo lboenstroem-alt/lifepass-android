@@ -1,0 +1,117 @@
+/**
+ * The meal page an editor is pushed inside (iOS `MealEditorView(mode:
+ * .tray(model))` and its `capture:` parameter): the capture page's model,
+ * as much of it as the Review and Draft screens use.
+ *
+ * MEAL-2 owns the model (src/features/meals/capture/captureModel.ts,
+ * `MealCaptureModel`) and keeps one per open page, registered under the
+ * page's stack key (capture/capturePages.ts, `useCaptureModel()`). Its
+ * public surface is a structural superset of `MealCaptureLink` below, so the
+ * Review and Draft screens take it as it is.
+ *
+ * MERGE STEP (MEAL-2 + MEAL-4): the two packages were built side by side,
+ * so neither could import the other. Once both are merged, the body of
+ * `useMealCaptureLink` becomes `return useCaptureModel();` (from
+ * '../capture/capturePages'), and the stand-in registry here goes. Without
+ * it Review and Draft never find their page. __tests__/captureIntegration
+ * runs as soon as MEAL-2's page is in the tree and fails until this is
+ * done. Until then a page registers its link with `attachMealCaptureLink`
+ * (the tests do).
+ */
+import { NavigationContext } from '@react-navigation/native';
+import { useContext, useSyncExternalStore } from 'react';
+
+import type { MealCaptureMode, MealCaptureOrigin, MealSlot } from '../../../navigation/types';
+import type { MealItemDraft } from '../types/draft';
+import type { MealEntrySource, MealRecord } from '../types/models';
+
+/** The part of the page's state the editors read. */
+export interface MealCaptureLinkState {
+  readonly mode: MealCaptureMode;
+  readonly slot: MealSlot;
+  /** `YYYY-MM-DD`. */
+  readonly date: string;
+  readonly tray: readonly MealItemDraft[];
+  /** A time the member picked in the review's When row. */
+  readonly chosenLoggedAt: Date | null;
+  /** Why the last save failed, when nothing else can be done about it here. */
+  readonly saveErrorKey: string | null;
+  /** Drafts a scan or a description returned, by id, for the Draft screen. */
+  readonly drafts: Readonly<Record<string, MealRecord>>;
+}
+
+/** What a save of the tray led to (iOS `MealCaptureModel.SaveOutcome`). */
+export type MealCaptureSaveOutcome =
+  | { readonly kind: 'saved'; readonly meal: MealRecord }
+  | { readonly kind: 'queued' }
+  | { readonly kind: 'failed' };
+
+export interface MealCaptureLink {
+  /** Who opened the page (`scanTab`, `plan`, `diary`, `editor`). */
+  readonly origin: MealCaptureOrigin;
+  readonly store: {
+    getState(): MealCaptureLinkState;
+    subscribe(listener: () => void): () => void;
+  };
+  /** The tray item with this `localId` changed. */
+  replace(item: MealItemDraft): void;
+  /** Items join the tray (the review's Add food lands in Search instead). */
+  add(items: readonly MealItemDraft[], source: MealEntrySource): void;
+  remove(itemId: string): void;
+  setSlot(slot: MealSlot): void;
+  setDate(date: string): void;
+  setChosenLoggedAt(at: Date | null): void;
+  setMode(mode: MealCaptureMode): void;
+  /** OP-34, or the outbox offline (the page's save path, toasts included). */
+  save(): Promise<MealCaptureSaveOutcome>;
+  /** Close the whole page. */
+  close(): void;
+  /** Empty the tray (and its file): a confirmed draft took its items. */
+  discardTray(): void;
+}
+
+// ---------------------------------------------------------------------------
+// Which page is which (until MEAL-2's registry is reachable, see above)
+
+const links = new Map<string, MealCaptureLink>();
+
+/** A page's link under its stack's key. Returns the removal. */
+export function attachMealCaptureLink(pageKey: string, link: MealCaptureLink): () => void {
+  links.set(pageKey, link);
+  return () => {
+    if (links.get(pageKey) === link) links.delete(pageKey);
+  };
+}
+
+interface KeyedNavigation {
+  getState(): { readonly key?: string } | undefined;
+}
+
+/** The key of the stack the calling screen is in: the meal page's key inside one. */
+export function pageKeyOf(navigation: unknown): string | null {
+  const state = (navigation as KeyedNavigation | undefined)?.getState?.();
+  return typeof state?.key === 'string' ? state.key : null;
+}
+
+/** The meal page the calling screen sits in, or null outside one. */
+export function useMealCaptureLink(): MealCaptureLink | null {
+  const navigation = useContext(NavigationContext);
+  const key = pageKeyOf(navigation);
+  return key ? (links.get(key) ?? null) : null;
+}
+
+const NO_STATE_STORE = {
+  getState: (): MealCaptureLinkState | null => null,
+  subscribe: (): (() => void) => () => undefined,
+};
+
+/** The page's state, redrawn when it changes (null without a page). */
+export function useMealCaptureState(link: MealCaptureLink | null): MealCaptureLinkState | null {
+  const store = link?.store ?? NO_STATE_STORE;
+  return useSyncExternalStore(store.subscribe, store.getState, store.getState);
+}
+
+/** Tests: no page open. */
+export function resetMealCaptureLinksForTests(): void {
+  links.clear();
+}
