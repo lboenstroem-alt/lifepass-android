@@ -157,6 +157,29 @@ describe('the skip', () => {
     expect(await loadRunner(MEMBER)).toBeNull();
   });
 
+  it('an answer that cannot be applied on this phone still closes as skipped', async () => {
+    seedToday();
+    const controller = runner();
+    const posting = new SkipPosting();
+    const skip = flow(controller, posting);
+    const applyActionResult = useHealthStore.getState().applyActionResult;
+    useHealthStore.setState({
+      applyActionResult: () => {
+        throw new Error('an unexpected row');
+      },
+    });
+    try {
+      await skip.skip('tired');
+    } finally {
+      useHealthStore.setState({ applyActionResult });
+    }
+    expect(closes).toEqual([{ kind: 'skipped', response: expect.anything() }]);
+    expect(skip.getSnapshot()).toEqual({ isSkipping: false, errorKey: null });
+    expect(events.filter((e) => e.event === 'service_error').map((e) => e.params.op)).toEqual(['runner_apply_answer']);
+    await localStore.settled();
+    expect(await loadRunner(MEMBER)).toBeNull();
+  });
+
   it('no network: "This needs a connection.", and the runner stays', async () => {
     const controller = runner();
     const posting = new SkipPosting();
@@ -321,5 +344,7 @@ describe('from the Leave dialog', () => {
     await fireEvent.press(screen.getByTestId('skip.confirm'));
     expect(posting.skips.map((s) => s.reason)).toEqual(['tired']);
     expect(closes).toEqual([{ kind: 'skipped', response: expect.anything() }]);
+    // The sheet leaves with the runner.
+    expect(screen.queryByTestId('skip.confirm')).toBeNull();
   });
 });

@@ -36,7 +36,8 @@
  */
 import { newIdempotencyKey } from '../../../api/idempotency';
 import { useHealthStore } from '../../../health/store';
-import type { Feeling } from '../../../health/models';
+import type { Feeling, SessionActionResponse } from '../../../health/models';
+import { errorDescription, track as trackEvent } from '../../../lib/analytics';
 import { RunnerAnalytics, type WorkoutFinishedOutcome } from '../model/analytics';
 import { runnerDoneBody, type WorkoutDoneBody } from '../model/performed';
 import { ensureFinishKey, suggestedMinutes, withCompletedAt, withFinishKey } from '../model/state';
@@ -211,62 +212,90 @@ export class FinishFlow {
     this.setStatus({ kind: 'saving' });
     const body = runnerDoneBody(state, { minutes: this.snapshot.minutes, feeling: this.snapshot.feeling, asExtra });
     const key = state.finishKey ?? this.mintKey();
+    let response: SessionActionResponse;
+    // Only the request itself: what follows an answer is never read as a failed Save.
     try {
-      const response = await this.posting().done(state.sessionId, body, key);
-      // A sign-out wiped the workout meanwhile: the runner has closed, and nothing of it is applied.
-      if (this.controller.isClosed) return;
-      this.track(asExtra ? 'extra' : 'saved');
+      response = await this.posting().done(state.sessionId, body, key);
+    } catch (error) {
+      await this.failed(error, { asExtra, body, key, epoch });
+      return;
+    }
+    // A sign-out wiped the workout meanwhile: the runner has closed, and nothing of it is applied.
+    if (this.controller.isClosed) return;
+    this.saved(response, asExtra);
+  }
+
+  /**
+   * The server has the workout. Whatever goes wrong on this phone now, the
+   * runner closes as saved: read as a failed Save it would stay open with its
+   * file gone, and the next Save would log the workout twice. An answer
+   * that cannot be applied is reported, and Plan's read after the close
+   * repairs the day.
+   */
+  private saved(response: SessionActionResponse, asExtra: boolean): void {
+    try {
       this.controller.endRunner();
+      this.track(asExtra ? 'extra' : 'saved');
       this.setStatus(IDLE);
       applyRunnerAnswer(response);
-      this.controller.close({ kind: 'saved', response });
     } catch (error) {
-      if (this.controller.isClosed) return;
-      const failure = readRunnerFailure(error);
-      const outcome = runnerSaveOutcome(failure.kind, { isExtra: asExtra, retriedKey: this.retriedKey });
-      switch (outcome.kind) {
-        case 'saved':
-          this.setStatus(IDLE);
-          return;
-        case 'queueOffline':
-          await this.queueOffline(body, key, epoch);
-          return;
-        case 'askSaveAsExtra':
-          this.setStatus({ kind: 'askSaveAsExtra' });
-          return;
-        case 'notActive':
-          this.setStatus({ kind: 'notActive' });
-          this.track('not_active');
-          return;
-        case 'retryWithNewKey':
-          this.retriedKey = true;
-          this.controller.apply((current) => withFinishKey(current, this.mintKey()));
-          this.setStatus(IDLE);
-          await this.send(asExtra);
-          return;
-        case 'gate':
-          // The file is KEPT (7.7 row 5): the gate shows, and a member who
-          // fixes their membership can still save it from Resume.
-          if (failure.apiError) useHealthStore.getState().handle(failure.apiError, { foreground: true });
-          this.setStatus(IDLE);
-          this.controller.close({ kind: 'needsReload' });
-          return;
-        case 'consent': {
-          const handled = failure.apiError
-            ? useHealthStore.getState().handle(failure.apiError, { foreground: true })
-            : 'other';
-          this.setStatus(IDLE);
-          if (handled === 'presentConsent') this.publish({ needsConsent: true });
-          else this.controller.close({ kind: 'needsReload' });
-          return;
-        }
-        case 'keep':
-          this.setStatus({ kind: 'failed', messageKey: outcome.messageKey });
-          return;
-        case 'silent':
-          this.setStatus(IDLE);
-          return;
+      trackEvent('service_error', { op: 'runner_apply_answer', error: errorDescription(error) });
+      this.setStatus(IDLE);
+    }
+    this.controller.close({ kind: 'saved', response });
+  }
+
+  /** The Save did not go through: RUN-1's table (../saveRules.ts) says what happens. */
+  private async failed(
+    error: unknown,
+    attempt: { readonly asExtra: boolean; readonly body: WorkoutDoneBody; readonly key: string; readonly epoch: number },
+  ): Promise<void> {
+    if (this.controller.isClosed) return;
+    const { asExtra, body, key, epoch } = attempt;
+    const failure = readRunnerFailure(error);
+    const outcome = runnerSaveOutcome(failure.kind, { isExtra: asExtra, retriedKey: this.retriedKey });
+    switch (outcome.kind) {
+      case 'saved':
+        this.setStatus(IDLE);
+        return;
+      case 'queueOffline':
+        await this.queueOffline(body, key, epoch);
+        return;
+      case 'askSaveAsExtra':
+        this.setStatus({ kind: 'askSaveAsExtra' });
+        return;
+      case 'notActive':
+        this.setStatus({ kind: 'notActive' });
+        this.track('not_active');
+        return;
+      case 'retryWithNewKey':
+        this.retriedKey = true;
+        this.controller.apply((current) => withFinishKey(current, this.mintKey()));
+        this.setStatus(IDLE);
+        await this.send(asExtra);
+        return;
+      case 'gate':
+        // The file is KEPT (7.7 row 5): the gate shows, and a member who
+        // fixes their membership can still save it from Resume.
+        if (failure.apiError) useHealthStore.getState().handle(failure.apiError, { foreground: true });
+        this.setStatus(IDLE);
+        this.controller.close({ kind: 'needsReload' });
+        return;
+      case 'consent': {
+        const handled = failure.apiError
+          ? useHealthStore.getState().handle(failure.apiError, { foreground: true })
+          : 'other';
+        this.setStatus(IDLE);
+        if (handled === 'presentConsent') this.publish({ needsConsent: true });
+        else this.controller.close({ kind: 'needsReload' });
+        return;
       }
+      case 'keep':
+        this.setStatus({ kind: 'failed', messageKey: outcome.messageKey });
+        return;
+      case 'silent':
+        this.setStatus(IDLE);
+        return;
     }
   }
 

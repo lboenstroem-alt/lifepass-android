@@ -499,6 +499,35 @@ describe('what each answer does (7.7)', () => {
     expect(finished()).toEqual([]);
   });
 
+  it('an answer that cannot be applied on this phone still closes as saved: never a second Save', async () => {
+    seedToday();
+    const { controller, closes } = runner();
+    const posting = new StubPosting();
+    const flow = flowFor(controller, posting);
+    const applyActionResult = useHealthStore.getState().applyActionResult;
+    useHealthStore.setState({
+      applyActionResult: () => {
+        throw new Error('an unexpected row');
+      },
+    });
+    try {
+      flow.prepare();
+      await flow.save();
+    } finally {
+      // The store's reset keeps its actions: put the real one back for the tests after this.
+      useHealthStore.setState({ applyActionResult });
+    }
+    expect(closes).toEqual([{ kind: 'saved', response: expect.anything() }]);
+    expect(flow.status).toEqual({ kind: 'idle' });
+    expect(finished()).toEqual([{ outcome: 'saved', feeling_given: false }]);
+    expect(events.filter((e) => e.event === 'service_error').map((e) => e.params.op)).toEqual(['runner_apply_answer']);
+    await localStore.settled();
+    expect(await loadRunner(MEMBER)).toBeNull();
+    // The runner has closed: a tap that slipped in sends nothing.
+    await flow.save();
+    expect(posting.sent).toHaveLength(1);
+  });
+
   it('"Do it now" on last week\'s row: its answer does not replace today', async () => {
     seedToday();
     const { controller, closes } = runner();

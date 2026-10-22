@@ -18,7 +18,8 @@
  */
 import { newIdempotencyKey } from '../../../api/idempotency';
 import { useHealthStore, type HealthProblemOutcome } from '../../../health/store';
-import type { SkipReason } from '../../../health/models';
+import type { SessionActionResponse, SkipReason } from '../../../health/models';
+import { errorDescription, track } from '../../../lib/analytics';
 import { RunnerAnalytics } from '../model/analytics';
 import { workoutSessionPosting, type WorkoutSessionPosting } from '../outbox/posting';
 import { readRunnerFailure } from '../saveRules';
@@ -80,38 +81,51 @@ export class SkipWorkoutFlow {
   async skip(reason: SkipReason): Promise<void> {
     if (this.snapshot.isSkipping || this.controller.isClosed) return;
     this.publish({ isSkipping: true, errorKey: null });
+    let response: SessionActionResponse;
+    // Only the request itself: what follows an answer is never read as a failed Skip.
     try {
-      const response = await this.posting().skip(this.controller.state.sessionId, reason, this.mintKey());
-      this.publish({ isSkipping: false });
-      // A sign-out wiped the workout meanwhile: the runner has closed.
-      if (this.controller.isClosed) return;
-      RunnerAnalytics.workoutSkipped();
-      this.controller.endRunner();
-      applyRunnerAnswer(response);
-      this.controller.close({ kind: 'skipped', response });
+      response = await this.posting().skip(this.controller.state.sessionId, reason, this.mintKey());
     } catch (error) {
       this.publish({ isSkipping: false });
-      if (this.controller.isClosed) return;
-      const failure = readRunnerFailure(error);
-      switch (failure.kind.kind) {
-        case 'cancelled':
-        case 'notAuthenticated':
-          return;
-        case 'offline':
-          this.publish({ errorKey: 'health.offline.action_hint' });
-          return;
-        case 'problem':
-        case 'other': {
-          if (failure.apiError) {
-            const outcome = useHealthStore.getState().handle(failure.apiError, { foreground: true });
-            if (CLOSES_THE_RUNNER.includes(outcome)) {
-              this.controller.close({ kind: 'needsReload' });
-              return;
-            }
+      this.failed(error);
+      return;
+    }
+    this.publish({ isSkipping: false });
+    // A sign-out wiped the workout meanwhile: the runner has closed.
+    if (this.controller.isClosed) return;
+    // The server has skipped the session: whatever goes wrong on this phone
+    // now, the runner closes as skipped (Plan's read after it repairs the day).
+    try {
+      this.controller.endRunner();
+      RunnerAnalytics.workoutSkipped();
+      applyRunnerAnswer(response);
+    } catch (error) {
+      track('service_error', { op: 'runner_apply_answer', error: errorDescription(error) });
+    }
+    this.controller.close({ kind: 'skipped', response });
+  }
+
+  private failed(error: unknown): void {
+    if (this.controller.isClosed) return;
+    const failure = readRunnerFailure(error);
+    switch (failure.kind.kind) {
+      case 'cancelled':
+      case 'notAuthenticated':
+        return;
+      case 'offline':
+        this.publish({ errorKey: 'health.offline.action_hint' });
+        return;
+      case 'problem':
+      case 'other': {
+        if (failure.apiError) {
+          const outcome = useHealthStore.getState().handle(failure.apiError, { foreground: true });
+          if (CLOSES_THE_RUNNER.includes(outcome)) {
+            this.controller.close({ kind: 'needsReload' });
+            return;
           }
-          this.publish({ errorKey: 'common.error_body' });
-          return;
         }
+        this.publish({ errorKey: 'common.error_body' });
+        return;
       }
     }
   }
