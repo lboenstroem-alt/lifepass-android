@@ -10,22 +10,34 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, within } from '@testing-library/react-native';
 import { notificationsState } from '@test/mocks/expoNotifications';
-import { api, Reply } from '@test/server';
+import { api, Reply, type StubReply } from '@test/server';
+import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { StyleSheet } from 'react-native';
+import { ScrollView, StyleSheet } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { bottomSheetMock } from '../../../components/ui/testing/bottomSheetMock';
-import { ReminderKeys } from '../../../health';
-import { resetHealthStoreForTests } from '../../../health/store';
+import { healthLocalStore, ReminderKeys } from '../../../health';
+import { resetHealthStoreForTests, useHealthStore } from '../../../health/store';
 import { setCurrentLanguage, translate } from '../../../i18n';
 import * as analytics from '../../../lib/analytics';
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
 import { useIntentStore } from '../../../stores/intentStore';
 import BodyAndGoalsScreen from '../BodyAndGoalsScreen';
+import { resetExportCleanupForTests } from '../export/cleanup';
 import { onReminderSyncRequested, resetReminderSyncListenersForTests } from '../reminders/preferences';
 import { openBodySheet, openTargetSheet } from '../sheets';
-import { CONSENT_JSON, currentRoute, MEMBER, profileJson, renderPushed, settle, signIn, type MemberOptions } from './harness';
+import {
+  CONSENT_JSON,
+  currentRoute,
+  MEMBER,
+  navigationRef,
+  profileJson,
+  renderPushed,
+  settle,
+  signIn,
+  type MemberOptions,
+} from './harness';
 
 jest.mock('@gorhom/bottom-sheet', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -114,6 +126,32 @@ async function show(options: MemberOptions = {}, route: { params?: object; below
 
 const rowLabel = (testID: string) => screen.getByTestId(testID).props.accessibilityLabel as string;
 
+/** A reply the test hands over when it chooses. */
+function heldReply() {
+  let release: (reply: StubReply) => void = () => undefined;
+  const reply = new Promise<StubReply>((resolve) => {
+    release = resolve;
+  });
+  return { reply, release: (answer: StubReply) => release(answer) };
+}
+
+/** The member taps the top bar's back (never blocked, a request in flight or not). */
+async function leavePage() {
+  await act(async () => {
+    navigationRef.goBack();
+  });
+  await settle();
+}
+
+function exportFiles(): string[] {
+  const cache = new Directory(Paths.cache);
+  if (!cache.exists) return [];
+  return cache
+    .list()
+    .filter((entry): entry is File => entry instanceof File && entry.name.startsWith('lifepass-export-'))
+    .map((file) => file.name);
+}
+
 /** Every word on screen (texts, labels, hints), for the "never names Apple Health" checks. */
 function allText(): string {
   const words: string[] = [];
@@ -136,6 +174,11 @@ function allText(): string {
   walk(screen.toJSON());
   return words.join('\n');
 }
+
+afterEach(async () => {
+  resetExportCleanupForTests();
+  await healthLocalStore.clearExports();
+});
 
 beforeEach(() => {
   bottomSheetMock.reset();
@@ -209,6 +252,23 @@ describe('the sections', () => {
     const track = jest.spyOn(analytics, 'track');
     await show({}, { params: { anchor: 'reminders' } });
     expect(track).toHaveBeenCalledWith('body_goals_opened', { entry: 'banner' });
+  });
+
+  it('opened on the feedback, it scrolls to the section itself, not the gap above it', async () => {
+    const scrollTo = ScrollView.prototype.scrollTo as jest.Mock;
+    scrollTo.mockClear();
+    await show({}, { params: { anchor: 'feedback' } });
+    const slot = screen.getByTestId('bodygoals.slot.feedback');
+    // The slot draws: its first layout has no gap above it yet, so no scroll.
+    await fireEvent.layout(slot, { x: 0, y: 900, width: 360, height: 120 });
+    await settle();
+    expect(StyleSheet.flatten(slot.props.style)).toMatchObject({ marginTop: 22 });
+    expect(scrollTo).not.toHaveBeenCalled();
+    // The gap moves it down 22: that is where the page opens.
+    await fireEvent.layout(slot, { x: 0, y: 922, width: 360, height: 120 });
+    await settle();
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ y: 922 }));
   });
 
   it('nothing on the page names Apple Health or Health Connect, in either language', async () => {
@@ -483,6 +543,87 @@ describe('delete everything', () => {
     await fireEvent.press(screen.getByTestId('bodygoals.tracking.switch'));
     expect(screen.getByTestId('bodygoals.consent')).toBeTruthy();
   });
+
+  it('a member who leaves while the call runs: the phone still wipes as the answer lands', async () => {
+    const track = jest.spyOn(analytics, 'track');
+    await AsyncStorage.setItem(ReminderKeys.workoutDay(MEMBER), 'false');
+    const held = heldReply();
+    api.on('POST', '/profile/health-consent', () => held.reply);
+    await show();
+    await fireEvent.press(screen.getByTestId('bodygoals.deleteAll'));
+    await fireEvent.press(screen.getByTestId('bodygoals.delete.confirm'));
+    await settle();
+    expect(screen.getByTestId('bodygoals.tracking.busy')).toBeTruthy();
+
+    await leavePage();
+    expect(currentRoute()).toBe('PlanMain');
+    api.on('GET', '/profile', Reply.ok(profileJson({ consent: false })));
+    held.release(Reply.ok(WITHDRAWN));
+    await settle(10);
+
+    expect(track).toHaveBeenCalledWith('health_consent_withdrawn', { entry: 'delete_all' });
+    expect(track).toHaveBeenCalledWith('health_local_wiped', { reason: 'withdrawn' });
+    expect(await AsyncStorage.getItem(ReminderKeys.workoutDay(MEMBER))).toBeNull();
+    expect(useAppStore.getState().profile?.health?.consent).toBeNull();
+    // Not a later reconcile's "turned off on another device".
+    expect(track).not.toHaveBeenCalledWith('health_local_wiped', { reason: 'withdrawn_elsewhere' });
+    expect(useHealthStore.getState().toastKey).not.toBe('health.consent_off_elsewhere');
+  });
+
+  it('switching tracking back on after a withdrawal never shows the deleted target, even when the read fails', async () => {
+    serve({ target: TARGET });
+    api.on('POST', '/profile/health-consent', (request) =>
+      (request.body as { optedIn?: boolean }).optedIn === false
+        ? Reply.ok(WITHDRAWN)
+        : Reply.ok({ optedIn: true, version: CONSENT_JSON.version, consentedAt: '2026-10-21T09:00:00Z', ageSource: 'kennitala' }),
+    );
+    await show();
+    expect(screen.getByTestId('bodygoals.target')).toBeTruthy();
+
+    await fireEvent.press(screen.getByTestId('bodygoals.deleteAll'));
+    await fireEvent.press(screen.getByTestId('bodygoals.delete.confirm'));
+    await settle();
+    await fireEvent.press(screen.getByTestId('bodygoals.deleted.done'));
+    await settle(10);
+
+    // Yes again, from this page; the trend read that follows fails, so the goal read never runs.
+    api.on('GET', '/health/measurements/trend', Reply.problem(500, 'internal_error'));
+    await fireEvent.press(screen.getByTestId('bodygoals.tracking.switch'));
+    await settle();
+    await fireEvent.press(screen.getByTestId('healthconsent.consent'));
+    await fireEvent.press(screen.getByTestId('healthconsent.cta'));
+    await settle(10);
+
+    expect(screen.getByTestId('bodygoals.tracking.switch').props.accessibilityState).toMatchObject({ checked: true });
+    expect(screen.getByTestId('bodygoals.loadFailed')).toBeTruthy();
+    expect(screen.queryByTestId('bodygoals.target')).toBeNull();
+  });
+
+  describe("the consent sheet's Open account (a deletion is pending)", () => {
+    async function openAccountFromSheet() {
+      api.on('POST', '/profile/health-consent', Reply.problem(409, 'account_pending_deletion'));
+      await fireEvent.press(screen.getByTestId('bodygoals.tracking.switch'));
+      await settle();
+      await fireEvent.press(screen.getByTestId('healthconsent.consent'));
+      await fireEvent.press(screen.getByTestId('healthconsent.cta'));
+      await settle();
+      await fireEvent.press(screen.getByRole('button', { name: en('health.err.open_account') }));
+      await settle();
+    }
+
+    it('opened from Account: back to that Account, not a second one on top', async () => {
+      await show({ consent: false }, { below: 'Account' });
+      await openAccountFromSheet();
+      expect(currentRoute()).toBe('Account');
+      expect(navigationRef.getRootState().routes.map((r) => r.name)).toEqual(['Account']);
+    });
+
+    it("opened from Plan: Account is pushed on Plan's stack", async () => {
+      await show({ consent: false });
+      await openAccountFromSheet();
+      expect(navigationRef.getRootState().routes.map((r) => r.name)).toEqual(['PlanMain', 'BodyAndGoals', 'Account']);
+    });
+  });
 });
 
 describe('download my data', () => {
@@ -495,6 +636,34 @@ describe('download my data', () => {
     expect(Sharing.shareAsync).toHaveBeenCalledTimes(1);
     expect(track).toHaveBeenCalledWith('health_export_requested', { outcome: 'ok' });
     expect(screen.queryByTestId('bodygoals.export.error')).toBeNull();
+  });
+
+  it('a member who leaves Body and goals while it is read: no file, no share sheet, nothing reported', async () => {
+    const track = jest.spyOn(analytics, 'track');
+    const held = heldReply();
+    api.on('GET', '/account/export', () => held.reply);
+    await show();
+    await fireEvent.press(screen.getByTestId('bodygoals.export'));
+    await leavePage();
+    held.release(Reply.ok({ format: '2026-09-v3' }));
+    await settle();
+    expect(Sharing.shareAsync).not.toHaveBeenCalled();
+    expect(exportFiles()).toEqual([]);
+    expect(track).not.toHaveBeenCalledWith('health_export_requested', expect.anything());
+  });
+
+  it('a member who signs out while it is read: no file, and no share sheet over the sign-in screen', async () => {
+    const held = heldReply();
+    api.on('GET', '/account/export', () => held.reply);
+    await show();
+    await fireEvent.press(screen.getByTestId('bodygoals.export'));
+    await act(async () => {
+      useAppStore.setState({ isAuthenticated: false, userId: null });
+    });
+    held.release(Reply.ok({ format: '2026-09-v3' }));
+    await settle();
+    expect(Sharing.shareAsync).not.toHaveBeenCalled();
+    expect(exportFiles()).toEqual([]);
   });
 
   it('the daily limit has its own red line', async () => {

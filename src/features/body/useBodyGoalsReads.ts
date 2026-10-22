@@ -86,9 +86,13 @@ export function useBodyGoalsReads(facts: () => BodyGoalsReadFacts): BodyGoalsRea
     }
   }, []);
 
+  // Everything goes, the target weight and the error row included: a
+  // re-consent on this page starts its reads from nothing, so a deleted
+  // target never shows while (or because) the reads that follow run or fail.
+  // iOS's withdraw() leaves `targetWeight` set; this does not.
   const clear = useCallback(() => {
     generation.current += 1;
-    setState((s) => ({ ...s, trend: null, goal: null }));
+    setState(EMPTY);
   }, []);
 
   return { ...state, load, clear };

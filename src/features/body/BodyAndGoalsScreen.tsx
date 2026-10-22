@@ -43,7 +43,6 @@ import { isLiveProgramStatus, type HealthConsent } from '../../api/profile';
 import { Dialog } from '../../components/ui';
 import {
   consentWithdrawalBody,
-  healthLocalStore,
   livePlanGoal,
   mayTakeTarget,
   setHealthConsent,
@@ -59,6 +58,7 @@ import { selectSupportsTargetWeight, useAppStore } from '../../stores/appStore';
 import { useIntentStore } from '../../stores/intentStore';
 import { colors } from '../../theme';
 
+import { clearLeftoverExports } from './export/cleanup';
 import { startExport } from './export/startExport';
 import LogWeightSheet from './logWeight/LogWeightSheet';
 import {
@@ -184,24 +184,29 @@ export default function BodyAndGoalsScreen({ navigation, route }: SharedRoutePro
     return () => subscription.remove();
   }, [refreshPermission]);
 
-  // An export the share sheet never got to delete (Android killed the app
-  // while another app had the file) goes the next time this page opens.
+  // An export a share never got to delete (Android killed the app while
+  // another app had the file) goes the next time this page opens; one a
+  // share in this run still holds waits for its own moment (./export/cleanup.ts).
   useEffect(() => {
-    void healthLocalStore.clearExports();
+    void clearLeftoverExports().catch(() => undefined);
   }, []);
 
   // A page that goes away with the wipe still owed (the screen was removed
-  // under the sheet) still wipes: the server has deleted everything.
-  useEffect(
-    () => () => {
+  // under the sheet) still wipes: the server has deleted everything. A
+  // withdrawal still in flight when the page goes wipes as it lands
+  // (`withdraw`), since it finds no page to show its sheet on.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
       if (wipePending.current !== false) {
         const id = wipePending.current;
         wipePending.current = false;
         void finishWithdrawal(id);
       }
-    },
-    [],
-  );
+    };
+  }, []);
 
   // ---------------------------------------------------------------------
   // Scrolling to an anchor (iOS `proxy.scrollTo(anchor, anchor: .top)`)
@@ -248,10 +253,17 @@ export default function BodyAndGoalsScreen({ navigation, route }: SharedRoutePro
     try {
       const result = await setHealthConsent(consentWithdrawalBody(consent?.version), newIdempotencyKey());
       track('health_consent_withdrawn', { entry: withdrawEntry });
+      useAppStore.getState().applyHealthDataDeleted();
+      if (!mounted.current) {
+        // The member left while the call ran (back is never blocked): the
+        // server has deleted everything and there is no sheet left to wait
+        // for, so this phone's copy goes now.
+        void finishWithdrawal(profileId);
+        return;
+      }
       // The page shows the profile with no health data at once, whatever a
       // read in flight does, and the wipe waits for the result sheet.
       setWithdrawnConsent(consent);
-      useAppStore.getState().applyHealthDataDeleted();
       wipePending.current = profileId;
       setIsWithdrawing(false);
       reads.clear();
@@ -277,7 +289,14 @@ export default function BodyAndGoalsScreen({ navigation, route }: SharedRoutePro
     if (isExporting) return;
     setIsExporting(true);
     setExportErrorKey(null);
+    // The export belongs to this page and this member: one that lands after
+    // either has gone opens no share sheet (./export/startExport.ts).
+    const owner = useAppStore.getState().userId;
     void startExport({
+      isCurrent: () => {
+        const app = useAppStore.getState();
+        return mounted.current && owner !== null && app.isAuthenticated && app.userId === owner;
+      },
       onReady: () => setIsExporting(false),
       onFailed: (key) => {
         setIsExporting(false);
@@ -285,6 +304,17 @@ export default function BodyAndGoalsScreen({ navigation, route }: SharedRoutePro
       },
       onCancelled: () => setIsExporting(false),
     });
+  };
+
+  /**
+   * Account (the consent sheet's way to a pending deletion), iOS
+   * `openAccount()`: opened from Account, it is the screen underneath, so
+   * going back is the way there (React Navigation 7's `navigate` would push
+   * a second Account); from Plan it is pushed on Plan's stack.
+   */
+  const openAccount = () => {
+    if (previousRouteName(navigation.getState(), route.key) === 'Account') navigation.popTo('Account');
+    else navigation.navigate('Account');
   };
 
   const openPlanRoot = () => {
@@ -371,13 +401,13 @@ export default function BodyAndGoalsScreen({ navigation, route }: SharedRoutePro
                     <PlanSection program={liveProgram} onOpen={openPlanRoot} />
                   </Section>
                 ) : null}
-                <SlotSection>
+                <SlotSection testID="bodygoals.slot.healthConnect">
                   <HealthConnectRow />
                 </SlotSection>
                 <Section onLayout={onAnchorLayout('reminders')}>
                   <RemindersSection settings={reminders} />
                 </Section>
-                <SlotSection onLayout={onAnchorLayout('feedback')}>
+                <SlotSection onLayout={onAnchorLayout('feedback')} testID="bodygoals.slot.feedback">
                   <FeedbackSwitches />
                 </SlotSection>
               </>
@@ -424,7 +454,7 @@ export default function BodyAndGoalsScreen({ navigation, route }: SharedRoutePro
           setWithdrawnConsent(null);
           void load();
         }}
-        onOpenAccount={() => navigation.navigate('Account')}
+        onOpenAccount={openAccount}
         testID="bodygoals.consent"
       />
 
@@ -468,16 +498,30 @@ function Section({ first = false, onLayout, children }: { readonly first?: boole
  * A section another package fills (the health-data connection, the monthly
  * feedback), which may render nothing: the gap above it appears only once it
  * has drawn something, so an empty slot leaves no hole between two cards.
+ *
+ * Its layout is passed on only once that gap is in place: the first one
+ * (drawn, no gap yet) has a `y` a gap too high, and scrolling to it would
+ * open the feedback anchor on the blank strip above the section. Adding the
+ * gap moves the section, which lays it out again.
  */
-function SlotSection({ onLayout, children }: { readonly onLayout?: (event: LayoutChangeEvent) => void; readonly children: ReactNode }) {
+function SlotSection({
+  onLayout,
+  testID,
+  children,
+}: {
+  readonly onLayout?: (event: LayoutChangeEvent) => void;
+  readonly testID?: string;
+  readonly children: ReactNode;
+}) {
   const [drawn, setDrawn] = useState(false);
   return (
     <View
+      testID={testID}
       style={drawn && styles.gap}
       onLayout={(event) => {
         const next = event.nativeEvent.layout.height > 0;
         if (next !== drawn) setDrawn(next);
-        onLayout?.(event);
+        if (next && drawn) onLayout?.(event);
       }}
     >
       {children}
