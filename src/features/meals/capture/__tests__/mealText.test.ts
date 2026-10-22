@@ -71,10 +71,16 @@ describe('the date dialog', () => {
 });
 
 describe('the modes this build draws', () => {
-  // Photo and Barcode are MEAL-3's; until they are wired in, Search alone.
-  it('opens in Search when the camera modes are not here, and offers Search only', () => {
-    expect(openingMode('photo')).toBe('search');
+  // Photo and Barcode are MEAL-3's, wired into ../slots.ts.
+  it('opens in the mode asked for, and offers all three', () => {
+    expect(openingMode('photo')).toBe('photo');
+    expect(openingMode('barcode')).toBe('barcode');
     expect(openingMode(undefined)).toBe('search');
-    expect(availableModes(TODAY)).toEqual(['search']);
+    expect(availableModes(TODAY)).toEqual(['photo', 'barcode', 'search']);
+  });
+
+  it('offers no Photo for a day older than 30 days (OP-32 takes no older)', () => {
+    const older = new Date(Date.parse(`${TODAY}T12:00:00Z`) - 31 * 86_400_000).toISOString().slice(0, 10);
+    expect(availableModes(older, TODAY)).toEqual(['barcode', 'search']);
   });
 });

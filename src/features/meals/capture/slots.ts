@@ -8,8 +8,8 @@
  * | `BarcodeMode`     | MEAL-3    | `BarcodeScanMode(model:anchor:)`         | no Barcode in the switcher          |
  * | `NewItemEditor`   | MEAL-4    | `FoodItemEditorSheet(context: .newItem)` | a row's tap adds its usual portion  |
  *
- * MEAL-3 depends on MEAL-2, so it fills its two by editing this file once
- * MEAL-2 has merged (plan 3.0 rule 2). MEAL-4 does not, so its line is a
+ * MEAL-3 depends on MEAL-2, so it filled its two by editing this file once
+ * MEAL-2 had merged (plan 3.0 rule 2). MEAL-4 does not, so its line is a
  * MERGE GATE (contract request in MEAL-2's result): without it a row's tap
  * and its plus do the same thing, which iOS never does. Replace the null
  * below with
@@ -26,6 +26,8 @@
  */
 import type { ComponentType } from 'react';
 
+import BarcodeScanMode from '../barcode/BarcodeScanMode';
+import PhotoCaptureMode from '../photo/PhotoCaptureMode';
 import type { MealItemDraft } from '../types/draft';
 
 import type { MealCaptureModel } from './captureModel';
@@ -48,11 +50,11 @@ export interface NewItemEditorProps {
   readonly onClose: () => void;
 }
 
-/** MEAL-3: the Photo mode. */
-export const PhotoMode: ComponentType<CameraModeProps> | null = null;
+/** MEAL-3: the Photo mode (../photo/PhotoCaptureMode.tsx). */
+export const PhotoMode: ComponentType<CameraModeProps> | null = PhotoCaptureMode;
 
-/** MEAL-3: the Barcode mode. */
-export const BarcodeMode: ComponentType<CameraModeProps> | null = null;
+/** MEAL-3: the Barcode mode (../barcode/BarcodeScanMode.tsx). */
+export const BarcodeMode: ComponentType<CameraModeProps> | null = BarcodeScanMode;
 
 /** MEAL-4: the item editor for a food about to be added. */
 export const NewItemEditor: ComponentType<NewItemEditorProps> | null = null;
