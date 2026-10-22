@@ -27,6 +27,14 @@ import { multiSelectOf } from './messages';
 import { canConfirm } from './multiSelect';
 import { confirmMultiSelect, toggleProgramOption } from './wizard';
 
+/**
+ * The chips and Continue are drawn 40 dp tall, as iOS draws them (40 pt), and
+ * touched 48 dp tall, Android's minimum target: these are the safety and
+ * injury taps, where a mis-tap matters most. Four above and four below fills
+ * the 8 dp gap between two rows of chips without the two rows overlapping.
+ */
+const TOUCH_SLOP = { top: 4, bottom: 4 } as const;
+
 function ProgramMultiChoiceBubble({ message }: CoachMessageRendererProps) {
   const { t } = useT();
   const state = multiSelectOf(message);
@@ -62,6 +70,7 @@ function ProgramMultiChoiceBubble({ message }: CoachMessageRendererProps) {
                 if (!closed) toggleProgramOption(message.id, option.value);
               }}
               disabled={closed}
+              hitSlop={TOUCH_SLOP}
               accessibilityRole="checkbox"
               accessibilityLabel={label}
               accessibilityState={{ checked: selected, disabled: closed }}
@@ -98,6 +107,7 @@ function ProgramMultiChoiceBubble({ message }: CoachMessageRendererProps) {
         <Pressable
           onPress={() => confirmMultiSelect(message.id)}
           disabled={!ready}
+          hitSlop={TOUCH_SLOP}
           accessibilityRole="button"
           accessibilityLabel={
             ready ? `${continueLabel}. ${t('a11y.selected_count', { count: String(state.selection.length) })}` : continueLabel
