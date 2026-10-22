@@ -633,6 +633,11 @@ export class RunnerController {
   // ---------------------------------------------------------------------------
   // For RUN-3's swap, skip-workout and finish sheets
 
+  /** The runner's clock (tests set their own): the finish sheet's minutes and the Save's moment. */
+  time(): Date {
+    return this.clock();
+  }
+
   /**
    * Applies a model change made outside this class (a swap, the Save key and
    * moment), writes it down and keeps the keep-awake right. Returns the new

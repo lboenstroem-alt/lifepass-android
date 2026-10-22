@@ -1,20 +1,27 @@
-// @f4-stub (plan 3.0 rule 5; RUN-2 → RUN-3): the finish sheet is still to come (RUN-3).
 /**
  * The runner's sheets, mounted by the runner screen (./WorkoutRunnerView.tsx)
  * over the page (RUN-3; iOS `.sheet(isPresented:)` on `WorkoutRunnerView`):
  *
+ *   'finish'       FinishWorkoutSheet: from "Finish workout" (the big button
+ *                  or the quiet one) and the Leave dialog's "Save and
+ *                  finish". As it opens the Save key is minted (once) and
+ *                  the minutes are prefilled (iOS `prepareFinish`).
  *   'swap'         SwapExerciseSheet: from "Swap" (shown only when
  *                  `controller.swapOptions()` is not empty). A row swaps and
  *                  closes the sheet.
  *   'skipWorkout'  SkipWorkoutSheet: from the Leave dialog's "Skip this
  *                  workout" (offered only when `controller.canSkipWorkout`
  *                  and online).
- *   'finish'       not yet: a development build says so.
+ *
+ * The sheets stay mounted and are driven by `sheet`, so each slides in and
+ * out as a sheet does. Their work is in ../finish, ../skip and ../swap; a
+ * Save or a Skip that goes through closes the runner itself
+ * (`controller.close`), which takes the sheets with it.
  */
-import { useSyncExternalStore } from 'react';
+import { useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 
-import { Dialog } from '../../../components/ui';
-import { useT } from '../../../i18n';
+import FinishWorkoutSheet from '../finish/FinishWorkoutSheet';
+import { finishFlowFor } from '../finish/finishFlow';
 import { currentExercise } from '../model/state';
 import SkipWorkoutSheet from '../skip/SkipWorkoutSheet';
 import { skipWorkoutFlowFor } from '../skip/skipWorkoutFlow';
@@ -36,12 +43,28 @@ export interface RunnerSheetsProps {
 }
 
 export default function RunnerSheets({ controller, sheet, onClose, isOffline }: RunnerSheetsProps) {
-  const { t } = useT();
   const { state } = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
-  const current = currentExercise(state);
+  const finish = finishFlowFor(controller);
   const skipWorkout = skipWorkoutFlowFor(controller);
+  const shown = useRef<RunnerSheet | null>(null);
+
+  // The finish sheet opens: key and minutes, before it is drawn.
+  useLayoutEffect(() => {
+    if (sheet === 'finish' && shown.current !== 'finish') finish.prepare();
+    shown.current = sheet;
+  }, [sheet, finish]);
+
+  const current = currentExercise(state);
+
   return (
     <>
+      <FinishWorkoutSheet
+        visible={sheet === 'finish'}
+        flow={finish}
+        state={state}
+        isOffline={isOffline}
+        onClose={onClose}
+      />
       <SwapExerciseSheet
         visible={sheet === 'swap'}
         onClose={onClose}
@@ -55,16 +78,6 @@ export default function RunnerSheets({ controller, sheet, onClose, isOffline }: 
         }}
       />
       <SkipWorkoutSheet visible={sheet === 'skipWorkout'} flow={skipWorkout} onClose={onClose} />
-      {__DEV__ && sheet === 'finish' ? (
-        <Dialog
-          visible
-          onClose={onClose}
-          title={t('nav.stub.not_in_build')}
-          message={`${sheet} · RUN-3`}
-          buttons={[{ label: t('common.close'), role: 'cancel', testID: 'runner.sheetStub.close' }]}
-          testID={`stub.runner.${sheet}`}
-        />
-      ) : null}
     </>
   );
 }

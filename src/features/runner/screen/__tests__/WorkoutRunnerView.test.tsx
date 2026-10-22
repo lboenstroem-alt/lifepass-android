@@ -608,19 +608,3 @@ describe('what reaches the runner from outside', () => {
     expect(screen.getByTestId('runner.undoToast').props.accessibilityLiveRegion).toBeUndefined();
   });
 });
-
-describe("RUN-3's sheets, until they land", () => {
-  it('a development build says the sheet is not in this build, and its Close lets the page open it again', async () => {
-    await render(
-      <UiKitProvider>
-        <WorkoutRunnerView controller={runner()} />
-      </UiKitProvider>,
-    );
-    await fireEvent.press(screen.getByTestId('runner.finishSecondary'));
-    expect(screen.getByText('Not in this build yet')).toBeTruthy();
-    await fireEvent.press(screen.getByTestId('runner.sheetStub.close'));
-    expect(screen.queryByText('Not in this build yet')).toBeNull();
-    await fireEvent.press(screen.getByTestId('runner.finishSecondary'));
-    expect(screen.getByText('Not in this build yet')).toBeTruthy();
-  });
-});
