@@ -17,14 +17,23 @@
  * but a request already out completes, for next time.
  *
  * Each map reads the markers once in its life (iOS builds a view model per
- * visit), drawing whatever the shared feed already holds meanwhile. The
- * quiet notice shows only while the last load failed AND no marker is held:
- * a layer that is on but empty always has a way back, and one with rings on
- * it does not claim they "did not load".
+ * visit), drawing whatever the shared feed already holds meanwhile. A search
+ * group read that lands after the map appeared counts as the map's own
+ * (./exploreFeed.ts; on iOS both go through one view model): the schedule
+ * ends at its next step instead of asking again. The quiet notice shows only
+ * while the last load failed AND no marker is held: a layer that is on but
+ * empty always has a way back, and one with rings on it does not claim they
+ * "did not load". Its spinner follows any Explore read, the search group's
+ * included.
  *
- * TRAILS load once the markers have, and only while the layer is still on:
- * lines alone would draw walks with no ring to tap (./trailsFeed.ts holds
- * the ten-minute wait after a failure).
+ * TRAILS load once the schedule is over with markers held (rings on the
+ * map), and only while the layer is still on: lines alone would draw walks
+ * with no ring to tap. Rings drawn from a feed another surface read (Home)
+ * while the map's own reads fail still get their trails (./trailsFeed.ts
+ * holds the ten-minute wait after a failure).
+ *
+ * Under the `mapPins` fixture the fixture's sights and trail stand in and
+ * nothing is asked (./mapPinsFixture.ts, iOS `MapPinsScreenshotFixtures`).
  *
  * THE OPEN SIGHT. A ring tapped, or a sight opened from the search group, is
  * the open sight until Explore is back in front (its card closed): its ring
@@ -38,11 +47,23 @@ import type { AttractionTrail } from '../../../api/attractions';
 import { isCancellation } from '../../../api';
 import { useT, type Lang } from '../../../i18n';
 import { coordinateOf, type Coordinate } from '../../../lib/geo';
-import { attractionMarkersStore, loadAttractionMarkers } from '../markersStore';
+import { attractionMarkersStore } from '../markersStore';
 import { sightDisplayName } from '../model';
 import { rankedForMap } from '../rules';
+import { exploreSightsFeed, loadExploreMarkers, readMark, readSince } from './exploreFeed';
 import { NO_SIGHTS, NO_TRAILS, sightFeatures, trailFeatures, type SightsCollection, type TrailsCollection } from './features';
-import { hitSize, mapScreenOf, regionOfCamera, regionOfSpan, venueTitleSize, type MapCameraReport, type Size } from './layout';
+import {
+  HIT_TARGET,
+  hitSize,
+  latitudeSpan,
+  mapScreenOf,
+  regionOfCamera,
+  regionOfSpan,
+  venueTitleSize,
+  type MapCameraReport,
+  type Size,
+} from './layout';
+import { mapPinsFixture } from './mapPinsFixture';
 import { layOutSights, trailsDrawnAtThisZoom, type MapVenue, type SightsViewport } from './sightsLayout';
 import { loadTrailsFeed } from './trailsFeed';
 import { sightAccessibilityLabel } from './words';
@@ -103,12 +124,18 @@ export interface SightsLayerContent {
   readonly accessible: readonly AccessibleSight[];
   /** A ring was chosen: it becomes the open sight. */
   readonly select: (slug: string) => void;
+  /**
+   * Ground metres per screen point at the camera the rings were laid out
+   * for, so a tap can tell a drawn ring from an invisible target; null
+   * before the map has a size.
+   */
+  readonly metresPerPoint?: number | null;
 }
 
 export interface SightsMap {
   readonly showSights: boolean;
   readonly toggle: () => void;
-  /** A marker request from this map is out. */
+  /** An Explore read of the markers is out (this map's, or the search group's). */
   readonly loading: boolean;
   /** The quiet "Sights did not load." notice. */
   readonly showsRetryNotice: boolean;
@@ -137,20 +164,25 @@ export function useSightsMap({
   screenReaderOn = false,
 }: SightsMapInput): SightsMap {
   const { t, language } = useT();
-  const page = useStore(attractionMarkersStore, (state) => state.page);
+  // The `mapPins` fixture's sights, read once for this map's life.
+  const [fixture] = useState(mapPinsFixture);
+  const heldPage = useStore(attractionMarkersStore, (state) => state.page);
+  const page = fixture?.page ?? heldPage;
   const focused = useScreenFocused();
   const onScreen = active && focused;
 
   // MARK: Loading
 
-  const [loading, setLoading] = useState(false);
+  const loading = useStore(exploreSightsFeed, (state) => state.loading);
   const [failed, setFailed] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
-  const [trails, setTrails] = useState<readonly AttractionTrail[]>(NO_TRAIL_LIST);
+  const [trails, setTrails] = useState<readonly AttractionTrail[]>(() => fixture?.trails ?? NO_TRAIL_LIST);
   /** The language this map has read the markers in (iOS `attractionsLoaded`, per map). */
   const loadedIn = useRef<Lang | null>(null);
-  const trailsLoaded = useRef(false);
-  const outstanding = useRef(0);
+  const trailsLoaded = useRef(fixture !== null);
+  // Where Explore's reads stood when this map appeared: one that lands later
+  // (the search group's) is this map's read too.
+  const [mark] = useState(readMark);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -160,26 +192,33 @@ export function useSightsMap({
   }, []);
 
   /** One read of the markers (joining one already out). True once this map has them. */
-  const attempt = useCallback(async (locale: Lang): Promise<boolean> => {
-    if (loadedIn.current === locale) return true;
-    outstanding.current += 1;
-    setLoading(true);
-    const result = await loadAttractionMarkers(locale);
-    outstanding.current -= 1;
-    if (!mounted.current) return result.ok;
-    if (outstanding.current === 0) setLoading(false);
-    if (result.ok) {
-      loadedIn.current = locale;
-      setFailed(false);
-    } else if (!isCancellation(result.error)) {
-      // Keep what is drawn; the notice and the schedule get another go.
-      setFailed(true);
-    }
-    return result.ok;
-  }, []);
+  const attempt = useCallback(
+    async (locale: Lang): Promise<boolean> => {
+      if (loadedIn.current === locale) return true;
+      // The search group read them since this map appeared (iOS: the same
+      // view model's `attractionsLoaded`): nothing to ask.
+      if (readSince(mark, locale)) {
+        loadedIn.current = locale;
+        setFailed(false);
+        return true;
+      }
+      const result = await loadExploreMarkers(locale);
+      if (!mounted.current) return result.ok;
+      if (result.ok) {
+        loadedIn.current = locale;
+        setFailed(false);
+      } else if (!isCancellation(result.error)) {
+        // Keep what is drawn; the notice and the schedule get another go.
+        setFailed(true);
+      }
+      return result.ok;
+    },
+    [mark],
+  );
 
   useEffect(() => {
-    if (!showSights || !onScreen) return undefined;
+    // The fixture's sights and trail are in hand: nothing to ask.
+    if (!showSights || !onScreen || fixture) return undefined;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const wait = (ms: number) =>
@@ -196,9 +235,10 @@ export function useSightsMap({
         if (await attempt(language)) break;
       }
       // A layer switched off (or a map gone) meanwhile has no use for the
-      // heavier request, and a layer whose markers never came must not draw
-      // walks with no ring to tap.
-      if (cancelled || loadedIn.current !== language || trailsLoaded.current) return;
+      // heavier request, and a layer with no markers held must not draw walks
+      // with no ring to tap. Rings drawn from a feed another surface read
+      // (Home) get their trails even when this map's own reads failed.
+      if (cancelled || trailsLoaded.current || attractionMarkersStore.getState().page === null) return;
       const feed = await loadTrailsFeed();
       if (!feed || !mounted.current) return;
       trailsLoaded.current = true;
@@ -208,7 +248,7 @@ export function useSightsMap({
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [showSights, onScreen, retryNonce, language, attempt]);
+  }, [showSights, onScreen, retryNonce, language, attempt, fixture]);
 
   const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
   const toggle = useCallback(() => setShowSights(!showSights), [setShowSights, showSights]);
@@ -281,9 +321,20 @@ export function useSightsMap({
     }));
   }, [screenReaderOn, layout, selectedSlug, language, t]);
 
+  // How far a point on screen reaches on the ground, at the camera laid out
+  // for: a tap on a drawn ring wins over an invisible target (`pickSight`).
+  const metresPerPoint =
+    viewport.region && height > 0 ? (latitudeSpan(viewport.region) * HIT_TARGET.metresPerDegreeLatitude) / height : null;
+
   const layer = useMemo<SightsLayerContent>(
-    () => ({ sights: showSights ? sights : NO_SIGHTS, trails: showSights ? trailShapes : NO_TRAILS, accessible, select }),
-    [showSights, sights, trailShapes, accessible, select],
+    () => ({
+      sights: showSights ? sights : NO_SIGHTS,
+      trails: showSights ? trailShapes : NO_TRAILS,
+      accessible,
+      select,
+      metresPerPoint,
+    }),
+    [showSights, sights, trailShapes, accessible, select, metresPerPoint],
   );
 
   return {

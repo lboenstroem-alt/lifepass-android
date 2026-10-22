@@ -20,15 +20,20 @@
  *     (between 72 and 180 points): while a name is typed the keyboard takes
  *     half a small phone, and five full rows would leave the map a sliver.
  *     The heading and the OpenStreetMap credit stay put, so the credit is on
- *     screen whenever a sight name is.
+ *     screen whenever a sight name is. The space is measured again after
+ *     every render, not only when the group's own frame changes: the Filters
+ *     panel or the "Clear filters" link opening above moves the group within
+ *     the window without changing its frame in its parent (iOS measures the
+ *     results area itself, `resultsAreaHeight`).
  *   - Typing starts (or joins) the marker load: the list never loads the
- *     sights on its own.
+ *     sights on its own. The map counts it as its own read (and its notice
+ *     shows the spinner meanwhile), as on iOS, where both share one model.
  *   - A tap closes the keyboard and opens the sight; Explore folds the group
  *     away for that query and, on the map, brings the sight into view with
  *     the layer on (`onOpenSight`'s `at`).
  */
 import { Ionicons } from '@expo/vector-icons';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type KeyboardEvent } from 'react-native';
 
 import type { AttractionMarker } from '../../api/attractions';
@@ -37,8 +42,10 @@ import { useT } from '../../i18n';
 import type { Coordinate } from '../../lib/geo';
 import { colors } from '../../theme';
 import AttractionRing from './AttractionRing';
+import { loadExploreMarkers } from './map/exploreFeed';
+import { mapPinsFixture } from './map/mapPinsFixture';
 import { sightDetailLine } from './map/words';
-import { attractionMarkersStore, loadAttractionMarkers, useAttractionMarkers } from './markersStore';
+import { attractionMarkersStore, useAttractionMarkers } from './markersStore';
 import { isHike, sightDisplayName } from './model';
 import { matchSights, rankedForMap } from './rules';
 
@@ -69,14 +76,18 @@ export default function SightsSearchGroup({ query, onOpenSight }: SightsSearchGr
   const { t, language } = useT();
   const trimmed = query.trim();
 
+  // The `mapPins` fixture's sights stand in for the feed (as the map's do).
+  const [fixture] = useState(mapPinsFixture);
+
   // Search finds sights too, and the list never loads them on its own. A
   // load already out (the map's) is joined; a feed already held is enough.
   useEffect(() => {
-    if (!trimmed || attractionMarkersStore.getState().page !== null) return;
-    void loadAttractionMarkers(language);
-  }, [trimmed, language]);
+    if (!trimmed || fixture || attractionMarkersStore.getState().page !== null) return;
+    void loadExploreMarkers(language);
+  }, [trimmed, language, fixture]);
 
-  const markers = useAttractionMarkers();
+  const held = useAttractionMarkers();
+  const markers = fixture?.page.attractions ?? held;
   const ranked = useMemo(() => rankedForMap(markers), [markers]);
   const matches = useMemo(() => matchSights(trimmed, ranked, MAX_SIGHT_MATCHES), [trimmed, ranked]);
 
@@ -88,6 +99,14 @@ export default function SightsSearchGroup({ query, onOpenSight }: SightsSearchGr
   const [groupTop, setGroupTop] = useState<number | null>(null);
   const areaBottom = useAreaBottom();
   const maxRowsHeight = sightRowsMaxHeight(groupTop === null ? 0 : areaBottom - groupTop);
+  const measure = useCallback(() => group.current?.measureInWindow((_x, y) => setGroupTop(y)), []);
+  // After every render as well as on its own layout: what moves the group in
+  // the window (a panel opening above it) re-renders Explore, and so this,
+  // without changing the group's frame in its parent. The same top again
+  // changes nothing.
+  useLayoutEffect(() => {
+    measure();
+  });
 
   // A new set of rows: show that they scroll, if they do.
   useEffect(() => {
@@ -108,7 +127,7 @@ export default function SightsSearchGroup({ query, onOpenSight }: SightsSearchGr
     <View
       ref={group}
       style={styles.group}
-      onLayout={() => group.current?.measureInWindow((_x, y) => setGroupTop(y))}
+      onLayout={measure}
       testID="explore.sights"
     >
       <Kicker text={t('attraction.search_group')} color={colors.paper3} style={styles.heading} accessibilityRole="header" />

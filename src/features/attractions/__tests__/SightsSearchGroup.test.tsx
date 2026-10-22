@@ -10,6 +10,7 @@ import { Keyboard, View } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { setCurrentLanguage } from '../../../i18n';
+import * as exploreFeed from '../map/exploreFeed';
 import { attractionMarkersStore, resetAttractionMarkers } from '../markersStore';
 import SightsSearchGroup, { MAX_SIGHT_MATCHES, sightRowsMaxHeight } from '../SightsSearchGroup';
 import { markerJson, sight } from './fixtures';
@@ -47,6 +48,7 @@ function names(): string[] {
 
 beforeEach(() => {
   resetAttractionMarkers();
+  exploreFeed.resetExploreSightsFeed();
   setCurrentLanguage('en');
   onOpenSight.mockReset();
 });
@@ -159,6 +161,18 @@ describe('loading the sights', () => {
     expect(api.sentAll('/attractions')[0].query).toMatchObject({ locale: 'en' });
   });
 
+  it('reads through Explore’s shared read, so the map counts it as its own and its notice shows the spinner', async () => {
+    const read = jest.spyOn(exploreFeed, 'loadExploreMarkers');
+    try {
+      api.on('GET', '/attractions', Reply.ok({ attractions: [markerJson('thingvellir', { name: 'Þingvellir' })], attribution: 'ODbL' }));
+      await renderGroup('thing');
+      await screen.findByTestId('explore.sights.row.thingvellir');
+      expect(read).toHaveBeenCalledWith('en');
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   it('asks nothing when the sights are already held', async () => {
     hold();
     await renderGroup('thing');
@@ -182,6 +196,32 @@ describe('the space below the search row', () => {
       await renderGroup('foss');
       await fireEvent(screen.getByTestId('explore.sights'), 'layout', { nativeEvent: { layout: { x: 20, y: 100, width: 350, height: 200 } } });
       expect(screen.getByTestId('explore.sights.rows')).toHaveStyle({ maxHeight: 120 });
+    } finally {
+      measure.mockRestore();
+      jest.restoreAllMocks();
+    }
+  });
+
+  it('measures again when something above moves it (the Filters panel), not only on its own layout', async () => {
+    jest.spyOn(Keyboard, 'isVisible').mockReturnValue(true);
+    jest.spyOn(Keyboard, 'metrics').mockReturnValue({ screenX: 0, screenY: 500, width: 400, height: 300 });
+    let top = 100;
+    const measure = jest
+      .spyOn(View.prototype as unknown as { measureInWindow: Measure }, 'measureInWindow')
+      .mockImplementation((callback) => callback(20, top, 350, 200));
+    try {
+      hold();
+      const view = await renderGroup('foss');
+      expect(screen.getByTestId('explore.sights.rows')).toHaveStyle({ maxHeight: 120 });
+      // The panel opens above: Explore renders again, the group's frame in
+      // its parent stays the same (no layout event), its place in the window does not.
+      top = 300;
+      await view.rerender(<SightsSearchGroup query="foss" onOpenSight={onOpenSight} />);
+      expect(screen.getByTestId('explore.sights.rows')).toHaveStyle({ maxHeight: 72 });
+      // And closes again.
+      top = 0;
+      await view.rerender(<SightsSearchGroup query="foss" onOpenSight={onOpenSight} />);
+      expect(screen.getByTestId('explore.sights.rows')).toHaveStyle({ maxHeight: 150 });
     } finally {
       measure.mockRestore();
       jest.restoreAllMocks();
