@@ -223,8 +223,14 @@ export async function runFeedbackBackgroundCheck(options: FeedbackCheckOptions =
   return 'read';
 }
 
-/** The job WorkManager runs: the check, in the registry's words. */
+/**
+ * The job WorkManager runs: the check, in the registry's words. Not while the
+ * app is on screen: WorkManager may run it then (iOS never runs a refresh in
+ * the foreground), and a "learned" notice must never be scheduled while the
+ * Plan card is doing the telling. The foreground reads on its own.
+ */
 export async function runFeedbackRefreshJob(): Promise<BackgroundJobResult> {
+  if (AppState.currentState === 'active') return 'no-data';
   switch (await runFeedbackBackgroundCheck()) {
     case 'read':
       return 'new-data';

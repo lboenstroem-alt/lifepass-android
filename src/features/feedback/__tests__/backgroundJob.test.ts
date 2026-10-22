@@ -120,6 +120,18 @@ function appStateListener(): (state: string) => void {
   return call[1] as (state: string) => void;
 }
 
+/** Runs `work` while React Native reports the app in `state`. */
+async function whileAppIs<T>(state: string, work: () => Promise<T>): Promise<T> {
+  const original = Object.getOwnPropertyDescriptor(AppState, 'currentState');
+  Object.defineProperty(AppState, 'currentState', { configurable: true, get: () => state });
+  try {
+    return await work();
+  } finally {
+    if (original) Object.defineProperty(AppState, 'currentState', original);
+    else delete (AppState as { currentState?: string }).currentState;
+  }
+}
+
 /** The member recorded for the background, in a language. */
 async function recordMember(language = 'en'): Promise<void> {
   await AsyncStorage.multiSet([
@@ -349,6 +361,14 @@ describe('the WorkManager task', () => {
     useAppStore.setState({ isLoading: true });
     expect(await runBackgroundJobs()).toBe('no-data');
     expect(api.requests).toEqual([]);
+  });
+
+  it('a run while the app is on screen reads nothing: the foreground does the telling', async () => {
+    await recordMember();
+    api.on('GET', '/health/feedback', Reply.ok(summaryJSON()));
+    expect(await whileAppIs('active', runFeedbackRefreshJob)).toBe('no-data');
+    expect(api.requests).toEqual([]);
+    expect(await whileAppIs('background', runFeedbackRefreshJob)).toBe('new-data');
   });
 
   it('the job is registered once, under its id', () => {
