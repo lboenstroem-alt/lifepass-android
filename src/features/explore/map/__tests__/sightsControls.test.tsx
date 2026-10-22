@@ -87,10 +87,27 @@ async function renderMap(props: Partial<ExploreMapProps> = {}) {
   return view;
 }
 
-/** The rings drawn, by slug. */
+/** The rings drawn, by slug (a sight's dot is a feature of its own). */
 function rings(): string[] {
   const shape = mockSources['lifepass-sights']?.shape as GeoJSON.FeatureCollection | undefined;
-  return (shape?.features ?? []).map((feature) => String(feature.id));
+  return (shape?.features ?? []).filter((feature) => feature.properties?.kind === 'ring').map((feature) => String(feature.id));
+}
+
+/** A finger's tap on the sights source at the pond. */
+async function tapThePond() {
+  const shape = mockSources['lifepass-sights'].shape as GeoJSON.FeatureCollection;
+  await act(async () =>
+    mockSources['lifepass-sights'].onPress?.({
+      features: shape.features,
+      coordinates: { latitude: 64.1442, longitude: -21.9419 },
+      point: { x: 10, y: 10 },
+    }),
+  );
+}
+
+/** Real time passes (the map holds a ring's tap a moment). */
+async function pause(ms: number) {
+  await act(async () => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 }
 
 /** The map settles on a box (`onMapIdle`). */
@@ -178,23 +195,35 @@ it('says quietly when the sights did not load, and “Try again” asks at once'
   expect(rings()).toEqual(['tjornin']);
 });
 
-it('a ring’s tap closes the venue’s card and opens the sight', async () => {
+it('a ring’s tap closes the venue’s card and opens the sight, after the map’s hold', async () => {
   serve();
   await renderMap();
   await waitFor(() => expect(rings()).toEqual(['tjornin']));
   await fireEvent.press(screen.getByTestId('explore.map.pin.laugar'));
   expect(screen.getByTestId('explore.venueCard')).toBeTruthy();
 
-  const shape = mockSources['lifepass-sights'].shape as GeoJSON.FeatureCollection;
-  await act(async () =>
-    mockSources['lifepass-sights'].onPress?.({
-      features: shape.features,
-      coordinates: { latitude: 64.1442, longitude: -21.9419 },
-      point: { x: 10, y: 10 },
-    }),
-  );
-  expect(onOpenSight).toHaveBeenCalledWith('tjornin');
-  await waitFor(() => expect(screen.queryByTestId('explore.venueCard')).toBeNull());
+  // A separate touch, well after the pin's.
+  const later = Date.now() + 2_000;
+  const now = jest.spyOn(Date, 'now').mockReturnValue(later);
+  try {
+    await tapThePond();
+    expect(onOpenSight).not.toHaveBeenCalled();
+    await waitFor(() => expect(onOpenSight).toHaveBeenCalledWith('tjornin'));
+    await waitFor(() => expect(screen.queryByTestId('explore.venueCard')).toBeNull());
+  } finally {
+    now.mockRestore();
+  }
+});
+
+it('a ring under the same touch as a venue pin leaves it to the venue (a tap on the pool never opens the waterfall)', async () => {
+  serve();
+  await renderMap();
+  await waitFor(() => expect(rings()).toEqual(['tjornin']));
+  await fireEvent.press(screen.getByTestId('explore.map.pin.laugar'));
+  await tapThePond();
+  await pause(150);
+  expect(onOpenSight).not.toHaveBeenCalled();
+  expect(screen.getByTestId('explore.venueCard')).toBeTruthy();
 });
 
 it('Home’s “See all on the map”: the whole island, top picks only', async () => {

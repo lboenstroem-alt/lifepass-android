@@ -147,6 +147,19 @@ export const CARD_GAP_ABOVE_BAR = 44;
 /** The locate button brings the dot into view at least this close in. */
 export const LOCATE_ZOOM = 13;
 
+/**
+ * How long the camera must stay still before the sights lay out for it: the
+ * end of a move (iOS `onMapCameraChange(frequency: .onEnd)`). Mapbox's own
+ * idle report also waits for every tile to load and fade in, which on a slow
+ * connection comes long after the camera stopped; it stays as the fallback.
+ * Not gated on `gestures.isGestureActive`: on Android that stays true until
+ * the finger lifts, and a pan that ends without a fling reports no camera
+ * change after it, so a gated wait would fall back to the slow idle report.
+ * A finger held still mid-pan lays the rings out where it is, which only
+ * brings them sooner.
+ */
+export const CAMERA_SETTLE_MS = 150;
+
 /** The card's bottom edge, measured up from the bottom of the map. */
 export function venueCardBottom(bottomInset: number): number {
   return Math.max(0, bottomInset) + CARD_GAP_ABOVE_BAR;
@@ -204,7 +217,24 @@ function LiveExploreMap({
   const zoom = reportedZoom ?? regionZoom(initialRegion, mapSize.width, mapSize.height);
   // The camera as last reported at the end of a move: where the sights layer
   // lays out its rings, names and trails (iOS `onMapCameraChange(.onEnd)`).
+  // Reported once the camera has been still `CAMERA_SETTLE_MS`, and again by
+  // Mapbox's idle; the layer lays nothing out again for the same numbers.
   const [camera, setCamera] = useState<MapState['properties'] | null>(null);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onCameraChanged = useCallback((state: MapState) => {
+    if (settleTimer.current !== null) clearTimeout(settleTimer.current);
+    const properties = state.properties;
+    settleTimer.current = setTimeout(() => {
+      settleTimer.current = null;
+      setCamera(properties);
+    }, CAMERA_SETTLE_MS);
+  }, []);
+  useEffect(
+    () => () => {
+      if (settleTimer.current !== null) clearTimeout(settleTimer.current);
+    },
+    [],
+  );
   // The toggle, the legend's sight entries, what hangs under the legend and
   // what the layer draws (ATTR-2's, through ./sightsControls).
   const sights = useSightsMapControls({
@@ -344,6 +374,24 @@ function LiveExploreMap({
       onOpenSight(slug);
     },
     [dispatch, onOpenSight],
+  );
+
+  /**
+   * A finger's tap on a sight ring is held like a map tap and dropped when a
+   * pin took the same touch (`deliversMapTap`): a tap on the pool never opens
+   * the waterfall too (iOS hit-tests a single annotation). rnmapbox already
+   * keeps a tap inside a marker's box from the layers under it; this covers a
+   * phone whose map hears the pin's touch anyway (`debugMapTapFirst`).
+   * TalkBack's activation of a ring does not come through here.
+   */
+  const holdSightTouch = useCallback(
+    (deliver: () => void) => {
+      const at = Date.now();
+      later(MAP_TAP_HOLD_MS, () => {
+        if (deliversMapTap(at, lastPinTapAt.current)) deliver();
+      });
+    },
+    [later],
   );
 
   // A sight opened from the search group: the same rule, and the map brings
@@ -491,6 +539,7 @@ function LiveExploreMap({
         logoPosition={{ bottom: Math.max(0, bottomInset) + 4, left: 8 }}
         attributionPosition={{ bottom: Math.max(0, bottomInset) + 4, left: 92 }}
         onPress={onMapPress}
+        onCameraChanged={onCameraChanged}
         onMapIdle={(state) => {
           setReportedZoom(state.properties.zoom);
           setCamera(state.properties);
@@ -498,7 +547,13 @@ function LiveExploreMap({
         testID="explore.map.view"
       >
         <Camera ref={cameraRef} defaultSettings={cameraDefaults} />
-        <SightsLayer visible={showSights} zoom={zoom} onSelectSight={onSelectSight} content={sights.layer} />
+        <SightsLayer
+          visible={showSights}
+          zoom={zoom}
+          onSelectSight={onSelectSight}
+          content={sights.layer}
+          holdTouch={holdSightTouch}
+        />
         <VenueNamesLayer venues={located} pinnedId={pinnedId} />
         {/* In the list's order, always: a reordered marker is a native view
             torn down and added again. The pinned one is `isSelected`, which

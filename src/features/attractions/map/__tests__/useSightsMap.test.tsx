@@ -1,7 +1,8 @@
 /**
  * The Explore map's sights state (./useSightsMap.ts, iOS SearchMapView's
  * sights task and MapViewModel): the 0/5/15/60 s retry schedule and when it
- * stops, the quiet notice, trails after markers, the credit, the open sight
+ * stops (a search group read ends it, as on iOS's one view model), the quiet
+ * notice and its spinner, trails after markers, the credit, the open sight
  * and the layout handed to the layer.
  */
 import { NavigationContext } from '@react-navigation/native';
@@ -12,6 +13,7 @@ import type { AttractionMarkerPage, AttractionTrail, AttractionTrailPage } from 
 import { setCurrentLanguage } from '../../../../i18n';
 import { sight } from '../../__tests__/fixtures';
 import { attractionMarkersStore, loadAttractionMarkers, resetAttractionMarkers, type MarkersLoadResult } from '../../markersStore';
+import { loadExploreMarkers, resetExploreSightsFeed } from '../exploreFeed';
 import { regionOfSpan } from '../layout';
 import { loadTrailsFeed } from '../trailsFeed';
 import { MARKER_RETRY_DELAYS_MS, useSightsMap, type SightsMapInput } from '../useSightsMap';
@@ -110,9 +112,15 @@ async function renderSights(initial: SightsMapInput = input(), wrapper?: (props:
   return view;
 }
 
+/** The rings drawn, by slug (each sight's dot is a feature of its own). */
+function ringIds(view: { result: { current: ReturnType<typeof useSightsMap> } }): string[] {
+  return view.result.current.layer.sights.features.filter((f) => f.properties.kind === 'ring').map((f) => String(f.id));
+}
+
 beforeEach(() => {
   jest.useFakeTimers();
   resetAttractionMarkers();
+  resetExploreSightsFeed();
   setCurrentLanguage('en');
   loadMarkers.mockReset();
   loadTrails.mockReset();
@@ -204,6 +212,30 @@ describe('loading the markers', () => {
     await flush();
     expect(loadMarkers).toHaveBeenCalledTimes(1);
   });
+
+  it('counts a search group read that lands while it waits as its own: no second ask, and the trails follow', async () => {
+    markersFail();
+    const view = await renderSights();
+    expect(loadMarkers).toHaveBeenCalledTimes(1);
+    // The member types a sight's name: the search group reads the markers.
+    markersLoad();
+    await act(async () => void (await loadExploreMarkers('en')));
+    expect(loadMarkers).toHaveBeenCalledTimes(2);
+    // The map's next step finds them read (iOS `attractionsLoaded`) and asks nothing.
+    await wait(5_000);
+    expect(loadMarkers).toHaveBeenCalledTimes(2);
+    expect(view.result.current.showsRetryNotice).toBe(false);
+    expect(loadTrails).toHaveBeenCalledTimes(1);
+    await wait(100_000);
+    expect(loadMarkers).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not count a read from before it appeared (each map reads once in its life)', async () => {
+    markersLoad();
+    await act(async () => void (await loadExploreMarkers('en')));
+    await renderSights();
+    expect(loadMarkers).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('the quiet notice', () => {
@@ -252,6 +284,24 @@ describe('the quiet notice', () => {
     expect(view.result.current.loading).toBe(false);
   });
 
+  it('shows progress while the search group’s read is out too (iOS `attractionsLoading`, whoever asked)', async () => {
+    markersFail();
+    const view = await renderSights();
+    expect(view.result.current.loading).toBe(false);
+    let answer: (result: MarkersLoadResult) => void = () => undefined;
+    loadMarkers.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    let search: Promise<MarkersLoadResult> = Promise.resolve(FAILED);
+    await act(async () => {
+      search = loadExploreMarkers('en');
+    });
+    expect(view.result.current.loading).toBe(true);
+    await act(async () => {
+      answer(FAILED);
+      await search;
+    });
+    expect(view.result.current.loading).toBe(false);
+  });
+
   it('is off with the layer', async () => {
     markersFail();
     const view = await renderSights();
@@ -273,6 +323,23 @@ describe('trails', () => {
     await renderSights();
     await wait(100_000);
     expect(loadTrails).not.toHaveBeenCalled();
+  });
+
+  it('follow rings drawn from a feed another surface read, once the schedule is over, even with the map’s own reads failing', async () => {
+    // Home's Outside card read the markers; the map's own reads all fail.
+    attractionMarkersStore.setState({ page: PAGE, locale: 'en' });
+    markersFail();
+    const view = await renderSights();
+    expect(ringIds(view)).toEqual(['gullfoss', 'faxi']);
+    expect(view.result.current.showsRetryNotice).toBe(false);
+    expect(loadTrails).not.toHaveBeenCalled();
+    await wait(5_000);
+    await wait(15_000);
+    expect(loadTrails).not.toHaveBeenCalled();
+    await wait(60_000);
+    expect(loadMarkers).toHaveBeenCalledTimes(4);
+    expect(loadTrails).toHaveBeenCalledTimes(1);
+    expect(view.result.current.layer.trails.features.map((f) => f.id)).toEqual(['gullfoss-walk']);
   });
 
   it('are listed in the legend only where they can draw (under 3°)', async () => {
@@ -297,9 +364,9 @@ describe('what the layer draws', () => {
   it('draws only top picks with all of Iceland in view, and the rest closer in', async () => {
     markersLoad();
     const country = await renderSights(input({ openingRegion: ICELAND }));
-    expect(country.result.current.layer.sights.features.map((f) => f.id)).toEqual(['gullfoss']);
+    expect(ringIds(country)).toEqual(['gullfoss']);
     const region = await renderSights(input({ openingRegion: GOLDEN_CIRCLE }));
-    expect(region.result.current.layer.sights.features.map((f) => f.id)).toEqual(['gullfoss', 'faxi']);
+    expect(ringIds(region)).toEqual(['gullfoss', 'faxi']);
   });
 
   it('follows the camera the map reports', async () => {
@@ -313,7 +380,9 @@ describe('what the layer draws', () => {
         mapSize: { width: 400, height: 700 },
       }),
     );
-    expect(view.result.current.layer.sights.features.map((f) => f.id)).toEqual(['gullfoss', 'faxi']);
+    expect(ringIds(view)).toEqual(['gullfoss', 'faxi']);
+    // The scale a tap is measured with: metres per point down the map.
+    expect(view.result.current.layer.metresPerPoint).toBeCloseTo(((golden.north - golden.south) * 111_320) / 700, 6);
   });
 
   it('draws nothing with the layer off, and carries the credit only while on', async () => {
@@ -338,22 +407,25 @@ describe('what the layer draws', () => {
     markersLoad();
     const navigation = fakeNavigation();
     const view = await renderSights(input({ openingRegion: ICELAND }), navigation.wrapper);
-    expect(view.result.current.layer.sights.features.map((f) => f.id)).toEqual(['gullfoss']);
+    expect(ringIds(view)).toEqual(['gullfoss']);
     await act(async () => view.result.current.layer.select('faxi'));
-    const faxi = view.result.current.layer.sights.features.find((f) => f.id === 'faxi');
-    expect(faxi?.properties.sort).toBe(3);
+    const features = view.result.current.layer.sights.features;
+    const faxi = features.find((f) => f.id === 'faxi');
+    // Drawn over every other ring and dot.
+    const others = features.filter((f) => f.properties.slug !== 'faxi').map((f) => f.properties.sort);
+    expect(faxi?.properties.sort).toBeGreaterThan(Math.max(...others));
     await navigation.emit('blur');
     await navigation.emit('focus');
-    expect(view.result.current.layer.sights.features.map((f) => f.id)).toEqual(['gullfoss']);
+    expect(ringIds(view)).toEqual(['gullfoss']);
   });
 
   it('makes a sight opened from search the open one, from its next opening on', async () => {
     markersLoad();
     const view = await renderSights(input({ openingRegion: ICELAND, openedSight: { slug: 'faxi', key: 1 } }));
     // The value the map mounts with is not a new opening.
-    expect(view.result.current.layer.sights.features.map((f) => f.id)).toEqual(['gullfoss']);
+    expect(ringIds(view)).toEqual(['gullfoss']);
     await view.rerender(input({ openingRegion: ICELAND, openedSight: { slug: 'faxi', key: 2 } }));
-    expect(view.result.current.layer.sights.features.map((f) => f.id)).toEqual(['gullfoss', 'faxi']);
+    expect(ringIds(view)).toEqual(['gullfoss', 'faxi']);
   });
 
   it('gives TalkBack an element per drawn ring only while a screen reader is on', async () => {

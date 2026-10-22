@@ -18,6 +18,15 @@
  * stands in for SwiftUI's `.shadow` (radius 4 for a top pick, else 3; lighter
  * for a standard sight).
  *
+ * RING AND DOT DRAW TOGETHER. iOS draws each ring with its dot as one
+ * annotation, so a ring on top covers both the ring and the dot below it. A
+ * dot is therefore a feature of its own (`kind: 'dot'`) in the SAME circle
+ * layer as the rings, sorted just above its own ring and below the next
+ * sight's: with the dots in a layer of their own, every dot would draw over
+ * every ring. Each sight has its own place in the order: the open sight on
+ * top, then top picks, notable, standard, and within a tier the map's order
+ * (the best-known first).
+ *
  * THE NAME (iOS `AttractionMapLabel`). Top picks only, where the layout found
  * room (./layout.ts `labelled`), in the dark attraction blue with a white
  * halo, 11 pt, one line, a point off the ring on the chosen side. Mapbox is
@@ -39,7 +48,7 @@ import { colors } from '../../../theme';
 import { ringDotColor, ringDotDiameter, ringLineWidth } from '../AttractionRing';
 import { isHike, sightDisplayName } from '../model';
 import { ringDiameter, tierPriority } from '../rules';
-import { hitSize, labelText, MAP_LAYOUT, type LabelPlacement } from './layout';
+import { distanceMetres, hitSize, labelText, MAP_LAYOUT, type LabelPlacement } from './layout';
 import type { SightsLayout } from './sightsLayout';
 
 /** The source and layer ids on the Explore map. */
@@ -54,8 +63,8 @@ export const TRAILS_SOURCE_ID = 'lifepass-trails';
 export const SIGHT_LAYER_IDS = {
   hit: 'lifepass-sight-hit',
   shadow: 'lifepass-sight-shadow',
+  /** The rings and their centre dots, one layer (see the file comment). */
   ring: 'lifepass-sight-ring',
-  dot: 'lifepass-sight-dot',
   name: 'lifepass-sight-name',
   trailCasing: 'lifepass-trail-casing',
   trailLine: 'lifepass-trail-line',
@@ -64,10 +73,18 @@ export const SIGHT_LAYER_IDS = {
 /** Mapbox anchors for each side a name can hang on. */
 type TextAnchor = 'top' | 'bottom' | 'left' | 'right';
 
+/** What a feature draws: a sight's ring (and its target, shadow and name), or its centre dot. */
+export type SightFeatureKind = 'ring' | 'dot';
+
 export interface SightFeatureProperties {
   readonly slug: string;
   readonly tier: AttractionTier;
-  /** Draw order: the open sight on top, then top picks, notable, standard. */
+  readonly kind: SightFeatureKind;
+  /**
+   * Draw order, higher on top: the open sight, then top picks, notable,
+   * standard, and within a tier the map's order. A dot sorts just above its
+   * own ring.
+   */
   readonly sort: number;
   /** The ring's radius to the middle of its inner edge (Mapbox strokes outside it). */
   readonly radius: number;
@@ -116,11 +133,21 @@ export function nameAnchor(placement: LabelPlacement, diameter: number): { ancho
   }
 }
 
-/** The rings as GeoJSON, positions in [longitude, latitude] order. */
+/**
+ * The rings as GeoJSON, positions in [longitude, latitude] order: one ring
+ * feature per sight in map order, then one dot feature per sight that has a
+ * dot (id `{slug}:dot`).
+ */
 export function sightFeatures(layout: SightsLayout, selectedSlug: string | null, language: Lang): SightsCollection {
-  if (layout.sights.length === 0) return NO_SIGHTS;
-  const features = layout.sights.map((sight): GeoJSON.Feature<GeoJSON.Point, SightFeatureProperties> => {
+  const count = layout.sights.length;
+  if (count === 0) return NO_SIGHTS;
+  const dots: GeoJSON.Feature<GeoJSON.Point, SightFeatureProperties>[] = [];
+  const rings = layout.sights.map((sight, index): GeoJSON.Feature<GeoJSON.Point, SightFeatureProperties> => {
     const selected = sight.slug === selectedSlug;
+    // One place per sight: the band (open, top, notable, standard), then the
+    // map's order inside it, earlier on top. Even for the ring, odd for its dot.
+    const band = selected ? 3 : 2 - tierPriority(sight.tier);
+    const place = band * count + (count - 1 - index);
     const diameter = ringDiameter(sight.tier, selected);
     const stroke = ringLineWidth(sight.tier, selected);
     const dotColor = ringDotColor(sight.tier, isHike(sight));
@@ -129,14 +156,16 @@ export function sightFeatures(layout: SightsLayout, selectedSlug: string | null,
     const placement = layout.names.get(sight.slug);
     const name = placement ? labelText(sightDisplayName(sight, language)) : '';
     const { anchor, offset } = placement ? nameAnchor(placement, diameter) : { anchor: 'top' as const, offset: [0, 0] as [number, number] };
-    return {
+    const geometry: GeoJSON.Point = { type: 'Point', coordinates: [sight.longitude, sight.latitude] };
+    const ring: GeoJSON.Feature<GeoJSON.Point, SightFeatureProperties> = {
       type: 'Feature',
       id: sight.slug,
-      geometry: { type: 'Point', coordinates: [sight.longitude, sight.latitude] },
+      geometry,
       properties: {
         slug: sight.slug,
         tier: sight.tier,
-        sort: selected ? 3 : 2 - tierPriority(sight.tier),
+        kind: 'ring',
+        sort: 2 * place,
         radius: diameter / 2 - stroke / 2,
         stroke,
         dot: dotColor ? ringDotDiameter(sight.tier, selected) / 2 : 0,
@@ -150,8 +179,17 @@ export function sightFeatures(layout: SightsLayout, selectedSlug: string | null,
         offset,
       },
     };
+    if (ring.properties.dot > 0) {
+      dots.push({
+        type: 'Feature',
+        id: `${sight.slug}:dot`,
+        geometry,
+        properties: { ...ring.properties, kind: 'dot', sort: 2 * place + 1, name: '' },
+      });
+    }
+    return ring;
   });
-  return { type: 'FeatureCollection', features };
+  return { type: 'FeatureCollection', features: dots.length > 0 ? [...rings, ...dots] : rings };
 }
 
 /** The trails as GeoJSON, one feature per walk with every run of it. */
@@ -176,11 +214,13 @@ export function trailFeatures(trails: readonly AttractionTrail[]): TrailsCollect
 /** The fonts the names are set in: the basemap's own, as the venue names (Mapbox has no Inter Tight glyphs). */
 const NAME_FONT = ['DIN Pro Medium', 'Arial Unicode MS Regular'];
 
+/** True for a dot feature (Mapbox expression). */
+const IS_DOT = ['==', ['get', 'kind'], 'dot'];
+
 export const SIGHT_STYLES: {
   readonly hit: CircleLayerStyle;
   readonly shadow: CircleLayerStyle;
   readonly ring: CircleLayerStyle;
-  readonly dot: CircleLayerStyle;
   readonly name: SymbolLayerStyle;
 } = {
   hit: {
@@ -198,16 +238,13 @@ export const SIGHT_STYLES: {
     circleTranslate: [0, 1],
     circleSortKey: ['get', 'sort'],
   },
+  // A ring: white inside its light-blue stroke. Its dot: a plain disc of the
+  // dot's colour, sorted just above it.
   ring: {
-    circleRadius: ['get', 'radius'],
-    circleColor: '#FFFFFF',
+    circleRadius: ['case', IS_DOT, ['get', 'dot'], ['get', 'radius']],
+    circleColor: ['case', IS_DOT, ['get', 'dotColor'], '#FFFFFF'],
     circleStrokeColor: colors.attraction,
-    circleStrokeWidth: ['get', 'stroke'],
-    circleSortKey: ['get', 'sort'],
-  },
-  dot: {
-    circleRadius: ['get', 'dot'],
-    circleColor: ['get', 'dotColor'],
+    circleStrokeWidth: ['case', IS_DOT, 0, ['get', 'stroke']],
     circleSortKey: ['get', 'sort'],
   },
   name: {
@@ -230,10 +267,13 @@ export const SIGHT_STYLES: {
   },
 };
 
-/** The filters: a dot only where there is one, a name only where it fits. */
+/**
+ * The filters: the target and the shadow are the ring's alone (a dot adds
+ * nothing to either), and a name only where it fits.
+ */
 export const SIGHT_FILTERS = {
-  dot: ['>', ['get', 'dot'], 0],
-  name: ['!=', ['get', 'name'], ''],
+  ring: ['==', ['get', 'kind'], 'ring'],
+  name: ['all', ['==', ['get', 'kind'], 'ring'], ['!=', ['get', 'name'], '']],
 } as const;
 
 /**
@@ -260,24 +300,44 @@ export interface SightTap {
 }
 
 /**
- * The sight a tap meant, or null: among the rings under the finger, the top
- * tier first, then the nearest (the web map's `pickNearestPointTarget`).
+ * The sight a tap meant, or null, among the features under the finger: a
+ * ring drawn under the finger first, then the nearest, then the higher tier.
+ *
+ * On iOS each ring is its own button and the one under the finger answers,
+ * whatever its tier, so a ring the member can see and taps always opens. Here
+ * several invisible targets can overlap (a top pick's 40 points reach over a
+ * notable ring beside it), so the drawn ring wins over a mere target; the
+ * nearest decides among targets alone, and the tier only breaks a tie.
+ * `metresPerPoint` (the layout's) turns the ground distance into points;
+ * without it no ring counts as hit and the nearest wins.
  */
-export function pickSight(tap: SightTap): string | null {
-  let best: { slug: string; priority: number; distance: number } | null = null;
+export function pickSight(tap: SightTap, metresPerPoint: number | null = null): string | null {
+  let best: { slug: string; onRing: boolean; metres: number; priority: number } | null = null;
+  const finger = { latitude: tap.coordinates.latitude, longitude: tap.coordinates.longitude };
   for (const feature of tap.features) {
     const properties = feature.properties as Partial<SightFeatureProperties> | null;
     const slug = properties?.slug;
     if (typeof slug !== 'string' || feature.geometry?.type !== 'Point') continue;
     const [longitude, latitude] = feature.geometry.coordinates;
-    const k = Math.cos((tap.coordinates.latitude * Math.PI) / 180);
-    const distance = Math.hypot((longitude - tap.coordinates.longitude) * k, latitude - tap.coordinates.latitude);
+    const metres = distanceMetres(finger, { latitude, longitude });
+    // The ring's outer edge: Mapbox strokes outside `radius`.
+    const outer = numberOr(properties?.radius, 0) + numberOr(properties?.stroke, 0);
+    const onRing = metresPerPoint !== null && metresPerPoint > 0 && metres / metresPerPoint <= outer;
     const priority = tierPriority(isTier(properties?.tier) ? properties.tier : 'notable');
-    if (!best || priority < best.priority || (priority === best.priority && distance < best.distance)) {
-      best = { slug, priority, distance };
-    }
+    const better =
+      !best ||
+      (onRing !== best.onRing
+        ? onRing
+        : metres !== best.metres
+          ? metres < best.metres
+          : priority < best.priority);
+    if (better) best = { slug, onRing, metres, priority };
   }
   return best?.slug ?? null;
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function isTier(value: unknown): value is AttractionTier {
