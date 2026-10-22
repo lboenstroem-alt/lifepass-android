@@ -21,6 +21,8 @@ import { normaliseLang, type Lang } from '../i18n';
 import { useAppStore, type AppStoreState } from '../stores/appStore';
 
 import { ensureChannels, rememberNotificationLanguage, startNotifications } from '.';
+import { installEngagementNudges } from './engagement';
+import { installHealthReminders } from './healthReminders';
 
 /** The signed-in account's language when the store knows it (the profile's, else the cached one); never the phone's. */
 export function accountLanguage(state: Pick<AppStoreState, 'isAuthenticated' | 'profile' | 'cachedAccountLanguage'>): Lang | null {
@@ -31,6 +33,12 @@ export function accountLanguage(state: Pick<AppStoreState, 'isAuthenticated' | '
 }
 
 void startNotifications();
+
+// NOTIF-1: the engagement nudges (./engagement.ts) and the health reminders
+// (./healthReminders.ts) follow launch, the foreground, the purchase state,
+// the Today read and the reminder choices from here on.
+installEngagementNudges();
+installHealthReminders();
 
 let languageSeen = useAppStore.getState().language;
 let rememberedLanguage: Lang | null = null;
