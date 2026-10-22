@@ -9,7 +9,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Text } from 'react-native';
+import { AppState, Text, type AppStateStatus } from 'react-native';
 
 import { UiKitProvider } from '../../../../components/ui';
 import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
@@ -41,6 +41,12 @@ jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset')
 jest.mock('@gorhom/bottom-sheet', () => require('../../../../components/ui/testing/bottomSheetMock').bottomSheetModule);
 jest.mock('expo-camera', () => require('../../photo/__tests__/cameraDouble').expoCameraModule);
 jest.mock('../../describe', () => ({ openDescribe: jest.fn(), DescribeHost: () => null }));
+// Search's My foods rows swipe; under Reanimated's Jest mock the gesture
+// library complains about every row. The swipe is not under test here.
+jest.mock('react-native-gesture-handler/ReanimatedSwipeable', () => ({
+  __esModule: true,
+  default: ({ children }: { children: unknown }) => children,
+}));
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 jest.setTimeout(30_000);
@@ -151,6 +157,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  jest.restoreAllMocks();
   setMealApi(null);
   setFoodFacts(null);
   setAnalyticsObserver(null);
@@ -195,6 +202,24 @@ describe('the camera', () => {
     expect(api.barcode).toHaveBeenCalledWith('0042100005264', 'en');
     expect(offCalls).toEqual(['0042100005264']);
     expect(events).toContainEqual(['barcode_scanned', { source: 'camera' }]);
+  });
+
+  // testBarcodeModeStillScansAfterTheAppWasInactive: the camera goes with the app and comes back reading.
+  it('lets the camera go in the background and reads again when the app is back', async () => {
+    const listeners: ((state: AppStateStatus) => void)[] = [];
+    jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, listener) => {
+      listeners.push(listener as (state: AppStateStatus) => void);
+      return { remove: () => undefined } as ReturnType<typeof AppState.addEventListener>;
+    });
+    const api = useApi();
+    await renderPage();
+    expect(screen.getByTestId('meal.barcode.camera')).toBeOnTheScreen();
+    await act(async () => listeners.forEach((listener) => listener('background')));
+    expect(screen.queryByTestId('meal.barcode.camera')).toBeNull();
+    await act(async () => listeners.forEach((listener) => listener('active')));
+    expect(screen.getByTestId('meal.barcode.camera')).toBeOnTheScreen();
+    await scan('ean8', '96385074');
+    expect(api.barcode).toHaveBeenCalledWith('96385074', 'en');
   });
 
   it('looks nothing up for a code that cannot be one, and keeps reading', async () => {

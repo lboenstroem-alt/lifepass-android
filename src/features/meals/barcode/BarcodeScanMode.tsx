@@ -45,6 +45,8 @@ import TypedBarcodeSheet from './TypedBarcodeSheet';
 export const RETICLE_WIDTH = 280;
 export const RETICLE_HEIGHT = 150;
 const ARM = 26;
+/** One object for every render: the formats never change. */
+const SCANNER_SETTINGS = { barcodeTypes: [...MEAL_BARCODE_TYPES] };
 const RADIUS = 12;
 const STROKE = 4;
 
@@ -158,7 +160,7 @@ export default function BarcodeScanMode({ model, headerHeight }: CameraModeProps
           style={StyleSheet.absoluteFill}
           facing="back"
           enableTorch={camera.torchOn}
-          barcodeScannerSettings={{ barcodeTypes: [...MEAL_BARCODE_TYPES] }}
+          barcodeScannerSettings={SCANNER_SETTINGS}
           // Always set: toggling it makes expo-camera rebuild the camera (a
           // black frame each time). The read lock ignores frames instead.
           onBarcodeScanned={onBarcodeScanned}

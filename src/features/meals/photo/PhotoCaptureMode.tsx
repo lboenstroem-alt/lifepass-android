@@ -221,7 +221,10 @@ export default function PhotoCaptureMode({ model, headerHeight }: CameraModeProp
         // The mode has gone (the member switched to Search) but the page may
         // still be there: a draft still opens in it, as iOS pushes it onto
         // the page's path.
-        if (outcome.kind === 'draft') model.openDraft(outcome.meal.id, outcome.meal);
+        if (outcome.kind === 'draft') {
+          track('meal_scan_result', { outcome: 'ok' });
+          model.openDraft(outcome.meal.id, outcome.meal);
+        }
         return;
       }
       switch (outcome.kind) {
@@ -450,7 +453,6 @@ export default function PhotoCaptureMode({ model, headerHeight }: CameraModeProp
               </View>
             </View>
           ) : null}
-          {busy && phase.kind === 'live' ? <ActivityIndicator style={styles.encoding} color="#FFFFFF" /> : null}
         </View>
         {scansLine ? (
           <LPText size={12} weight="medium" color="rgba(255,255,255,0.85)" align="center" style={styles.scansLeft} testID="meal.photo.scansLeft">
@@ -742,6 +744,5 @@ const styles = StyleSheet.create({
   spacer: { width: 52, height: 52 },
   frozenRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 20 },
   retake: { height: 52, paddingHorizontal: 20, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.18)', justifyContent: 'center' },
-  encoding: { position: 'absolute', alignSelf: 'center' },
   scansLeft: { marginTop: -14 },
 });

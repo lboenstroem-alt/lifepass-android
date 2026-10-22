@@ -53,6 +53,12 @@ jest.mock('../../../../health/consent/presenter', () => ({
   ...jest.requireActual('../../../../health/consent/presenter'),
   openHealthConsent: jest.fn(() => true),
 }));
+// Search's My foods rows swipe; under Reanimated's Jest mock the gesture
+// library complains about every row. The swipe is not under test here.
+jest.mock('react-native-gesture-handler/ReanimatedSwipeable', () => ({
+  __esModule: true,
+  default: ({ children }: { children: unknown }) => children,
+}));
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 jest.setTimeout(30_000);
