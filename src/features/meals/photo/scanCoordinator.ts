@@ -7,8 +7,8 @@
  * still answers, as an app-wide toast.
  *
  * THE PHOTO lives here only until the call returns: the JPEG is dropped the
- * moment the answer arrives. What is kept is the picture for the draft
- * editor's banner, in memory only, keyed by the draft it made (MEAL-4's
+ * moment the answer arrives. What is kept is a small (512 px) picture for
+ * the draft editor's banner, in memory only, keyed by the draft it made (MEAL-4's
  * `rememberDraftThumbnail`, wiped with the health data and at sign-out).
  *
  * MONEY-LIKE RULES (each scan spends one of the day's allowance):
@@ -34,7 +34,7 @@ import type { MealSlot } from '../../../navigation/types';
 import { useIntentStore } from '../../../stores/intentStore';
 import { mealApi } from '../api/mealApi';
 import { showMealToast } from '../capture/saveFeedback';
-import { encodeMealImage, jpegDataUri, MEAL_IMAGE_RETRY_LONG_EDGE, type EncodedMealImage, type MealImagePipeline } from '../imageEncoder';
+import { encodeMealImage, jpegDataUri, mealThumbnail, MEAL_IMAGE_RETRY_LONG_EDGE, type EncodedMealImage, type MealImagePipeline } from '../imageEncoder';
 import { nativeMealImagePipeline, sweepMealPhotoFiles } from '../imageEncoder/pipeline';
 import { loggedAtFor } from '../math/itemMath';
 import { rememberDraftThumbnail } from '../mealEditor/draftThumbnails';
@@ -104,8 +104,9 @@ export async function scanMealPhoto(photo: EncodedMealImage, slot: MealSlot, dat
           .catch(() => undefined);
         return { kind: 'cancelled' };
       }
-      // Only the picture for the draft's banner stays, in memory.
-      rememberDraftThumbnail(meal.id, jpegDataUri(dataBase64));
+      // Only a small picture for the draft's banner stays, in memory (512 px,
+      // as iOS); the sent JPEG itself if the phone cannot redraw it.
+      rememberDraftThumbnail(meal.id, (await mealThumbnail(dataBase64, pipeline)) ?? jpegDataUri(dataBase64));
       return finish({ kind: 'draft', meal }, key);
     } catch (error) {
       if (error instanceof ApiError) {
@@ -212,7 +213,7 @@ export function resetMealScanCoordinator(): void {
   keptGoingKeys.clear();
 }
 
-/** Tests: a fake image pipeline for the 768 px retry. */
+/** Tests: a fake image pipeline for the 768 px retry and the thumbnail. */
 export function setScanPipelineForTests(next: MealImagePipeline | null): void {
   pipeline = next ?? nativeMealImagePipeline;
 }

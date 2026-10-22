@@ -205,3 +205,33 @@ function strip(base64: string): Uint8Array {
 export function jpegDataUri(base64: string): string {
   return `data:image/jpeg;base64,${base64}`;
 }
+
+/** The long edge of the draft editor's picture (iOS `MealImageEncoder.thumbnail(maxPixel: 512)`). */
+export const MEAL_THUMBNAIL_LONG_EDGE = 512;
+/** The thumbnail never leaves the phone; this only keeps it small in memory. */
+const THUMBNAIL_QUALITY = 0.8;
+
+/**
+ * A small preview of what was sent, for the draft editor's banner: at most
+ * 512 px on its long edge, as a `data:` URI, in memory only (iOS keeps a
+ * UIImage of the same size). Null when the phone cannot redraw it; the
+ * caller then keeps the sent JPEG itself, which is already in memory.
+ */
+export async function mealThumbnail(base64: string, pipeline: MealImagePipeline, maxLongEdge: number = MEAL_THUMBNAIL_LONG_EDGE): Promise<string | null> {
+  let image: LoadedMealImage;
+  try {
+    image = await pipeline.load({ kind: 'uri', uri: jpegDataUri(base64) });
+  } catch {
+    return null;
+  }
+  try {
+    if (!(image.width > 0) || !(image.height > 0)) return null;
+    const size = redrawSize(image, maxLongEdge);
+    const rendered = await pipeline.render(image, null, size, THUMBNAIL_QUALITY);
+    return rendered.length > 0 ? jpegDataUri(rendered) : null;
+  } catch {
+    return null;
+  } finally {
+    pipeline.release(image);
+  }
+}

@@ -12,9 +12,9 @@ import { resetIntentStoreForTests, useIntentStore } from '../../../../stores/int
 import { setMealApi, type MealApi } from '../../api/mealApi';
 import { fakeMealApi } from '../../api/testing';
 import { showMealToast } from '../../capture/saveFeedback';
-import { base64FromBytes } from '../../imageEncoder/base64';
+import { base64FromBytes, bytesFromBase64 } from '../../imageEncoder/base64';
 import { jpegDataUri, type EncodedMealImage } from '../../imageEncoder/encoder';
-import { cameraJpeg, FakePipeline } from '../../imageEncoder/__tests__/fakePipeline';
+import { cameraJpeg, FakePipeline, frameSize } from '../../imageEncoder/__tests__/fakePipeline';
 import { mealRecord, photoItemJson } from '../../itemEditor/__tests__/fixtures';
 import { draftThumbnail, forgetAllDraftThumbnails } from '../../mealEditor/draftThumbnails';
 import type { MealScanBody, MealScanResult } from '../../types/models';
@@ -94,10 +94,30 @@ describe('the request', () => {
     expect(scansLeftToday()).toBe(2);
   });
 
-  it('keeps only the draft picture, in memory, under the draft id', async () => {
+  it('keeps only a 512 px picture of the draft, in memory, under the draft id', async () => {
+    const pipeline = new FakePipeline();
+    setScanPipelineForTests(pipeline);
+    install({ scan: async () => answer() });
+    const sent = photo(1024, 768);
+    await scanMealPhoto(sent, 'dinner', DATE, 'key-1');
+    // Redrawn from the JPEG that was sent (iOS MealImageEncoder.thumbnail, maxPixel 512).
+    expect(pipeline.loads).toEqual([{ kind: 'uri', uri: jpegDataUri(sent.base64) }]);
+    expect(pipeline.renders).toEqual([{ crop: null, size: { width: 512, height: 384 }, quality: 0.8 }]);
+    expect(pipeline.released).toBe(1);
+    const thumbnail = draftThumbnail('draft-1');
+    expect(thumbnail).toMatch(/^data:image\/jpeg;base64,/);
+    expect(frameSize(bytesFromBase64(thumbnail!.slice('data:image/jpeg;base64,'.length)))).toEqual({ width: 512, height: 384 });
+  });
+
+  it('keeps the sent JPEG when the phone cannot redraw it', async () => {
+    const pipeline = new FakePipeline();
+    pipeline.load = async () => {
+      throw new Error('no decoder');
+    };
+    setScanPipelineForTests(pipeline);
     install({ scan: async () => answer() });
     const sent = photo();
-    await scanMealPhoto(sent, 'dinner', DATE, 'key-1');
+    expect((await scanMealPhoto(sent, 'dinner', DATE, 'key-1')).kind).toBe('draft');
     expect(draftThumbnail('draft-1')).toBe(jpegDataUri(sent.base64));
   });
 

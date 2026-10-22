@@ -13,6 +13,8 @@ export {
   MEAL_IMAGE_MAX_BYTES,
   MEAL_IMAGE_MIN_SHORT_EDGE,
   MEAL_IMAGE_RETRY_LONG_EDGE,
+  MEAL_THUMBNAIL_LONG_EDGE,
+  mealThumbnail,
   MealImageEncoderError,
   type EncodedMealImage,
   type LoadedMealImage,
