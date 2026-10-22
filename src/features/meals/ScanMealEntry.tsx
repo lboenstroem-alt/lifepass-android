@@ -9,7 +9,10 @@
  *               or search", chevron
  *   otherwise   the full card until the membership gate has been seen once on
  *               this phone (per member, `scan.meal.gateSeen.<id>`, wiped
- *               with the member's health data), then a compact pill
+ *               with the member's health data), then a compact pill; nothing
+ *               on the first visit until that flag has been read, so the
+ *               card never turns into the pill under the member's eyes
+ *               (./capture/scanGateSeen.ts)
  * Over the live camera it floats on the picture (the page colour at 0.94, a
  * white hairline, a soft shadow); on the camera-off page it takes the page's
  * own hairline. Drawn at half strength and not pressable while a walk-in is
@@ -25,28 +28,33 @@
  * `scan_meal_tapped` records which (`outcome`) and the button's look (`mode`).
  *
  * While the page is open the Scan tab is not focused, so its viewfinder is
- * unmounted and no QR code can check anyone in under it (CHECKIN-1).
+ * unmounted and no QR code can check anyone in under it (CHECKIN-1). The
+ * tap therefore opens the page AT ONCE, in the same turn (iOS pauses QR reads
+ * the moment the page is asked for): the camera permission and the last mode
+ * are read ahead, when the Scan tab mounts, regains focus or comes back to
+ * the foreground, never between the tap and the page, when a code still in
+ * view could start a walk-in under the opening page.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { Camera } from 'expo-camera';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { AppState, Pressable, StyleSheet, View } from 'react-native';
 
 import { LPText } from '../../components/ui';
 import { openHealthConsent } from '../../health/consent/presenter';
-import { scanMealGateSeenKey } from '../../health/localKeys';
 import type { HealthAccess } from '../../health/models';
 import { HealthConsentSheet, MealGateSheet } from '../../health/ui';
 import { useT } from '../../i18n';
 import { todayServerDay } from '../../i18n/format';
 import { track } from '../../lib/analytics';
 import { useAppNavigation } from '../../navigation/hooks';
+import type { MealCaptureMode } from '../../navigation/types';
 import { selectHasHealthConsent, useAppStore } from '../../stores/appStore';
 import { useIntentStore } from '../../stores/intentStore';
 import { colors, hairline } from '../../theme';
 
-import { lastUsedMode } from './capture/lastMode';
+import { openingModeFrom, storedLastMode } from './capture/lastMode';
+import { markScanGateSeen, useScanGateSeen } from './capture/scanGateSeen';
 
 export interface ScanMealEntryProps {
   /** Disabled (drawn, not hidden) while a walk-in is in flight. */
@@ -55,10 +63,15 @@ export interface ScanMealEntryProps {
 
 export type MealButtonStyle = 'full' | 'compact' | 'hidden';
 
-/** iOS `mealButtonStyle` (the pushed scanner never mounts this). */
-export function mealButtonStyle(access: HealthAccess, gateSeen: boolean): MealButtonStyle {
+/**
+ * iOS `mealButtonStyle` (the pushed scanner never mounts this). `gateSeen`
+ * null: not read yet, so nothing is drawn for someone the answer matters to,
+ * rather than the full card that turns into the pill a moment later.
+ */
+export function mealButtonStyle(access: HealthAccess, gateSeen: boolean | null): MealButtonStyle {
   if (access === 'minor') return 'hidden';
   if (access === 'entitled') return 'full';
+  if (gateSeen === null) return 'hidden';
   return gateSeen ? 'compact' : 'full';
 }
 
@@ -71,27 +84,51 @@ async function cameraAllowed(): Promise<boolean> {
   }
 }
 
-/** The gate was seen by this member on this phone. */
-function useGateSeen(profileId: string | null): readonly [boolean, () => void] {
-  const [seen, setSeen] = useState<{ readonly id: string | null; readonly value: boolean }>({ id: null, value: false });
+interface FocusSource {
+  addListener(event: 'focus', callback: () => void): () => void;
+}
+
+/**
+ * The mode the meal page opens in, known before the tap (iOS reads
+ * `camera.authorization` and the stored mode synchronously). Read when the
+ * Scan tab mounts, each time it is focused again (back from the page, which
+ * may have stored a new mode) and each return to the foreground (a
+ * permission changed in Settings); a live viewfinder means the camera is
+ * allowed. Until the first read lands, any doubt about the camera opens
+ * Search.
+ */
+function useOpeningMode(navigation: FocusSource): () => MealCaptureMode {
+  const cameraOk = useRef(false);
+  const stored = useRef<MealCaptureMode | null>(null);
+  const cameraLive = useIntentStore((s) => s.scanCameraLive);
+
   useEffect(() => {
-    if (!profileId) return undefined;
-    let current = true;
-    AsyncStorage.getItem(scanMealGateSeenKey(profileId))
-      .then((stored) => {
-        if (current) setSeen({ id: profileId, value: stored === 'true' });
-      })
-      .catch(() => undefined);
-    return () => {
-      current = false;
+    let mounted = true;
+    const refresh = () => {
+      void cameraAllowed().then((allowed) => {
+        if (mounted) cameraOk.current = allowed;
+      });
+      void storedLastMode().then((mode) => {
+        if (mounted) stored.current = mode;
+      });
     };
-  }, [profileId]);
-  const markSeen = useCallback(() => {
-    if (!profileId) return;
-    setSeen({ id: profileId, value: true });
-    AsyncStorage.setItem(scanMealGateSeenKey(profileId), 'true').catch(() => undefined);
-  }, [profileId]);
-  return [seen.id === profileId && seen.value, markSeen] as const;
+    refresh();
+    const offFocus = navigation.addListener('focus', refresh);
+    const foreground = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh();
+    });
+    return () => {
+      mounted = false;
+      offFocus();
+      foreground.remove();
+    };
+  }, [navigation]);
+
+  useEffect(() => {
+    if (cameraLive) cameraOk.current = true;
+  }, [cameraLive]);
+
+  return useCallback(() => openingModeFrom(cameraOk.current, stored.current), []);
 }
 
 export default function ScanMealEntry({ disabled = false }: ScanMealEntryProps) {
@@ -100,30 +137,28 @@ export default function ScanMealEntry({ disabled = false }: ScanMealEntryProps) 
   const access = useAppStore((s) => s.healthAccess);
   const profileId = useAppStore((s) => s.profile?.id ?? null);
   const onCamera = useIntentStore((s) => s.scanCameraLive);
-  const [gateSeen, markGateSeen] = useGateSeen(profileId);
+  const gateSeen = useScanGateSeen(profileId);
   const [gateVisible, setGateVisible] = useState(false);
   const [gateAccess, setGateAccess] = useState<HealthAccess>(access);
   const [localConsent, setLocalConsent] = useState(false);
   const [consentShown, setConsentShown] = useState(false);
-  const opening = useRef(false);
   const style = mealButtonStyle(access, gateSeen);
+  const openingMode = useOpeningMode(navigation);
 
-  const presentMealCapture = useCallback(async () => {
-    if (opening.current) return;
-    opening.current = true;
-    try {
-      const mode = await lastUsedMode(await cameraAllowed());
-      navigation.navigate('MealCapture', { origin: 'scanTab', mode, date: todayServerDay() });
-    } finally {
-      opening.current = false;
-    }
-  }, [navigation]);
+  const markGateSeen = useCallback(() => {
+    if (profileId) markScanGateSeen(profileId);
+  }, [profileId]);
+
+  /** The page, in this turn: nothing is awaited between the tap and the navigation. */
+  const presentMealCapture = useCallback(() => {
+    navigation.navigate('MealCapture', { origin: 'scanTab', mode: openingMode(), date: todayServerDay() });
+  }, [navigation, openingMode]);
 
   /** After the consent sheet: only for a member it actually let in. */
   const openAfterConsent = useCallback(() => {
     const app = useAppStore.getState();
     if (app.healthAccess !== 'entitled' || !selectHasHealthConsent(app)) return;
-    void presentMealCapture();
+    presentMealCapture();
   }, [presentMealCapture]);
 
   const onPress = () => {
@@ -135,7 +170,7 @@ export default function ScanMealEntry({ disabled = false }: ScanMealEntryProps) 
       case 'entitled':
         if (selectHasHealthConsent(app)) {
           track('scan_meal_tapped', { outcome: 'opened', mode });
-          void presentMealCapture();
+          presentMealCapture();
         } else {
           track('scan_meal_tapped', { outcome: 'consent', mode });
           if (!openHealthConsent({ entry: 'scan', onGranted: openAfterConsent })) {

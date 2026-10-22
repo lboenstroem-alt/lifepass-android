@@ -18,15 +18,26 @@ function isMode(value: string | null): value is MealCaptureMode {
   return (CAPTURE_MODES as readonly string[]).includes(value ?? '');
 }
 
+/** The mode stored, or null when there is none (or it cannot be read). */
+export async function storedLastMode(): Promise<MealCaptureMode | null> {
+  try {
+    const stored = await AsyncStorage.getItem(LAST_MODE_KEY);
+    return isMode(stored) ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The mode to open in, from what is known now. */
+export function openingModeFrom(cameraAllowed: boolean, stored: MealCaptureMode | null): MealCaptureMode {
+  if (!cameraAllowed) return 'search';
+  return stored ?? 'photo';
+}
+
 /** The mode to open in. */
 export async function lastUsedMode(cameraAllowed: boolean): Promise<MealCaptureMode> {
   if (!cameraAllowed) return 'search';
-  try {
-    const stored = await AsyncStorage.getItem(LAST_MODE_KEY);
-    return isMode(stored) ? stored : 'photo';
-  } catch {
-    return 'photo';
-  }
+  return openingModeFrom(true, await storedLastMode());
 }
 
 /** Remember a mode the member switched to. */
