@@ -14,6 +14,7 @@ import type { SessionView } from '../../health/models';
 import type { RunnerEntry } from '../../navigation/types';
 import { useAppStore } from '../../stores/appStore';
 
+import { installRunnerDevStub } from './finish/devStub';
 import { launchRunner, type RunnerSessionRef } from './launch/launchRunner';
 import { activateWorkoutOutbox, hasPendingWorkoutNow, useWorkoutOutbox } from './outbox/workoutOutbox';
 import { resumableWorkoutFor } from './persistence/runnerStore';
@@ -156,3 +157,8 @@ export async function hasPendingWorkout(sessionId: string): Promise<boolean> {
 export function openRunner(session: RunnerSessionRef | SessionView, entry: RunnerEntry): void {
   void launchRunner(session, entry);
 }
+
+// A development build started with `runnerStub=<mode>` answers the runner's
+// session calls on the phone, so a device check never writes to production
+// (./finish/devStub.ts). Nothing in a release bundle.
+installRunnerDevStub();
