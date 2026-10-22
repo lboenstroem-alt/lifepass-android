@@ -1,31 +1,29 @@
-// @f4-stub (plan 3.0.3): the change-days sheet, filled by PLAN-4; used by COACH-4 and COACH-5.
+// The change-days sheet (plan 3.0.3, PLAN-4), for the plan overview, the
+// programme overview, the proposal card, COACH-4 and COACH-5.
 //
 // iOS `ChangeDaysSheet(mode:daysPerWeek:selected:...)`: `select` picks days
-// for a wizard (nothing is saved), `program` saves a live programme's days.
-// Keep the exported names and signatures; replace the bodies (and this
-// marker). `ChangeDaysHost` is mounted once by F4's tabs shell.
+// for a wizard (nothing is saved), `program` saves a programme's days
+// (`POST /health/programs/{id}` with `trainingDays` only). `ChangeDaysHost`
+// is mounted once by F4's tabs shell and draws what `openChangeDays` asks for.
+//
+//   openChangeDays({ kind: 'select', daysPerWeek: 3, selected: [1, 3, 5], onPicked: (days) => ... });
+//   openChangeDays({ kind: 'program', programId, daysPerWeek, selected, onSaved: () => void reload() });
+//
+// RULES FOR CALLERS (./presenter.ts):
+// - One sheet at a time. A request while one is on screen, or with no host
+//   (signed out), is not shown and is answered at once with `onCancel`.
+// - Every callback runs once the sheet has GONE from the screen, so the next
+//   sheet or a page can be opened from it.
+// - Save is enabled only with exactly `daysPerWeek` days.
+import { presentChangeDays } from './presenter';
+import type { ChangeDaysMode } from './types';
+
 export { default as ChangeDaysHost } from './ChangeDaysHost';
+export { isChangeDaysHostMounted } from './presenter';
+export type { ChangeDaysMode, ChangeDaysSaved } from './types';
+export { isValidSelection } from './daysRules';
 
-export type ChangeDaysMode =
-  | {
-      readonly kind: 'select';
-      readonly daysPerWeek: number;
-      /** ISO weekdays already picked (1 = Monday ... 7 = Sunday). */
-      readonly selected: readonly number[];
-      readonly onPicked: (days: number[]) => void;
-      readonly onCancel?: () => void;
-    }
-  | {
-      readonly kind: 'program';
-      readonly programId: string;
-      readonly daysPerWeek: number;
-      readonly selected: readonly number[];
-      /** Saved: the programme came back with its new days. */
-      readonly onSaved?: () => void;
-      readonly onCancel?: () => void;
-    };
-
-/** Opens the sheet over whatever is showing. A no-op until PLAN-4 lands. */
+/** Opens the sheet over whatever is showing (see the rules above). */
 export function openChangeDays(mode: ChangeDaysMode): void {
-  void mode;
+  presentChangeDays(mode);
 }

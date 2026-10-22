@@ -17,12 +17,18 @@
 //   what the member just withdrew. Nothing aimed at the wiped day (a scroll,
 //   a held action, the adopt suppression) fires later.
 //
+// - The programmes (PLAN-4): the workouts the history list read (memory, held
+//   only while the list is open, and dropped here too), and the proposal
+//   card's reminder choice and outcome listeners.
+//
 // Kept on the phone, as on iOS: the bookings hint's visit count and "found
 // Profile" flag (per member, not health data).
 import { registerSignOutCleaner } from '../../app/signOut';
 import { registerHealthWipeHook } from '../../health';
 
+import { forgetHistoryItems } from './history/historyCache';
 import { forgetIntroCollapse } from './intro/introCollapse';
+import { forgetProposalDrafts, resetProposalBridges } from './proposal/proposalActions';
 import { planHealthWiped, resetPlanShell } from './shell/planShell';
 
 registerSignOutCleaner('plan.shell', () => {
@@ -30,5 +36,14 @@ registerSignOutCleaner('plan.shell', () => {
   forgetIntroCollapse();
 });
 
+registerSignOutCleaner('plan.programs', () => {
+  resetProposalBridges();
+  forgetHistoryItems();
+});
+
 registerHealthWipeHook('plan.intro-collapse', () => forgetIntroCollapse());
+registerHealthWipeHook('plan.programs', () => {
+  forgetProposalDrafts();
+  forgetHistoryItems();
+});
 registerHealthWipeHook('plan.shell', () => planHealthWiped());
