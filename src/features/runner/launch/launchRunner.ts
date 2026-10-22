@@ -136,7 +136,7 @@ function askAboutOther(saved: RunnerState, next: RunnerSessionRef | SessionView,
         testID: 'runner.conflict.resume',
         onPress: () => {
           stopAsking();
-          if (wipedSince(epoch)) return;
+          if (wipedSince(epoch) || rootRouteName() === RUNNER_ROUTE) return;
           present(saved.session, 'resume');
         },
       },
@@ -148,10 +148,17 @@ function askAboutOther(saved: RunnerState, next: RunnerSessionRef | SessionView,
           stopAsking();
           if (wipedSince(epoch)) return;
           RunnerAnalytics.left('discard');
+          // Busy until the discard is carried out: another door (Resume)
+          // tapped while the file is deleted must not open a runner first.
+          deciding = true;
           void deleteRunner(profileId)
             .catch((error: unknown) => track('service_error', { op: 'runner_discard', error: errorDescription(error) }))
             .then(() => {
-              if (!wipedSince(epoch)) present(next, nextEntry);
+              // iOS checks again that no runner is up right before presenting.
+              if (!wipedSince(epoch) && rootRouteName() !== RUNNER_ROUTE) present(next, nextEntry);
+            })
+            .finally(() => {
+              deciding = false;
             });
         },
       },
@@ -172,12 +179,16 @@ export async function launchRunner(session: RunnerSessionRef | SessionView, entr
   if (!profileId) return 'nothing';
   deciding = true;
   try {
-    if (await waitsInOutbox(session.id, profileId)) {
+    // Taken before the queue is read: a wipe while it is read forgets the
+    // queue (so the session reads as not pending) and must stop the launch.
+    const epoch = runnerWipeEpoch();
+    const pending = await waitsInOutbox(session.id, profileId);
+    if (wipedSince(epoch)) return 'nothing';
+    if (pending) {
       useHealthStore.getState().setToast('health.saved_offline');
       return 'pending';
     }
     const today = todayServerDay();
-    const epoch = runnerWipeEpoch();
     const saved = await loadRunner(profileId);
     // The member's data was wiped while the file was read: nothing to open.
     if (wipedSince(epoch)) return 'nothing';

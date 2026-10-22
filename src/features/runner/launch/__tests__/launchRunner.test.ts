@@ -20,7 +20,7 @@ import { fresh, session, t0 } from '../../model/__tests__/fixtures';
 import { workoutDoneBody } from '../../model/performed';
 import { completeNextSet, startRunnerState } from '../../model/state';
 import type { RunnerState } from '../../model/types';
-import { enqueueWorkout, resetWorkoutOutboxForTests } from '../../outbox/workoutOutbox';
+import { enqueueWorkout, forgetWorkoutOutbox, resetWorkoutOutboxForTests } from '../../outbox/workoutOutbox';
 import { raiseRunnerWipeFence } from '../../persistence/fence';
 import { RunnerProgressIndex, useRunnerProgress } from '../../persistence/progressIndex';
 import { loadRunner, saveRunner } from '../../persistence/runnerStore';
@@ -254,6 +254,37 @@ describe('presentRunner', () => {
     expect(events).toContainEqual({ event: 'workout_left', params: { choice: 'discard' } });
     expect(opened).toHaveBeenCalledWith('WorkoutRunner', { sessionId: 'sess-1', entry: 'today' });
     expect(useRunnerProgress.getState().summary).toBeNull();
+  });
+
+  it('until the discard is carried out another door waits, and a runner that came up meanwhile is not opened over', async () => {
+    await saveRunner(file('sess-0', { logged: true }), MEMBER);
+    await launchRunner(row(), 'today');
+    press('runner.conflict.discard');
+    // Resume tapped while the other workout's file is deleted.
+    await expect(launchRunner(row({ id: 'sess-0' }), 'resume')).resolves.toBe('busy');
+    await settle();
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect(opened).toHaveBeenCalledWith('WorkoutRunner', { sessionId: 'sess-1', entry: 'today' });
+
+    opened.mockClear();
+    await saveRunner(file('sess-0', { logged: true }), MEMBER);
+    await launchRunner(row(), 'today');
+    press('runner.conflict.discard');
+    jest.mocked(rootRouteName).mockReturnValue('WorkoutRunner');
+    await settle();
+    expect(opened).not.toHaveBeenCalled();
+    // And the door opens again once the discard is done.
+    jest.mocked(rootRouteName).mockReturnValue('Tabs');
+    await expect(launchRunner(row(), 'today')).resolves.toBe('opened');
+  });
+
+  it('a wipe while the queue is read (it forgets the queue) opens nothing', async () => {
+    const launching = launchRunner(row(), 'today');
+    // A withdrawal lands while the member's queue is read from disk.
+    raiseRunnerWipeFence();
+    forgetWorkoutOutbox();
+    await expect(launching).resolves.toBe('nothing');
+    expect(opened).not.toHaveBeenCalled();
   });
 
   it('Cancel keeps both, and the next tap asks again', async () => {
