@@ -1,9 +1,10 @@
 /**
  * What sets the health reminder sync off (iOS `ContentView` and Body and
  * goals): a changed reminder choice or the permission just answered there,
- * every change to the Today read, a consent or membership change, each
- * activation; and a sign-out drops a sync still waiting. Every one of them
- * is coalesced into one sync 400 ms after the last.
+ * every change to the Today read, a Today read settling, a consent or
+ * membership change, each activation (never alongside a Today read in
+ * flight); and a sign-out drops a sync still waiting. Every one of them is
+ * coalesced into one sync 400 ms after the last.
  *
  * Its own file: the wiring subscribes to the stores for the life of the
  * module, which would set syncs off in every other suite's test.
@@ -135,12 +136,47 @@ it('a membership change syncs', async () => {
   expect(syncs()).toBe(1);
 });
 
-it('each activation syncs (after the Today read the health layer starts)', async () => {
+it('each activation syncs (no Today read in flight)', async () => {
   const hook = mockHooks.activation['notifications.health-reminders'];
   expect(hook).toBeDefined();
   await hook!({ memberId: MEMBER, trigger: 'foreground' });
   await afterDelay();
   expect(syncs()).toBe(1);
+});
+
+it("an activation while the health layer's Today read is in flight syncs once, after the read lands, from what it brought", async () => {
+  const hook = mockHooks.activation['notifications.health-reminders']!;
+  // F7's `health.activate` started the read alongside this module's hook.
+  useHealthStore.setState({ loadState: { kind: 'loading' } });
+  await hook({ memberId: MEMBER, trigger: 'foreground' });
+  await afterDelay();
+  // The sync came due, read the permission and stopped before planning.
+  expect(syncs()).toBe(1);
+  expect(notificationsState.scheduled()).toEqual([]);
+
+  // The read lands: today, then the load state, as the store sets them.
+  useHealthStore.setState({ today: today([{ id: 's', scheduledFor: '2026-09-21', kind: 'strength', title: 'Legs', minutes: 30, status: 'planned' }]) });
+  useHealthStore.setState({ loadState: { kind: 'loaded', at: new Date() } });
+  await afterDelay();
+  expect(syncs()).toBe(2);
+  expect(notificationsState.scheduled().map((r) => r.identifier).sort()).toEqual([
+    'health.weeklycheckin',
+    'health.workoutday.2026-09-21',
+  ]);
+});
+
+it('a Today read that fails still syncs once it settles, from the day the store already had (as iOS syncs after the read whatever its outcome)', async () => {
+  useHealthStore.setState({ today: today([{ id: 's', scheduledFor: '2026-09-21', kind: 'strength', title: 'Legs', minutes: 30, status: 'planned' }]) });
+  useHealthStore.setState({ loadState: { kind: 'loading' } });
+  await afterDelay();
+  expect(notificationsState.scheduled()).toEqual([]);
+
+  useHealthStore.setState({ loadState: { kind: 'failed', code: 'offline' } });
+  await afterDelay();
+  expect(notificationsState.scheduled().map((r) => r.identifier).sort()).toEqual([
+    'health.weeklycheckin',
+    'health.workoutday.2026-09-21',
+  ]);
 });
 
 it('a sign-out drops the sync still waiting', async () => {

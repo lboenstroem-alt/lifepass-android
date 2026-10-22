@@ -16,10 +16,19 @@
  * consent change) is coalesced into one sync 400 ms later, and syncs never
  * overlap: one running and at most one waiting.
  *
- * WHEN IT RUNS (iOS `ContentView`): each activation of a signed-in member
- * (after F7's Today read on activation), every change to the Today read, to
- * the consent or to the health access, and every change in Body and goals or
- * answer to the permission prompt there (`onReminderSyncRequested`).
+ * WHEN IT RUNS (iOS `ContentView`): each activation of a signed-in member,
+ * every change to the Today read, to the consent or to the health access,
+ * and every change in Body and goals or answer to the permission prompt
+ * there (`onReminderSyncRequested`).
+ *
+ * NEVER ALONGSIDE A TODAY READ. iOS `activateHealth` awaits the Today read
+ * and only then syncs. Here F7's activation hook (`health.activate`) starts
+ * that read in parallel with this module's, so a sync that comes due while
+ * a read is in flight (`loadState` 'loading') stops before planning, and the
+ * read settling, landed or failed, asks for the sync again (the health store
+ * subscription below). So the plan comes from what the read brought, and
+ * the evening read of tomorrow is strictly after today's ("serial, after
+ * today's" on iOS).
  *
  * WHAT IT NEVER DOES:
  * - Ask for the permission. Not asked yet means stop; this is never the place
@@ -185,15 +194,21 @@ export async function syncHealthReminders(): Promise<void> {
     return;
   }
 
+  // A Today read in flight: what it brings is what to plan from, and
+  // tomorrow is read after it, never alongside. Its settling syncs again.
+  const health = useHealthStore.getState();
+  if (health.loadState.kind === 'loading') return;
+
   // Without today's read there is no upcoming list to plan from; what is
   // pending stays until a read says otherwise.
   const now = new Date();
   const serverToday = todayServerDay(now);
-  const day = useHealthStore.getState().today;
+  const day = health.today;
   if (day === null || day.date !== serverToday) return;
   const programActive = day.program?.status === 'active';
 
-  // 3. The evening read of tomorrow, after today's.
+  // 3. The evening read of tomorrow, after today's (no Today read is in
+  //    flight, checked just above with nothing awaited since).
   const tomorrow = programActive ? await eveningReadOfTomorrow(profileId, language, serverToday, now) : null;
   const preferences = await loadReminderPreferences(profileId);
 
@@ -286,7 +301,7 @@ let installed = false;
 
 /**
  * Wires the sync to everything that changes its answer (once; loaded with
- * the notification layer's session hooks, src/notifications/register.ts).
+ * the notification layer's session hooks, ./reminderStartup.ts).
  */
 export function installHealthReminders(): void {
   if (installed) return;
@@ -296,15 +311,20 @@ export function installHealthReminders(): void {
   onReminderSyncRequested(() => scheduleHealthReminderSync());
 
   // Each activation (the first profile read of a sign-in, every return to
-  // the foreground): F7's activation hook reads Today for a member with a
-  // live plan, and a read that changes it syncs again below.
+  // the foreground). F7's activation hook reads Today for a member with a
+  // live plan at the same moment; if that read is still in flight when this
+  // sync comes due, the sync stops and the read settling runs it (below).
   registerActivationHook('notifications.health-reminders', () => scheduleHealthReminderSync());
 
   registerSignOutCleaner('notifications.health-reminders', () => forgetMember());
 
-  // Every read and every action answer rewrites today's day; the reminders follow it.
+  // Every read and every action answer rewrites today's day; the reminders
+  // follow it. A read that settles without changing it (it failed) syncs
+  // too: a sync that came due while it was in flight stopped for it, and
+  // iOS syncs after the activation read whatever its outcome.
   useHealthStore.subscribe((state, previous) => {
-    if (state.today !== previous.today) scheduleHealthReminderSync();
+    const readSettled = previous.loadState.kind === 'loading' && state.loadState.kind !== 'loading';
+    if (state.today !== previous.today || readSettled) scheduleHealthReminderSync();
   });
 
   // A consent or membership change (a grant, a withdrawal, a lapse, a sign-in).

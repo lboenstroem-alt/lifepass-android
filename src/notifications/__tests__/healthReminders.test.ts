@@ -423,6 +423,22 @@ describe('the evening read of tomorrow (19.4)', () => {
     expect(scheduled(CHECK_IN_IDENTIFIER)).toBeDefined();
   });
 
+  it("with a Today read in flight, tomorrow is not read alongside it and what is pending stays (iOS: serial, after today's)", async () => {
+    const { tomorrow } = eveningSetUp();
+    await scheduleAt(WORKOUT_PREFIX + tomorrow, at(tomorrow, 7), later, 'health');
+    api.on('GET', '/health', (request) => tomorrowReply(request.query.date ?? ''));
+    useHealthStore.setState({ loadState: { kind: 'loading' } });
+    await syncHealthReminders();
+    expect(api.sentAll('/health')).toHaveLength(0);
+    expect(scheduledIds()).toEqual([WORKOUT_PREFIX + tomorrow]);
+
+    // Once it has landed, the sync reads tomorrow.
+    useHealthStore.setState({ loadState: { kind: 'loaded', at: new Date() } });
+    await syncHealthReminders();
+    expect(api.sent('/health').query).toEqual({ locale: 'is', date: tomorrow });
+    expect(scheduled(WORKOUT_PREFIX + tomorrow)?.content.title).toBe('Áætlun dagsins');
+  });
+
   it('a sign-out while tomorrow was being read schedules nothing for the member who left', async () => {
     eveningSetUp();
     let release: () => void = () => undefined;
