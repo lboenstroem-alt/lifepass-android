@@ -7,8 +7,8 @@
  */
 import { setAnalyticsObserver, type AnalyticsParams } from '../../../../lib/analytics';
 import { RunnerProgressIndex } from '../../persistence/progressIndex';
-import { loadRunner } from '../../persistence/runnerStore';
-import { raiseRunnerWipeFence } from '../../persistence/fence';
+import { deleteRunner, loadRunner } from '../../persistence/runnerStore';
+import { raiseRunnerWipeFence, runnerWipeEpoch } from '../../persistence/fence';
 import { perSideHoldJSON, session, t0 } from '../../model/__tests__/fixtures';
 import type { RunnerState } from '../../model/types';
 import type { RunnerRestAlerting } from '../../restNotification';
@@ -56,7 +56,7 @@ function plus(date: Date, seconds: number): Date {
 }
 
 function model(
-  options: { alerts?: FakeAlerts; cues?: Cues; blocks?: string; restored?: RunnerState | null } = {},
+  options: { alerts?: FakeAlerts; cues?: Cues; blocks?: string; restored?: RunnerState | null; wipeEpoch?: number } = {},
 ): { runner: RunnerController; alerts: FakeAlerts; cues: Cues; closes: RunnerCloseResult[] } {
   const alerts = options.alerts ?? new FakeAlerts();
   const cues = options.cues ?? new Cues();
@@ -71,6 +71,7 @@ function model(
     keepAwake: (value) => awake.push(value),
     clock: () => clockNow,
     today: '2026-09-16',
+    wipeEpoch: options.wipeEpoch,
   });
   const closes: RunnerCloseResult[] = [];
   runner.onClose = (result) => closes.push(result);
@@ -419,19 +420,41 @@ describe('the local wipe', () => {
     const { runner, alerts, closes } = model();
     runner.completeNextSet();
     await loadRunner(MEMBER);
+    // The wipe: the folder goes, the fence goes up, the runner is told.
+    await deleteRunner(MEMBER);
     raiseRunnerWipeFence();
     runner.wiped();
     expect(closes).toEqual([{ kind: 'discarded' }]);
     expect(alerts.cancels).toBeGreaterThan(0);
     expect(awake.at(-1)).toBe(false);
+    // The rest runs out after it: still nothing written.
     runner.tick(plus(t0, 200));
+    runner.appeared();
+    expect(await loadRunner(MEMBER)).toBeNull();
   });
 
   it('a runner opened before a wipe writes nothing after it', async () => {
     const { runner } = model();
     raiseRunnerWipeFence();
+    expect(runner.wasWiped).toBe(true);
     runner.completeNextSet();
     expect(await loadRunner(MEMBER)).toBeNull();
+  });
+
+  it('a runner built from a read the wipe overtook is fenced by the epoch before that read', async () => {
+    const beforeRead = runnerWipeEpoch();
+    raiseRunnerWipeFence();
+    const { runner } = model({ wipeEpoch: beforeRead });
+    expect(runner.wasWiped).toBe(true);
+    runner.completeNextSet();
+    expect(await loadRunner(MEMBER)).toBeNull();
+  });
+
+  it('a runner closed before it appeared is never counted as started', () => {
+    const { runner } = model();
+    runner.wiped();
+    runner.appeared();
+    expect(events.map((entry) => entry.event)).not.toContain('workout_started');
   });
 });
 

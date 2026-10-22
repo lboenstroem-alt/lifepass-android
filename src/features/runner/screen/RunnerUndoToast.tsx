@@ -1,7 +1,9 @@
 /**
  * "Exercise skipped" (or "Remaining sets skipped") with Undo, for four
- * seconds after a skip (iOS `undoToast`, 7.6). Announced to TalkBack as it
- * appears; it sits over the content, clear of the bottom bar.
+ * seconds after a skip (iOS `undoToast`, 7.6). Announced to TalkBack once
+ * per skip, as iOS posts one announcement (no live region as well, which
+ * would read it a second time); it sits over the content, clear of the
+ * bottom bar.
  */
 import { useEffect } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -30,7 +32,7 @@ export default function RunnerUndoToast({ messageKey, id, onUndo }: RunnerUndoTo
 
   return (
     <View style={styles.wrap} pointerEvents="box-none">
-      <View style={styles.toast} testID="runner.undoToast" accessibilityLiveRegion="polite">
+      <View style={styles.toast} testID="runner.undoToast">
         <LPText size={14} weight="medium" color={colors.ink} style={styles.message}>
           {message}
         </LPText>

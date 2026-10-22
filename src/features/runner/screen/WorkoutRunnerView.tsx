@@ -10,17 +10,23 @@
  * - the app's comings and goings (AppState): leaving pauses the active clock
  *   and schedules the rest alert, returning removes it and catches up;
  * - the local wipe: the runner closes as discarded and writes nothing back;
+ * - the health store's toasts ("changed on another device", "too many
+ *   changes"), shown over the runner as iOS mounts `.healthToast` on it
+ *   (Plan, which shows them otherwise, is not focused under the runner);
  * - Android's back: the Leave dialog, never a silent close;
  * - the keyboard: the page is lifted above it (the app is edge to edge, so
  *   Android no longer shrinks the window), keeping the bottom bar in reach.
  *
- * The page scrolls back to the top whenever the exercise changes.
+ * The page scrolls back to the top whenever the exercise changes (at once
+ * under Remove animations).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Dimensions, Keyboard, ScrollView, StyleSheet, View, type KeyboardEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { showToast } from '../../../components/ui';
 import { useA11ySize } from '../../../hooks/useA11ySize';
+import { useReduceMotion } from '../../../hooks/useReduceMotion';
 import { useHealthStore } from '../../../health/store';
 import { useT } from '../../../i18n';
 import { useHardwareBack } from '../../../navigation/guards';
@@ -53,10 +59,12 @@ export default function WorkoutRunnerView({ controller }: WorkoutRunnerViewProps
 
 function RunnerPage() {
   const { controller, snapshot } = useRunner();
-  const { language } = useT();
+  const { t, language } = useT();
   const insets = useSafeAreaInsets();
   const { isAccessibilitySize } = useA11ySize();
+  const reduceMotion = useReduceMotion();
   const isOffline = useHealthStore((s) => s.lastError?.isOffline === true);
+  const toastKey = useHealthStore((s) => s.toastKey);
   const [leaveVisible, setLeaveVisible] = useState(false);
   const [sheet, setSheet] = useState<RunnerSheet | null>(null);
   const keyboardHeight = useKeyboardHeight();
@@ -67,6 +75,15 @@ function RunnerPage() {
   useEffect(() => {
     controller.language = language;
   }, [controller, language]);
+
+  // The local wipe (a sign-out, a withdrawal, a verified minor), also one
+  // that landed between the open and this subscription (first, so a
+  // wiped runner is never counted as started).
+  useEffect(() => {
+    const unsubscribe = onRunnerWiped(() => controller.wiped());
+    if (controller.wasWiped) controller.wiped();
+    return unsubscribe;
+  }, [controller]);
 
   // Up: written down, counted once, caught up. Gone: nothing it started outlives it.
   useEffect(() => {
@@ -80,18 +97,27 @@ function RunnerPage() {
     return () => clearInterval(timer);
   }, [controller]);
 
-  // Leaving the app and coming back.
+  // Leaving the app and coming back. The controller starts in the
+  // foreground; an open that finished after the member had already left
+  // (Start, then the phone locked during the read) is a departure too.
   useEffect(() => {
+    if (isAway(AppState.currentState)) controller.appStateChanged(false);
     const subscription = AppState.addEventListener('change', (status) => controller.appStateChanged(status === 'active'));
     return () => subscription.remove();
   }, [controller]);
 
-  // The local wipe (a sign-out, a withdrawal, a verified minor).
-  useEffect(() => onRunnerWiped(() => controller.wiped()), [controller]);
+  // A health toast raised while the runner is up shows over it.
+  useEffect(() => {
+    if (!toastKey) return;
+    showToast(t(toastKey), { kind: 'health' });
+    useHealthStore.getState().setToast(null);
+  }, [toastKey, t]);
 
   // A new exercise starts at its top.
   useEffect(() => {
-    scroll.current?.scrollTo({ y: 0, animated: false });
+    scroll.current?.scrollTo({ y: 0, animated: !reduceMotion });
+    // Only on a change of exercise, not of the setting.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.index]);
 
   const openLeave = useCallback(() => {
@@ -110,7 +136,6 @@ function RunnerPage() {
     if (!controller.isClosed) openLeave();
     return true;
   });
-
 
   return (
     <View style={[styles.page, { paddingTop: insets.top, paddingBottom: keyboardHeight }]} testID="runner.page">
@@ -157,6 +182,11 @@ function RunnerPage() {
       <RunnerSheets controller={controller} sheet={sheet} onClose={() => setSheet(null)} isOffline={isOffline} />
     </View>
   );
+}
+
+/** The app is not in the foreground (Android reports `background`; `inactive` is iOS's way out). */
+function isAway(status: string | null | undefined): boolean {
+  return status === 'background' || status === 'inactive';
 }
 
 /**

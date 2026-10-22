@@ -76,7 +76,7 @@ import type {
   RunnerTimerPhase,
 } from '../model/types';
 import { deleteRunner, persistRunner } from '../persistence/runnerStore';
-import { runnerWipeEpoch } from '../persistence/fence';
+import { runnerWipeEpoch, wipedSince } from '../persistence/fence';
 import { RunnerProgressIndex } from '../persistence/progressIndex';
 import { liveRestAlerts, type RunnerRestAlerting } from '../restNotification';
 import { liveRunnerCues, type RunnerCues } from '../timer/cues';
@@ -130,6 +130,13 @@ export interface RunnerControllerOptions {
   readonly clock?: () => Date;
   /** The server's calendar day (Reykjavík); defaults to today's. */
   readonly today?: string;
+  /**
+   * The wipe epoch captured BEFORE `restored` was read (`runnerWipeEpoch()`).
+   * The screen passes it, so a wipe that lands while runner.json is read
+   * fences this runner too (it was built from what the wipe discarded).
+   * Defaults to the epoch now.
+   */
+  readonly wipeEpoch?: number;
 }
 
 type Listener = () => void;
@@ -157,7 +164,7 @@ export class RunnerController {
   private readonly keepAwake: RunnerKeepAwake;
   private readonly clock: () => Date;
   /** The wipe epoch this runner opened in: after a wipe nothing more is written. */
-  private readonly wipeEpoch = runnerWipeEpoch();
+  private readonly wipeEpoch: number;
   private isForeground = true;
   private didAppear = false;
   private closed = false;
@@ -172,6 +179,7 @@ export class RunnerController {
     this.cues = options.cues ?? liveRunnerCues;
     this.keepAwake = options.keepAwake ?? keepRunnerAwake;
     this.clock = options.clock ?? (() => new Date());
+    this.wipeEpoch = options.wipeEpoch ?? runnerWipeEpoch();
     const now = this.clock();
     const opened = openRunnerState({
       session: options.session,
@@ -219,6 +227,7 @@ export class RunnerController {
 
   /** The screen is up: written down at once, counted once, and caught up with the time. */
   appeared(): void {
+    if (this.closed) return;
     this.persist();
     if (this.didAppear) return;
     this.didAppear = true;
@@ -659,6 +668,15 @@ export class RunnerController {
 
   get isClosed(): boolean {
     return this.closed;
+  }
+
+  /**
+   * A local wipe ran since this runner's workout was read: it must close
+   * (`wiped`). The screen asks once it listens for wipes, for one that
+   * landed between the open and its subscription.
+   */
+  get wasWiped(): boolean {
+    return wipedSince(this.wipeEpoch);
   }
 
   // ---------------------------------------------------------------------------
