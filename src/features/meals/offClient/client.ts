@@ -16,6 +16,8 @@
  */
 import * as Application from 'expo-application';
 
+import { registerSignOutCleaner } from '../../../app/signOut';
+
 import { VALID_BARCODE_LENGTHS } from '../barcode/normaliser';
 
 import { OFF_FAILED, OFF_NOT_FOUND, parseOffProduct, type OFFLookupOutcome } from './parse';
@@ -134,3 +136,6 @@ export function setFoodFacts(lookup: FoodFactsLookup | null): void {
 export function clearFoodFactsCache(): void {
   shared.clear();
 }
+
+// Which products a member looked at is theirs: the answers go when they sign out.
+registerSignOutCleaner('meals.openFoodFacts', () => clearFoodFactsCache());
