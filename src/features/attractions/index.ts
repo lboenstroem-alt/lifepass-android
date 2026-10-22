@@ -37,6 +37,11 @@ export {
   PLATE_ASPECT_RATIO,
   PLATE_PAPER,
   roadDriveFromReykjavik,
+  // Added by COACH-3 (a barrel line, BUILD_RULES' exception): a plan step's
+  // straight-line distance reads "about 12 km away" with the card's own
+  // kilometres (iOS `CoachPlanDistance.label` calls
+  // `AttractionDetail.roadKilometres`).
+  roadKilometres,
   sightDisplayName,
 } from './model';
 export { driveKilometres, sightDistance, sightDuration } from './format';
