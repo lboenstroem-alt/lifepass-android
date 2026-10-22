@@ -11,12 +11,13 @@
  * "Add to meal" hands the item to the caller and closes; nothing is sent
  * until the meal is saved, and the food then shows under My foods.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Keyboard, Pressable, StyleSheet, View, type KeyboardTypeOptions, type Text } from 'react-native';
 
 import { LPText, PrimaryButton, SegmentedControl, Sheet, SheetTextInput } from '../../../components/ui';
 import { useT } from '../../../i18n';
 import { colors, hairline, radius } from '../../../theme';
+import { usePresentationKey } from '../capture/usePresentationKey';
 import type { MealItemDraft } from '../types/draft';
 import { characterPrefix } from '../types/text';
 
@@ -43,12 +44,7 @@ export interface CreateFoodSheetProps {
 
 export default function CreateFoodSheet(props: CreateFoodSheetProps) {
   // Each opening is a fresh form (iOS makes new @State per sheet).
-  const [presentation, setPresentation] = useState(0);
-  const wasVisible = useRef(props.visible);
-  useEffect(() => {
-    if (props.visible && !wasVisible.current) setPresentation((n) => n + 1);
-    wasVisible.current = props.visible;
-  }, [props.visible]);
+  const presentation = usePresentationKey(props.visible);
   return <CreateFoodForm key={presentation} {...props} />;
 }
 

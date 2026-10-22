@@ -27,6 +27,10 @@ import type { NewItemEditorProps } from '../../capture/slots';
 import { resetFoodsCacheMemory } from '../../foodsCache';
 import { resetMealOutboxForTests } from '../../outbox';
 
+/** Each render of the editor: which presentation (its mount) and the item it was handed. */
+const mockEditorRenders: { mount: number; localId: string }[] = [];
+let mockEditorMounts = 0;
+
 /* eslint-disable @typescript-eslint/no-require-imports */
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 jest.mock('@gorhom/bottom-sheet', () => require('../../../../components/ui/testing/bottomSheetMock').bottomSheetModule);
@@ -35,17 +39,25 @@ jest.mock('../../capture/slots', () => ({
   BarcodeMode: null,
   NewItemEditor: function FakeEditor({ visible, item, onAdd, onClose }: NewItemEditorProps) {
     const { Pressable: Press, Text: Words } = require('react-native') as typeof import('react-native');
+    const { useState: useOnce } = require('react') as typeof import('react');
+    const [mount] = useOnce(() => ++mockEditorMounts);
+    mockEditorRenders.push({ mount, localId: item.localId });
     if (!visible) return null;
     return (
-      <Press
-        accessibilityRole="button"
-        onPress={() => {
-          onAdd({ ...item, amount: 2 });
-          onClose();
-        }}
-      >
-        <Words>{`Editor for ${item.label}`}</Words>
-      </Press>
+      <>
+        <Press
+          accessibilityRole="button"
+          onPress={() => {
+            onAdd({ ...item, amount: 2 });
+            onClose();
+          }}
+        >
+          <Words>{`Editor for ${item.label}`}</Words>
+        </Press>
+        <Press accessibilityRole="button" onPress={onClose}>
+          <Words>Cancel editor</Words>
+        </Press>
+      </>
     );
   },
 }));
@@ -64,6 +76,8 @@ function Home() {
 }
 
 beforeEach(() => {
+  mockEditorRenders.length = 0;
+  mockEditorMounts = 0;
   bottomSheetMock.reset();
   resetAppStoreForTests();
   resetHealthStoreForTests();
@@ -104,4 +118,43 @@ it('a row opens the editor with the default portion, and its answer joins the tr
   await act(async () => fireEvent.press(screen.getByText('Editor for Skyr, plain')));
   expect(within(screen.getByTestId('meal.trayBar')).getByText('1 item · 214 kcal')).toBeOnTheScreen();
   expect(screen.getByText('Added')).toBeOnTheScreen();
+});
+
+it('the open editor keeps its item while the page redraws, and the same food opened again is a fresh editor', async () => {
+  await render(
+    <NavigationContainer ref={navigationRef}>
+      <UiKitProvider>
+        <Root.Navigator screenOptions={{ headerShown: false }}>
+          <Root.Screen name="Main" component={Home} />
+          <Root.Screen name="MealCapture" component={MealCaptureNavigator} />
+        </Root.Navigator>
+      </UiKitProvider>
+    </NavigationContainer>,
+  );
+  await act(async () => {
+    (navigationRef.navigate as unknown as (name: string, params: object) => void)('MealCapture', {
+      origin: 'scanTab',
+      mode: 'search',
+      date: todayServerDay(),
+    });
+  });
+  await waitFor(() => expect(screen.getAllByTestId(`food.open.${choice().key}`).length).toBeGreaterThan(0));
+  await act(async () => fireEvent.press(screen.getAllByTestId(`food.open.${choice().key}`)[0]!));
+  expect(screen.getByText('Editor for Skyr, plain')).toBeOnTheScreen();
+
+  // The search redraws behind the open editor (a keystroke here; a search
+  // answer or the lists refreshing do the same).
+  await act(async () => fireEvent.changeText(screen.getByTestId('food.search.field'), 's'));
+  const first = mockEditorRenders.filter((entry) => entry.mount === 1);
+  expect(first.length).toBeGreaterThan(1);
+  expect(new Set(first.map((entry) => entry.localId)).size).toBe(1);
+
+  // Closed, then the same food again: a new editor with a new item.
+  await act(async () => fireEvent.press(screen.getByText('Cancel editor')));
+  await act(async () => fireEvent.changeText(screen.getByTestId('food.search.field'), ''));
+  await act(async () => fireEvent.press(screen.getAllByTestId(`food.open.${choice().key}`)[0]!));
+  expect(screen.getByText('Editor for Skyr, plain')).toBeOnTheScreen();
+  const second = mockEditorRenders.filter((entry) => entry.mount === 2);
+  expect(second.length).toBeGreaterThan(0);
+  expect(second[0]!.localId).not.toBe(first[0]!.localId);
 });

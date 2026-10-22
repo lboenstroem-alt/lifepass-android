@@ -16,10 +16,10 @@ import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMo
 import { dismissToast } from '../../../../components/ui/Toast';
 import * as localStore from '../../../../health/localStore';
 import { resetHealthStoreForTests, useHealthStore } from '../../../../health/store';
-import type { HealthDay } from '../../../../health/models';
+import type { HealthAccess, HealthDay } from '../../../../health/models';
 import { resetMealGatePresenter } from '../../../../health/gate/mealGate';
 import { todayServerDay } from '../../../../i18n/format';
-import { setAnalyticsObserver } from '../../../../lib/analytics';
+import { setAnalyticsObserver, type AnalyticsParams } from '../../../../lib/analytics';
 import MealCaptureNavigator from '../../../../navigation/MealCaptureNavigator';
 import * as navigationRefModule from '../../../../navigation/navigationRef';
 import { navigationRef } from '../../../../navigation/navigationRef';
@@ -33,9 +33,9 @@ import MealGlobalChromeHost from '../../MealGlobalChromeHost';
 import { resetMealOutboxForTests } from '../../outbox';
 import { restoreTray, saveTray } from '../../tray';
 import { draftFromChoice } from '../../types/draftFactory';
-import type { FoodSearchResult, MealCreateBody, MealWriteResult } from '../../types/models';
-import { openHealthConsent } from '../../../../health/consent/presenter';
-import { openMealCaptureForEditor, resetCapturePagesForTests } from '../capturePages';
+import type { FoodSearchResult, MealCreateBody, MealRecord, MealWriteResult } from '../../types/models';
+import { openHealthConsent, useHealthConsentPresenter } from '../../../../health/consent/presenter';
+import { capturePageFor, openMealCaptureForEditor, resetCapturePagesForTests } from '../capturePages';
 import { choice, MEMBER, myFoods, myOats, offline, presets, problem, signIn, storedMeal } from './mealFixtures';
 
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -67,19 +67,42 @@ function Home() {
   return <Text>Home screen</Text>;
 }
 
-async function renderApp() {
+interface AppOptions {
+  /** The app shell's health host (the consent sheet, the gate); false: none mounted. */
+  readonly chrome?: boolean;
+  /** Something in the page holds its removal (MEAL-4's "keep for later"), while this says so. */
+  readonly holdsRemoval?: () => boolean;
+}
+
+async function renderApp({ chrome = true, holdsRemoval }: AppOptions = {}) {
   await render(
     <NavigationContainer ref={navigationRef}>
       <UiKitProvider>
         <Root.Navigator screenOptions={{ headerShown: false }}>
           <Root.Screen name="Main" component={Home} />
-          <Root.Screen name="MealCapture" component={MealCaptureNavigator} options={{ presentation: 'fullScreenModal' }} />
+          <Root.Screen
+            name="MealCapture"
+            component={MealCaptureNavigator}
+            options={{ presentation: 'fullScreenModal' }}
+            listeners={{
+              beforeRemove: (event) => {
+                if (holdsRemoval?.()) event.preventDefault();
+              },
+            }}
+          />
         </Root.Navigator>
-        <MealGlobalChromeHost />
+        {chrome ? <MealGlobalChromeHost /> : null}
       </UiKitProvider>
     </NavigationContainer>,
   );
   await act(async () => undefined);
+}
+
+/** The model of the meal page on top. */
+function openPageModel() {
+  const route = navigationRef.getRootState().routes.find((entry) => entry.name === 'MealCapture');
+  const key = route?.state?.key;
+  return key ? capturePageFor(key) : null;
 }
 
 async function openPage(params: Partial<MealCaptureParams> = {}) {
@@ -178,6 +201,11 @@ describe('a lunch by search', () => {
     expect(useIntentStore.getState().pendingTab).toBe('Plan');
   });
 
+  // MERGE GATE with MEAL-4: once ../slots.ts exports MEAL-4's
+  // NewItemEditorSheet, a row's tap opens the editor (iOS
+  // testTheItemEditorChangesTheAmountInOneTap) and this case must assert
+  // that instead; ../../search/__tests__/itemEditorSlot.test.tsx covers the
+  // wired slot.
   it('without the item editor wired in, a row’s tap adds its usual portion', async () => {
     useApi();
     await renderApp();
@@ -244,6 +272,53 @@ describe('Describe', () => {
     await waitFor(() => expect(screen.getByTestId('food.describe_instead')).toBeOnTheScreen());
     await act(async () => fireEvent.press(screen.getByTestId('food.describe_instead')));
     expect(describeModule.openDescribe).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'focaccia sandwich' }));
+  });
+
+  it('a membership wall in the describe sheet closes the page, then the gate shows over what was underneath', async () => {
+    useAppStore.setState({ serverFeatures: [ServerFeature.mealDescribe] });
+    useApi();
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getByTestId('food.describe')).toBeOnTheScreen());
+    await act(async () => fireEvent.press(screen.getByTestId('food.describe')));
+    const prefill = describeModule.openDescribe.mock.calls.at(-1)![0] as { onGate: (access: HealthAccess) => void };
+    await act(async () => prefill.onGate('pass_only'));
+    await waitFor(() => expect(screen.getByText('Included with a LifePass membership')).toBeOnTheScreen());
+    expect(screen.getByText('Your visitor pass covers venues and day plans. The food log is included with a membership.')).toBeOnTheScreen();
+    expect(screen.getByText('Home screen', { includeHiddenElements: true })).toBeTruthy();
+    expect(screen.queryByTestId('food.search.field', { includeHiddenElements: true })).toBeNull();
+  });
+
+  it('a refusal in the describe sheet that ends the page (a minor, a wipe) closes it', async () => {
+    useAppStore.setState({ serverFeatures: [ServerFeature.mealDescribe] });
+    useApi();
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getByTestId('food.describe')).toBeOnTheScreen());
+    await act(async () => fireEvent.press(screen.getByTestId('food.describe')));
+    const prefill = describeModule.openDescribe.mock.calls.at(-1)![0] as { onClosePage: () => void };
+    await act(async () => prefill.onClosePage());
+    await waitFor(() => expect(screen.getByText('Home screen')).toBeOnTheScreen());
+    expect(screen.queryByTestId('food.search.field')).toBeNull();
+  });
+
+  it('the description’s draft opens in the page with the record the server saved, once the sheet is down', async () => {
+    useAppStore.setState({ serverFeatures: [ServerFeature.mealDescribe] });
+    useApi();
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getByTestId('food.describe')).toBeOnTheScreen());
+    await act(async () => fireEvent.press(screen.getByTestId('food.describe')));
+    const prefill = describeModule.openDescribe.mock.calls.at(-1)![0] as { onDraft: (mealId: string, meal: MealRecord) => void };
+    const draft = storedMeal(TODAY, { id: 'draft-1', confirmed: false, source: 'describe' });
+    const model = openPageModel();
+    expect(model).not.toBeNull();
+    await act(async () => prefill.onDraft('draft-1', draft));
+    expect(navigationRef.getCurrentRoute()?.name).toBe('Capture');
+    await waitFor(() => expect(navigationRef.getCurrentRoute()?.name).toBe('Draft'));
+    expect(navigationRef.getCurrentRoute()?.params).toEqual({ mealId: 'draft-1' });
+    // The editor opens it from the page's model, without reading it again (offline too).
+    expect(model?.state.drafts['draft-1']).toBe(draft);
   });
 
   it('is not offered for a day older than 30 days', async () => {
@@ -483,6 +558,27 @@ describe('the sheets from Search', () => {
   });
 });
 
+describe('a preset meal’s sheet', () => {
+  it('slides away with its meal still drawn, then goes; opened again it starts at one serving', async () => {
+    useApi();
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getByText('Skyr bowl')).toBeOnTheScreen());
+    await act(async () => fireEvent.press(screen.getByTestId('food.preset.meal-skyr-bowl')));
+    await act(async () => fireEvent.press(screen.getByTestId('preset.servings.up')));
+    bottomSheetMock.settleDismiss = false;
+    await act(async () => fireEvent.press(screen.getByText('Cancel')));
+    // Mid-slide: the caller has let go of the meal, the sheet has not.
+    expect(screen.getByTestId('preset.servings.value')).toHaveTextContent('1.5');
+    await act(async () => bottomSheetMock.latest()?.onDismiss?.());
+    expect(screen.queryByTestId('preset.servings.value')).toBeNull();
+
+    bottomSheetMock.settleDismiss = true;
+    await act(async () => fireEvent.press(screen.getByTestId('food.preset.meal-skyr-bowl')));
+    expect(screen.getByTestId('preset.servings.value')).toHaveTextContent('1');
+  });
+});
+
 describe('a check-in link', () => {
   it('closes the page over the Scan tab without asking, keeping the tray', async () => {
     useApi();
@@ -498,5 +594,175 @@ describe('a check-in link', () => {
     expect(screen.queryByText('Discard these items?')).toBeNull();
     await localStore.settled();
     expect((await restoreTray(MEMBER))?.items).toHaveLength(1);
+  });
+});
+
+describe('the search timing', () => {
+  it('asks once, 300 ms after the last keystroke', async () => {
+    const api = useApi();
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getByText('RECENT MEALS')).toBeOnTheScreen());
+    jest.useFakeTimers();
+    try {
+      await typeSearch('sk');
+      await act(async () => {
+        jest.advanceTimersByTime(200);
+      });
+      await typeSearch('skyr');
+      await act(async () => {
+        jest.advanceTimersByTime(299);
+      });
+      expect(api.search).not.toHaveBeenCalled();
+      await act(async () => {
+        jest.advanceTimersByTime(1);
+      });
+      expect(api.search).toHaveBeenCalledTimes(1);
+      expect(api.search).toHaveBeenCalledWith('skyr', 'en', expect.anything());
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('an answer for words no longer in the field never replaces the list', async () => {
+    const answers = new Map<string, (result: FoodSearchResult) => void>();
+    const search = jest.fn(
+      (text: string) =>
+        new Promise<FoodSearchResult>((resolve) => {
+          answers.set(text, resolve);
+        }),
+    );
+    useApi({ search });
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getByText('RECENT MEALS')).toBeOnTheScreen());
+
+    await typeSearch('sk');
+    await waitFor(() => expect(search).toHaveBeenCalledWith('sk', 'en', expect.anything()));
+    // Typed on while the first search was out; its answer comes after.
+    await typeSearch('skyr');
+    const skittles = choice({ key: 'food:skittles', label: 'Skittles' });
+    await act(async () => answers.get('sk')?.({ query: 'sk', mine: [], foods: [skittles], meals: [], closest: false }));
+    expect(screen.queryByText('Skittles')).toBeNull();
+
+    await waitFor(() => expect(search).toHaveBeenCalledWith('skyr', 'en', expect.anything()));
+    await act(async () => answers.get('skyr')?.(skyrResult));
+    await waitFor(() => expect(screen.getByText('YOUR FOODS')).toBeOnTheScreen());
+    expect(screen.queryByText('Skittles')).toBeNull();
+  });
+});
+
+describe('See all', () => {
+  it('switches the list to Recent without counting as a chip', async () => {
+    const recents = Array.from({ length: 9 }, (_, index) => choice({ key: `food:recent-${index}`, label: `Recent food ${index}` }));
+    useApi({ myFoods: jest.fn(async () => myFoods({ recents })) });
+    const events: { event: string; params: AnalyticsParams }[] = [];
+    setAnalyticsObserver((event, params) => events.push({ event, params }));
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getByTestId('h:recent')).toBeOnTheScreen());
+    await act(async () => fireEvent.press(within(screen.getByTestId('h:recent')).getByRole('button')));
+    expect(screen.getByTestId('food.filter.recent').props.accessibilityState).toMatchObject({ selected: true });
+    expect(screen.getByText('Recent food 8')).toBeOnTheScreen();
+    expect(events.filter((entry) => entry.event === 'food_filter_selected')).toEqual([]);
+
+    // A chip still counts.
+    await act(async () => fireEvent.press(screen.getByTestId('food.filter.all')));
+    expect(events).toContainEqual({ event: 'food_filter_selected', params: { filter: 'all' } });
+  });
+});
+
+describe('the page’s own toasts', () => {
+  it('leave with the page: an “Added” with Undo never stays over the tab once the page is closed', async () => {
+    useApi();
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getAllByLabelText('Add Skyr, plain').length).toBeGreaterThan(0));
+    await act(async () => fireEvent.press(screen.getAllByLabelText('Add Skyr, plain')[0]!));
+    expect(screen.getByText('Added')).toBeOnTheScreen();
+    await act(async () => fireEvent.press(screen.getByLabelText('Close')));
+    await act(async () => fireEvent.press(screen.getByText('Keep for later')));
+    await waitFor(() => expect(screen.getByText('Home screen')).toBeOnTheScreen());
+    await waitFor(() => expect(screen.queryByText('Added')).toBeNull());
+    expect(screen.queryByText('Undo')).toBeNull();
+  });
+
+  it('a save’s toast is not the page’s: it stays once the page has gone', async () => {
+    useApi();
+    await renderApp();
+    await openPage({ date: '2026-09-17' });
+    await waitFor(() => expect(screen.getAllByLabelText('Add Skyr, plain').length).toBeGreaterThan(0));
+    await act(async () => fireEvent.press(screen.getAllByLabelText('Add Skyr, plain')[0]!));
+    await act(async () => fireEvent.press(screen.getByText('Save to diary')));
+    await waitFor(() => expect(screen.getByText('Home screen')).toBeOnTheScreen());
+    expect(screen.getByText(/^Meal saved to .*17 Sep/)).toBeOnTheScreen();
+    expect(screen.queryByText('Added')).toBeNull();
+  });
+});
+
+describe('closing one page of two', () => {
+  it('pops that page, not the editor’s Add food page over it', async () => {
+    useApi();
+    await renderApp();
+    await openPage();
+    const below = openPageModel();
+    await act(async () => {
+      openMealCaptureForEditor({ slot: 'dinner', date: TODAY, onAddToMeal: jest.fn() });
+    });
+    await act(async () => undefined);
+    expect(within(screen.getByTestId('meal.header')).getByText('Dinner · Today')).toBeOnTheScreen();
+    expect(navigationRef.getRootState().routes.filter((entry) => entry.name === 'MealCapture')).toHaveLength(2);
+
+    await act(async () => below?.close('kept'));
+    const pages = navigationRef.getRootState().routes.filter((entry) => entry.name === 'MealCapture');
+    expect(pages).toHaveLength(1);
+    expect((pages[0]?.params as MealCaptureParams | undefined)?.origin).toBe('editor');
+  });
+});
+
+describe('closing when something in the page holds it', () => {
+  it('X works again once the hold is gone', async () => {
+    useApi();
+    let holding = true;
+    await renderApp({ holdsRemoval: () => holding });
+    await openPage();
+    await act(async () => fireEvent.press(screen.getByLabelText('Close')));
+    expect(screen.getByTestId('food.search.field')).toBeOnTheScreen();
+    holding = false;
+    await act(async () => fireEvent.press(screen.getByLabelText('Close')));
+    await waitFor(() => expect(screen.getByText('Home screen')).toBeOnTheScreen());
+    expect(screen.queryByTestId('food.search.field')).toBeNull();
+  });
+});
+
+describe('the consent sheet for a save', () => {
+  it('comes from the app shell’s health host after a 409', async () => {
+    const actual = jest.requireActual('../../../../health/consent/presenter') as { openHealthConsent: typeof openHealthConsent };
+    (openHealthConsent as jest.Mock).mockImplementationOnce(actual.openHealthConsent);
+    useApi({ createMeal: jest.fn(async () => Promise.reject(problem('health_consent_required', 409))) });
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getAllByLabelText('Add Skyr, plain').length).toBeGreaterThan(0));
+    await act(async () => fireEvent.press(screen.getAllByLabelText('Add Skyr, plain')[0]!));
+    await act(async () => fireEvent.press(screen.getByText('Save to diary')));
+    await waitFor(() => expect(screen.getByText('Health and fitness tracking')).toBeOnTheScreen());
+    // Drawn once, by the host: the page's own sheet stays out of it.
+    expect(useHealthConsentPresenter.getState().visible).toBe(true);
+    expect(screen.getAllByText('Health and fitness tracking')).toHaveLength(1);
+    expect(screen.getByTestId('food.search.field', { includeHiddenElements: true })).toBeTruthy();
+  });
+
+  it('with no host mounted, the page shows a sheet of its own', async () => {
+    const actual = jest.requireActual('../../../../health/consent/presenter') as { openHealthConsent: typeof openHealthConsent };
+    (openHealthConsent as jest.Mock).mockImplementationOnce(actual.openHealthConsent);
+    useApi({ createMeal: jest.fn(async () => Promise.reject(problem('health_consent_required', 409))) });
+    await renderApp({ chrome: false });
+    await openPage();
+    await waitFor(() => expect(screen.getAllByLabelText('Add Skyr, plain').length).toBeGreaterThan(0));
+    await act(async () => fireEvent.press(screen.getAllByLabelText('Add Skyr, plain')[0]!));
+    await act(async () => fireEvent.press(screen.getByText('Save to diary')));
+    await waitFor(() => expect(screen.getByText('Health and fitness tracking')).toBeOnTheScreen());
+    expect(useHealthConsentPresenter.getState().visible).toBe(false);
+    expect(screen.getAllByText('Health and fitness tracking')).toHaveLength(1);
   });
 });

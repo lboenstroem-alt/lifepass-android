@@ -9,7 +9,7 @@
  * source is `preset`.
  */
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Pressable, StyleSheet, View, type AccessibilityActionEvent, type Text } from 'react-native';
 
 import { LPText, PrimaryButton, Sheet } from '../../../components/ui';
@@ -18,6 +18,7 @@ import { decimal, kcal as kcalText } from '../../../i18n/format';
 import { haptics } from '../../../lib/haptics';
 import { colors, hairline, radius } from '../../../theme';
 import { amountLine } from '../capture/mealText';
+import { usePresentationKey } from '../capture/usePresentationKey';
 import { displayedItem } from '../math/itemMath';
 import type { MealItemDraft } from '../types/draft';
 import type { PresetMeal } from '../types/models';
@@ -26,7 +27,7 @@ import { presetItems, SERVINGS_MAX, SERVINGS_MIN, stepServings } from './presetR
 
 export interface PresetMealSheetProps {
   readonly visible: boolean;
-  /** The meal on screen; kept by the caller while the sheet slides away. */
+  /** The meal to show; null once it is closing (the sheet keeps the last one while it slides away). */
   readonly meal: PresetMeal | null;
   readonly onAdd: (items: MealItemDraft[]) => void;
   readonly onClose: () => void;
@@ -34,14 +35,15 @@ export interface PresetMealSheetProps {
 
 export default function PresetMealSheet(props: PresetMealSheetProps) {
   // Each opening starts at 1 serving (iOS makes new @State per sheet).
-  const [presentation, setPresentation] = useState(0);
-  const wasVisible = useRef(props.visible);
-  useEffect(() => {
-    if (props.visible && !wasVisible.current) setPresentation((n) => n + 1);
-    wasVisible.current = props.visible;
-  }, [props.visible]);
-  if (!props.meal) return null;
-  return <PresetMealContent key={presentation} {...props} meal={props.meal} />;
+  const presentation = usePresentationKey(props.visible);
+  // The meal last shown, kept while the sheet slides away: a caller that
+  // clears its meal as it closes must not unmount the sheet mid-close (no
+  // slide-out, no `onClosed`, no TalkBack focus back).
+  const lastMeal = useRef<PresetMeal | null>(props.meal);
+  if (props.meal) lastMeal.current = props.meal;
+  const meal = lastMeal.current;
+  if (!meal) return null;
+  return <PresetMealContent key={presentation} {...props} meal={meal} />;
 }
 
 function PresetMealContent({ visible, meal, onAdd, onClose }: PresetMealSheetProps & { readonly meal: PresetMeal }) {

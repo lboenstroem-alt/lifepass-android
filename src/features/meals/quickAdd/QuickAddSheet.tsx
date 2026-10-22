@@ -21,6 +21,7 @@ import { track } from '../../../lib/analytics';
 import { colors, hairline } from '../../../theme';
 import { useCaptureIfAny } from '../capture/capturePages';
 import { showMealToast } from '../capture/saveFeedback';
+import { usePresentationKey } from '../capture/usePresentationKey';
 
 import { quickAddItem, quickAddKcal, savesAtOnce, type QuickAddTarget } from './quickAddRules';
 
@@ -38,12 +39,7 @@ export interface QuickAddSheetProps {
 
 export default function QuickAddSheet(props: QuickAddSheetProps) {
   // Each opening is a fresh form (iOS makes new @State per sheet).
-  const [presentation, setPresentation] = useState(0);
-  const wasVisible = useRef(props.visible);
-  useEffect(() => {
-    if (props.visible && !wasVisible.current) setPresentation((n) => n + 1);
-    wasVisible.current = props.visible;
-  }, [props.visible]);
+  const presentation = usePresentationKey(props.visible);
   return <QuickAddForm key={presentation} {...props} />;
 }
 
@@ -100,7 +96,8 @@ function QuickAddForm({ visible, target, onClose, toastOffset }: QuickAddSheetPr
       onClose();
       return;
     }
-    showMealToast(t('food.added'), { bottomOffset: toastOffset });
+    // In the page's own toast (iOS `model.toasts`): it leaves with the page.
+    showMealToast(t('food.added'), { bottomOffset: toastOffset, page: model });
     onClose();
   };
 

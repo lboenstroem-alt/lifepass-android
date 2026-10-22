@@ -10,9 +10,14 @@
  *
  * MEAL-3 depends on MEAL-2, so it fills its two by editing this file once
  * MEAL-2 has merged (plan 3.0 rule 2). MEAL-4 does not, so its line is a
- * merge task (contract request in MEAL-2's result):
+ * MERGE GATE (contract request in MEAL-2's result): without it a row's tap
+ * and its plus do the same thing, which iOS never does. Replace the null
+ * below with
  *
  *   export { default as NewItemEditor } from '../itemEditor/NewItemEditorSheet';
+ *
+ * and flip "without the item editor wired in" in
+ * ./__tests__/MealCaptureScreen.test.tsx to expect the editor.
  *
  * A camera mode gets the page's model (`useCapture(model, ...)` for the
  * slot, date and tray; `model.add`, `model.openDraft`, `model.setMode`,

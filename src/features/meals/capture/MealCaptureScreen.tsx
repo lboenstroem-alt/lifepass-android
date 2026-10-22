@@ -43,7 +43,7 @@ import { todayServerDay } from '../../../i18n/format';
 import { useT } from '../../../i18n';
 import { track } from '../../../lib/analytics';
 import { useHardwareBack } from '../../../navigation/guards';
-import { currentTab } from '../../../navigation/navigationRef';
+import { currentTab, navigationRef } from '../../../navigation/navigationRef';
 import type { MealCaptureMode, MealCaptureOrigin, MealCaptureScreenProps } from '../../../navigation/types';
 import { useIntentStore } from '../../../stores/intentStore';
 import { colors } from '../../../theme';
@@ -55,9 +55,9 @@ import { pageKeyOf, peekEditorHandoff, registerCapturePage, takeEditorHandoff, u
 import { openMealDatePicker } from './datePicker';
 import { rememberMode } from './lastMode';
 import MealTrayBar from './MealTrayBar';
-import { showMealToast } from './saveFeedback';
+import { dismissPageToast, showMealToast } from './saveFeedback';
 import { BarcodeMode, PhotoMode, type CameraModeProps } from './slots';
-import { useKeyboardHeight } from './useKeyboardHeight';
+import { useKeyboardCoverage } from './useKeyboardHeight';
 
 /** `meal_capture_opened.entry` (iOS `MealCaptureOrigin.analyticsEntry`). */
 export function analyticsEntry(origin: MealCaptureOrigin): string {
@@ -86,16 +86,33 @@ export function openingMode(requested: MealCaptureMode | undefined): MealCapture
   return cameraModeFor(requested) ? requested : 'search';
 }
 
+interface LooseRoute {
+  readonly key: string;
+  readonly state?: { readonly key?: string };
+}
+
 interface LooseNavigation {
-  getState(): { readonly key: string; readonly routes: readonly { readonly key: string; readonly state?: { readonly key?: string } }[] };
+  getState(): { readonly key: string; readonly routes: readonly LooseRoute[] };
   dispatch(action: object): void;
   goBack(): void;
+}
+
+/**
+ * The root stack's route that holds the page whose own stack has `pageKey`.
+ * Read from the container's whole state: a navigator's own `getState()`
+ * leaves its routes' nested states out.
+ */
+function pageRouteIn(rootKey: string, pageKey: string | null): LooseRoute | null {
+  if (!pageKey || !navigationRef.isReady()) return null;
+  const tree = navigationRef.getRootState() as unknown as { readonly key: string; readonly routes: readonly LooseRoute[] };
+  if (tree.key !== rootKey) return null;
+  return tree.routes.find((entry) => entry.state?.key === pageKey) ?? null;
 }
 
 export default function MealCaptureScreen({ navigation, route }: MealCaptureScreenProps<'Capture'>) {
   const { t } = useT();
   const insets = useSafeAreaInsets();
-  const keyboardHeight = useKeyboardHeight();
+  const keyboardCoverage = useKeyboardCoverage();
   const params = route.params;
 
   const [model] = useState(
@@ -124,28 +141,38 @@ export default function MealCaptureScreen({ navigation, route }: MealCaptureScre
 
   const closePage = useCallback(
     (tray: CaptureCloseTray) => {
+      // One close at a time: a save's close and a tap on X in the same
+      // moment pop the page once.
       if (closed.current) return;
       closed.current = true;
       track('meal_capture_closed', { tray });
+      // The page's own toast ("Added" with Undo) leaves with it (iOS draws it
+      // in the cover); a save's toast is app-wide and stays.
+      dismissPageToast(model);
       // Pop THIS page from the root stack: another page (an editor's Add
       // food) may be over it, and a plain goBack would close that one.
-      const pageKey = pageKeyOf(navigation);
       const root = navigation.getParent() as unknown as LooseNavigation | undefined;
       const rootState = root?.getState();
-      const pageRoute = rootState?.routes.find((entry) => entry.state?.key === pageKey);
+      const pageRoute = rootState ? pageRouteIn(rootState.key, pageKeyOf(navigation)) : null;
       if (root && rootState && pageRoute) {
         root.dispatch({ ...StackActions.pop(), source: pageRoute.key, target: rootState.key });
+        // A screen inside the page may hold the removal (MEAL-4's draft
+        // editor asks "keep for later" first): the page is still there, and
+        // X, a save's close and the gate's close must work again. The root
+        // stack's state is updated synchronously, so this reads the answer.
+        if (root.getState().routes.some((entry) => entry.key === pageRoute.key)) closed.current = false;
       } else {
         root?.goBack();
       }
     },
-    [navigation],
+    [model, navigation],
   );
 
-  // The page's own hooks into its model. An editor page has taken its
-  // handoff now: the next page opened for an editor gets its own.
+  // The page's own hooks into its model. Run again whenever React sets the
+  // effect up again for the same page (new navigation objects, Fast
+  // Refresh): binding brings the model back, so the page never keeps a model
+  // that ignores every change. Only the page going away disposes it (below).
   useEffect(() => {
-    if (model.origin === 'editor') takeEditorHandoff();
     const pageKey = pageKeyOf(navigation);
     const unregister = pageKey ? registerCapturePage(pageKey, model) : () => undefined;
     model.bind({
@@ -159,21 +186,32 @@ export default function MealCaptureScreen({ navigation, route }: MealCaptureScre
       },
       openDraftRoute: (mealId) => navigation.navigate('Draft', { mealId }),
     });
+    return unregister;
+  }, [model, navigation, closePage]);
+
+  // The page has gone: nothing it started may change it, its toast goes, and
+  // a membership wall shows the gate over whatever is underneath (iOS
+  // `onDisappear`). An editor page has taken its handoff on mount: the next
+  // page opened for an editor gets its own.
+  useEffect(() => {
+    if (model.origin === 'editor') takeEditorHandoff();
     return () => {
-      unregister();
       model.dispose();
+      dismissPageToast(model);
       const access = pendingGate.current;
       pendingGate.current = null;
       if (access) presentMealGate(access);
     };
-  }, [model, navigation, closePage]);
+  }, [model]);
 
   // Opened: the analytics, then a tray left within the day.
   useEffect(() => {
     track('meal_capture_opened', { entry: analyticsEntry(model.origin), mode: model.state.mode });
     let cancelled = false;
     void model.restoreTray().then((restored) => {
-      if (restored && !cancelled) showMealToast(t('meal.tray.restored'), { bottomOffset: pageToastOffset(model.state.tray.length) });
+      if (restored && !cancelled) {
+        showMealToast(t('meal.tray.restored'), { bottomOffset: pageToastOffset(model.state.tray.length), page: model });
+      }
     });
     return () => {
       cancelled = true;
@@ -245,7 +283,9 @@ export default function MealCaptureScreen({ navigation, route }: MealCaptureScre
   const CameraMode = cameraModeFor(mode);
   // The tray bar is not drawn in Photo (iOS): the shutter owns the bottom.
   const showsTrayBar = mode !== 'photo';
-  const bottom = Math.max(insets.bottom, keyboardHeight);
+  // Above the keyboard while it is up (its covered strip includes the
+  // navigation bar under it), else above the navigation bar.
+  const bottom = Math.max(insets.bottom, keyboardCoverage);
 
   return (
     <View style={[styles.page, { backgroundColor: onCamera ? '#000000' : colors.ink }]} testID="meal.capture">

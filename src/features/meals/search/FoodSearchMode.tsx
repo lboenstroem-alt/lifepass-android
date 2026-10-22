@@ -28,6 +28,7 @@ import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeabl
 
 import { ApiError, newIdempotencyKey } from '../../../api';
 import { Chip, ChipRow, LPText } from '../../../components/ui';
+import type { HealthAccess } from '../../../health/models';
 import { useHealthStore } from '../../../health/store';
 import { useT } from '../../../i18n';
 import { haptics } from '../../../lib/haptics';
@@ -35,13 +36,13 @@ import { track } from '../../../lib/analytics';
 import { selectSupportsMealDescribe, useAppStore } from '../../../stores/appStore';
 import { colors, hairline } from '../../../theme';
 import { mealApi } from '../api/mealApi';
-import { pageToastOffset, type MealCaptureModel } from '../capture/captureModel';
+import { pageToastOffset, photoAllowed, type MealCaptureModel } from '../capture/captureModel';
 import { useCapture } from '../capture/capturePages';
 import { mealCountBand } from '../capture/mealAnalytics';
 import { showMealToast } from '../capture/saveFeedback';
 import { NewItemEditor } from '../capture/slots';
 import CreateFoodSheet from '../createFood/CreateFoodSheet';
-import { openDescribe } from '../describe';
+import { openDescribe, type DescribePrefill } from '../describe';
 import {
   openFoodsCache,
   refreshFoodsCache,
@@ -54,7 +55,7 @@ import PresetMealSheet from '../preset/PresetMealSheet';
 import QuickAddSheet from '../quickAdd/QuickAddSheet';
 import type { MealItemDraft } from '../types/draft';
 import { draftFromChoice } from '../types/draftFactory';
-import type { FoodChoice, FoodSearchResult, MealEntrySource, PresetMeal } from '../types/models';
+import type { FoodChoice, FoodSearchResult, MealEntrySource, MealRecord, PresetMeal } from '../types/models';
 import { characterPrefix } from '../types/text';
 
 import { searchRows, type SearchRow } from './searchRows';
@@ -86,6 +87,32 @@ import {
 /** How long the describe sheet waits before pushing its draft (iOS 350 ms, after the sheet is down). */
 const DRAFT_PUSH_DELAY_MS = 350;
 
+/**
+ * What the page hands MEAL-5's describe sheet (iOS `MealDescribeSheet(capture:
+ * model, ...)`, which holds the page's model): the draft with its record, so
+ * the draft editor opens it without reading it again (offline too); and the
+ * refusals that end the page, a membership wall (the sheet and the page
+ * close, then the gate: `capture.showGate`) and a minor, a reconciling
+ * account or a wipe (`capture.close()`).
+ *
+ * Written against MEAL-5's contract (`onDraft(mealId, meal)`, `onGate`,
+ * `onClosePage`) so that it also type-checks against the F4 stub this
+ * package is built on: the record is optional here, and the two refusals
+ * are extra members until MEAL-5 lands.
+ */
+interface PageDescribePrefill extends DescribePrefill {
+  readonly onDraft: (mealId: string, meal?: MealRecord) => void;
+  readonly onGate: (access: HealthAccess) => void;
+  readonly onClosePage: () => void;
+}
+
+/** A food opened in the item editor: the draft is made once per presentation (iOS `.sheet(item:)`). */
+interface EditorPresentation {
+  readonly id: number;
+  readonly choice: FoodChoice;
+  readonly item: MealItemDraft;
+}
+
 export interface FoodSearchModeProps {
   readonly model: MealCaptureModel;
 }
@@ -107,19 +134,22 @@ export default function FoodSearchMode({ model }: FoodSearchModeProps) {
   const [searchErrorKey, setSearchErrorKey] = useState<string | null>(null);
   const [showAllRecentMeals, setShowAllRecentMeals] = useState(false);
   const [removingOffline, setRemovingOffline] = useState(false);
-  const [editing, setEditing] = useState<FoodChoice | null>(null);
+  const [editing, setEditing] = useState<EditorPresentation | null>(null);
   const [presetMeal, setPresetMeal] = useState<PresetMeal | null>(null);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const field = useRef<TextInput>(null);
   // The food last opened in the editor, kept while its sheet slides away.
-  const lastEditing = useRef<FoodChoice | null>(null);
+  const lastEditing = useRef<EditorPresentation | null>(null);
   if (editing) lastEditing.current = editing;
   const shownEditing = lastEditing.current;
+  const nextEditorId = useRef(1);
 
   const trimmed = trimmedQuery(query);
   const querying = isQuerying(query);
-  const describeOn = supportsDescribe && model.describeAvailable;
+  // The server advertises `meal_describe` and the day is within OP-56's 30
+  // days (iOS `describeOn`; MEAL-5's `useDescribeOffered(date)` is the same rule).
+  const describeOn = supportsDescribe && photoAllowed(date);
   // The newest words, for an answer to check it is still wanted.
   const latestQuery = useRef(trimmed);
   latestQuery.current = trimmed;
@@ -190,10 +220,21 @@ export default function FoodSearchMode({ model }: FoodSearchModeProps) {
     if (value !== '' && filter !== 'all') setFilter('all');
   };
 
+  /** A chip: the filter, from an empty field, and `food_filter_selected`. */
   const pickFilter = (chip: FoodFilter) => {
     setQuery('');
     setFilter(chip);
     track('food_filter_selected', { filter: chip });
+  };
+
+  /**
+   * A section's See all: the longer list. Recent and Meals only switch the
+   * list (iOS `filter = .recent`), with none of a chip's analytics and the
+   * field left as it is.
+   */
+  const seeAll = (target: 'recentMeals' | 'recent' | 'meals') => {
+    if (target === 'recentMeals') setShowAllRecentMeals(true);
+    else setFilter(target);
   };
 
   const add = useCallback(
@@ -204,6 +245,7 @@ export default function FoodSearchMode({ model }: FoodSearchModeProps) {
       showMealToast(t('food.added'), {
         action: { label: t('plan.undo'), onPress: () => model.undoLastAdd() },
         bottomOffset: pageToastOffset(model.state.tray.length),
+        page: model,
       });
     },
     [model, t],
@@ -219,7 +261,11 @@ export default function FoodSearchMode({ model }: FoodSearchModeProps) {
   const openChoice = (choice: FoodChoice) => {
     if (NewItemEditor) {
       field.current?.blur();
-      setEditing(choice);
+      // The draft is made here, once: a later redraw of the list (a search
+      // answer, the lists refreshing, the tray changing) hands the open
+      // editor the same item, and the same food opened again is a fresh
+      // presentation.
+      setEditing({ id: nextEditorId.current++, choice, item: draftFromChoice(choice) });
       return;
     }
     add([draftFromChoice(choice)], entrySourceFor(choice, null, presets, mineLists), fromValueFor(choice, presets, mineLists, querying), false);
@@ -241,16 +287,20 @@ export default function FoodSearchMode({ model }: FoodSearchModeProps) {
   const describe = (text: string, entry: 'button' | 'empty_search' | 'closest') => {
     field.current?.blur();
     track('meal_describe_opened', { entry });
-    openDescribe({
+    const prefill: PageDescribePrefill = {
       text,
       slot,
       date,
       // Pushed once the sheet is down, onto the page's own stack, like a photo estimate.
-      onDraft: (mealId) => {
-        setTimeout(() => model.openDraft(mealId), DRAFT_PUSH_DELAY_MS);
+      onDraft: (mealId, meal) => {
+        setTimeout(() => model.openDraft(mealId, meal ?? null), DRAFT_PUSH_DELAY_MS);
       },
       onSearch: (words) => setQuery(characterPrefix(words, 60)),
-    });
+      // The sheet has closed itself; the page closes, then the gate shows over what was underneath.
+      onGate: (access) => model.showGate(access),
+      onClosePage: () => model.close(),
+    };
+    openDescribe(prefill);
   };
 
   const rows = useMemo(
@@ -274,22 +324,16 @@ export default function FoodSearchMode({ model }: FoodSearchModeProps) {
 
   const renderRow = ({ item: row }: { item: SearchRow }) => {
     switch (row.kind) {
-      case 'header':
+      case 'header': {
+        const target = row.seeAll;
         return (
           <SectionHeader
             title={row.titleKey ? t(row.titleKey) : (row.title ?? '')}
-            onSeeAll={
-              row.seeAll === 'recentMeals'
-                ? () => setShowAllRecentMeals(true)
-                : row.seeAll === 'recent'
-                  ? () => pickFilter('recent')
-                  : row.seeAll === 'meals'
-                    ? () => pickFilter('meals')
-                    : undefined
-            }
+            onSeeAll={target ? () => seeAll(target) : undefined}
             testID={row.key}
           />
         );
+      }
       case 'food': {
         const content = (
           <FoodRow
@@ -421,16 +465,16 @@ export default function FoodSearchMode({ model }: FoodSearchModeProps) {
       />
       {NewItemEditor && shownEditing ? (
         <NewItemEditor
-          // A fresh editor per food (iOS `.sheet(item:)`).
-          key={shownEditing.key}
+          // A fresh editor per presentation (iOS `.sheet(item:)`), even for the same food twice.
+          key={shownEditing.id}
           visible={editing !== null}
-          item={draftFromChoice(shownEditing)}
-          offBarcode={shownEditing.source === 'off' ? shownEditing.barcode : null}
+          item={shownEditing.item}
+          offBarcode={shownEditing.choice.source === 'off' ? shownEditing.choice.barcode : null}
           onAdd={(item) =>
             add(
               [item],
-              entrySourceFor(shownEditing, null, presets, mineLists),
-              fromValueFor(shownEditing, presets, mineLists, querying),
+              entrySourceFor(shownEditing.choice, null, presets, mineLists),
+              fromValueFor(shownEditing.choice, presets, mineLists, querying),
               false,
             )
           }
