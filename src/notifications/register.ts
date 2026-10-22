@@ -21,8 +21,6 @@ import { normaliseLang, type Lang } from '../i18n';
 import { useAppStore, type AppStoreState } from '../stores/appStore';
 
 import { ensureChannels, rememberNotificationLanguage, startNotifications } from '.';
-import { installEngagementNudges } from './engagement';
-import { installHealthReminders } from './healthReminders';
 
 /** The signed-in account's language when the store knows it (the profile's, else the cached one); never the phone's. */
 export function accountLanguage(state: Pick<AppStoreState, 'isAuthenticated' | 'profile' | 'cachedAccountLanguage'>): Lang | null {
@@ -33,12 +31,6 @@ export function accountLanguage(state: Pick<AppStoreState, 'isAuthenticated' | '
 }
 
 void startNotifications();
-
-// NOTIF-1: the engagement nudges (./engagement.ts) and the health reminders
-// (./healthReminders.ts) follow launch, the foreground, the purchase state,
-// the Today read and the reminder choices from here on.
-installEngagementNudges();
-installHealthReminders();
 
 let languageSeen = useAppStore.getState().language;
 let rememberedLanguage: Lang | null = null;
@@ -57,3 +49,16 @@ useAppStore.subscribe((state) => {
   languageSeen = state.language;
   void ensureChannels(state.language);
 });
+
+// NOTIF-1 (shared-file edit, F7 sign-off at merge): the engagement nudges
+// and the health reminders, loaded AFTER this layer's own startup above and
+// in a try, so nothing in their import tree can cost the handler, the
+// channels or the account language. Intended home: their own SHARED_LAYERS
+// entry in src/app/registrations.ts (F3 contract request), and then these
+// lines go (./reminderStartup.ts).
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- loaded last, in its own try (see above)
+  require('./reminderStartup');
+} catch {
+  // ./reminderStartup.ts reports a failing install itself; failing to load at all costs only the reminders.
+}
