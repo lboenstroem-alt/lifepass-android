@@ -13,6 +13,16 @@
  * opens its meal in the meal editor (route `MealEditor`), where every item
  * can be changed or removed: the member is never left with a row that does
  * nothing.
+ *
+ * INTEGRATION (MEAL-4 + MEAL-5, built in parallel, so neither can make this
+ * call alone): MEAL-4's `presentStoredItemEditor`
+ * (itemEditor/itemEditorPresenter.ts) takes exactly this request and answers
+ * false with no host. Once both are merged it is registered at app start,
+ *
+ *   registerStoredItemEditor(presentStoredItemEditor);
+ *
+ * and only then does a diary item open as on iOS. The meal-editor fallback
+ * is a safety net, not the shipping behaviour.
  */
 import type { MealItemDraft } from '../types/draft';
 import type { MealRecord } from '../types/models';

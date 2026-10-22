@@ -8,15 +8,32 @@
  * same day), and the toast says the day's total ("Saved. About 1,240 kcal
  * today."), or "Meal saved" when the read has no meals block. Another day:
  * "Meal saved to Wed 14 Oct".
+ *
+ * "Food diary" goes the way iOS sends it (`pendingPlanAction = .openDiary`,
+ * `pendingTab = 4`): Plan opens the diary for the meal's day, whatever is on
+ * screen when it is tapped. Asking for Plan while on Plan takes Plan back to
+ * its first screen, so the diary that opens is a fresh one.
  */
 import { showToast } from '../../../components/ui';
 import { useHealthStore } from '../../../health';
 import { translate, type Lang } from '../../../i18n';
 import { dayEnergy, integer, shortDay, todayServerDay } from '../../../i18n/format';
 import { selectHasHealthConsent, useAppStore } from '../../../stores/appStore';
+import { useIntentStore } from '../../../stores/intentStore';
 import type { MealRecord } from '../types/models';
 
-export async function showMealSavedToast(meal: Pick<MealRecord, 'logDate'>, lang: Lang, onOpenDiary: (date: string) => void): Promise<void> {
+/** Plan opens the diary for `date` (iOS `MealSaveFeedback.saved`'s `openDiary`). */
+export function openDiaryOnPlan(date: string): void {
+  const intents = useIntentStore.getState();
+  intents.parkPlanAction({ kind: 'openDiary', date });
+  intents.requestTab('Plan');
+}
+
+export async function showMealSavedToast(
+  meal: Pick<MealRecord, 'logDate'>,
+  lang: Lang,
+  onOpenDiary: (date: string) => void = openDiaryOnPlan,
+): Promise<void> {
   const date = meal.logDate;
   const action = { label: translate('diary.title', lang), onPress: () => onOpenDiary(date) };
   if (date !== todayServerDay()) {

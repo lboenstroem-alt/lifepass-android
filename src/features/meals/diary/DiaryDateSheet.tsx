@@ -33,6 +33,16 @@ export default function DiaryDateSheet({ visible, date, today, onPick, onClose }
   const [picked, setPicked] = useState<string | null>(null);
   const value = picked ?? clampToToday(date, today);
   const titleRef = useRef<Text>(null);
+  // The calendar stays mounted while the sheet slides away (unmounting it
+  // would fold the sheet to its toolbar mid-animation), and each opening
+  // gets a fresh one on the day's month: the key moves in the render that
+  // sees `visible` turn true.
+  const [presentation, setPresentation] = useState(0);
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
+    if (visible) setPresentation((count) => count + 1);
+  }
 
   const close = () => {
     setPicked(null);
@@ -70,7 +80,7 @@ export default function DiaryDateSheet({ visible, date, today, onPick, onClose }
           </LPText>
           <View style={styles.cancel} />
         </View>
-        {visible ? <DayCalendar key={date} value={value} range={pickerRange(today)} today={today} onChange={setPicked} /> : null}
+        <DayCalendar key={`${presentation}:${date}`} value={value} range={pickerRange(today)} today={today} onChange={setPicked} />
       </View>
     </Sheet>
   );

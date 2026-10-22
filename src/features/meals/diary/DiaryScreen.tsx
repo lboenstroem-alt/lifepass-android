@@ -23,6 +23,18 @@
  * offline banner, another day says "This needs a connection."; any other
  * failure says so with Try again.
  *
+ * ONE DAY'S READ NEVER SPEAKS FOR ANOTHER. iOS reads in `.task(id: date)`,
+ * which cancels the read of a day the member has left. Here a read for a day
+ * no longer on screen still lands (its day is kept), but its busy state, its
+ * failure line and the offline flag belong to its own day: a slow read of
+ * yesterday can never take today's offline banner away (and with it the
+ * rule that the offline copy offers no Copy from yesterday).
+ *
+ * A NEW DATE FROM THE ROUTE. iOS pushes a new diary for every "Food diary"
+ * link. React Navigation's `navigate` to a Diary already on top gives it new
+ * params instead, so the page follows them: the new day is shown and read
+ * again, as a fresh page would be.
+ *
  * READ ONLY without the membership (past due, lapsed with consent): history
  * can be read and items deleted, nothing new is added or copied.
  */
@@ -35,7 +47,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isApiError, isCancellation, isOffline, isProblem, newIdempotencyKey } from '../../../api';
 import { Dialog, LPText, showToast, SkeletonCard, StatusBanner, TopBar } from '../../../components/ui';
 import { presentMealGate, useHealthStore } from '../../../health';
-import type { MealSlot } from '../../../health/models';
+import type { HealthAccess, MealSlot } from '../../../health/models';
+import { MealGateSheet } from '../../../health/ui';
 import { translate, useT } from '../../../i18n';
 import { addServerDays, localTime, todayServerDay } from '../../../i18n/format';
 import { track } from '../../../lib/analytics';
@@ -45,6 +58,7 @@ import { colors } from '../../../theme';
 import { mealApi } from '../api/mealApi';
 import { usePendingMeals } from '../outbox/mealOutbox';
 import type { MealItemDraft } from '../types/draft';
+import { draftFromRecord } from '../types/draftFactory';
 import type { MealDayRecord, MealRecord } from '../types/models';
 
 import DiaryDateSheet from './DiaryDateSheet';
@@ -67,6 +81,17 @@ import { openStoredItemEditor } from './storedItemEditor';
 /** iOS leaves 120 pt under the list; the tab bar floats over it. */
 const BOTTOM_ROOM = 40;
 
+/** What a read of one day came to. */
+type LoadOutcome = 'kept' | 'fresh' | 'cached' | 'failed';
+
+/** `record` without `key` (the same object when it has none). */
+function without<T>(record: Readonly<Record<string, T>>, key: string): Readonly<Record<string, T>> {
+  if (!(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
 export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Diary'>) {
   const { t, language } = useT();
   const insets = useSafeAreaInsets();
@@ -76,19 +101,27 @@ export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Dia
   const [date, setDate] = useState(() => clampToToday(route.params.date, todayServerDay()));
   const [days, setDays] = useState<Readonly<Record<string, MealDayRecord>>>({});
   const [yesterday, setYesterday] = useState<MealDayRecord | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Per day (see ONE DAY'S READ above): reads in flight, the failure line,
+  // and which day is the offline copy of the Today read (only ever today).
+  const [inFlight, setInFlight] = useState<Readonly<Record<string, number>>>({});
+  const [failures, setFailures] = useState<Readonly<Record<string, string>>>({});
+  const [cachedDay, setCachedDay] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [failedKey, setFailedKey] = useState<string | null>(null);
-  const [showingCache, setShowingCache] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [deleting, setDeleting] = useState<MealRecord | null>(null);
   const [copying, setCopying] = useState<MealSlot | null>(null);
+  // The membership gate this page draws itself when no app-wide host can
+  // (kept, with its access, while it slides away).
+  const [localGate, setLocalGate] = useState<{ readonly access: HealthAccess; readonly visible: boolean } | null>(null);
 
   const healthAccess = useAppStore((s) => s.healthAccess);
   const cachedAt = useHealthStore((s) => s.cachedAt);
   const pending = usePendingMeals(date);
   const day = days[date] ?? null;
   const isToday = date === today;
+  const loading = (inFlight[date] ?? 0) > 0;
+  const failedKey = failures[date] ?? null;
+  const showingCache = cachedDay === date;
   // Past due or lapsed with consent: history is readable and deletable, nothing new is added.
   const readOnly = healthAccess !== 'entitled';
 
@@ -103,6 +136,8 @@ export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Dia
   daysRef.current = days;
   const dateRef = useRef(date);
   dateRef.current = date;
+  const cachedDayRef = useRef(cachedDay);
+  cachedDayRef.current = cachedDay;
 
   // ---- Loading (17.5)
 
@@ -118,33 +153,48 @@ export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Dia
   }, [language]);
 
   const load = useCallback(
-    async (wanted: string, force: boolean) => {
-      if (!force && daysRef.current[wanted]) return;
-      setLoading(true);
+    async (wanted: string, force: boolean): Promise<LoadOutcome> => {
+      if (!force && daysRef.current[wanted]) return 'kept';
+      setInFlight((current) => ({ ...current, [wanted]: (current[wanted] ?? 0) + 1 }));
+      const fail = (key: string): LoadOutcome => {
+        setFailures((current) => ({ ...current, [wanted]: key }));
+        return 'failed';
+      };
       try {
         const fresh = await mealApi().mealDay(wanted, language);
-        if (!mounted.current) return;
+        if (!mounted.current) return 'fresh';
+        // Also at once, for a caller that acts on the fresh day (removeItem).
+        daysRef.current = { ...daysRef.current, [wanted]: fresh };
         setDays((current) => ({ ...current, [wanted]: fresh }));
-        setFailedKey(null);
-        setShowingCache(false);
+        setFailures((current) => without(current, wanted));
+        setCachedDay((current) => (current === wanted ? null : current));
         const todayNow = todayServerDay();
         // The Home row and Plan read the same day.
         if (wanted === todayNow && force) await useHealthStore.getState().load({ force: true });
         if (wanted === todayNow) await loadYesterday();
+        return 'fresh';
       } catch (error) {
-        if (!mounted.current || isCancellation(error)) return;
-        const cached = wanted === todayServerDay() ? cachedTodayDay(useHealthStore.getState().today?.meals, wanted) : null;
+        if (!mounted.current || isCancellation(error)) return 'failed';
+        // Only a Today read OF this day: an app left open past midnight
+        // holds yesterday's, which must never be shown as today.
+        const todayRead = useHealthStore.getState().today;
+        const cached =
+          wanted === todayServerDay() && todayRead?.date === wanted ? cachedTodayDay(todayRead.meals, wanted) : null;
         if (isOffline(error) && cached) {
           setDays((current) => ({ ...current, [wanted]: cached }));
-          setShowingCache(true);
-        } else if (isOffline(error)) {
-          setFailedKey('health.offline.action_hint');
-        } else {
-          if (isApiError(error)) useHealthStore.getState().handle(error, { foreground: true });
-          setFailedKey('common.error_body');
+          setCachedDay(wanted);
+          return 'cached';
         }
+        if (isOffline(error)) return fail('health.offline.action_hint');
+        if (isApiError(error)) useHealthStore.getState().handle(error, { foreground: true });
+        return fail('common.error_body');
       } finally {
-        if (mounted.current) setLoading(false);
+        if (mounted.current) {
+          setInFlight((current) => {
+            const left = (current[wanted] ?? 1) - 1;
+            return left > 0 ? { ...current, [wanted]: left } : without(current, wanted);
+          });
+        }
       }
     },
     [language, loadYesterday],
@@ -169,6 +219,21 @@ export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Dia
       if (daysRef.current[current]) void loadRef.current(current, true);
     }, []),
   );
+
+  // A new date from the route while the page is up (see A NEW DATE FROM THE
+  // ROUTE above): the arrival of a fresh page, so counted and read again.
+  const params = route.params;
+  const seenParams = useRef(params);
+  useEffect(() => {
+    if (params === seenParams.current) return;
+    seenParams.current = params;
+    const now = todayServerDay();
+    const next = clampToToday(params.date, now);
+    track('diary_viewed', { relative: next === now ? 'today' : 'past' });
+    if (next !== dateRef.current) setDate(next);
+    // An unread day is read by the date effect above.
+    if (daysRef.current[next]) void loadRef.current(next, true);
+  }, [params]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -244,7 +309,9 @@ export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Dia
             showToast(t('health.offline.action_hint'), { kind: 'meal' });
           } else if (isApiError(error)) {
             if (useHealthStore.getState().handle(error, { foreground: true }) === 'gate') {
-              presentMealGate(useAppStore.getState().healthAccess);
+              const access = useAppStore.getState().healthAccess;
+              // No app-wide host to draw it: this page does.
+              if (!presentMealGate(access) && mounted.current) setLocalGate({ access, visible: true });
             } else {
               showToast(t('common.error_body'), { kind: 'meal' });
             }
@@ -254,10 +321,11 @@ export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Dia
       }
       track('diary_copy_yesterday');
       await load(dateRef.current, true);
-      if (last) await showMealSavedToast(last, language, change);
+      // Its "Food diary" opens the diary through Plan, as every save toast does.
+      if (last) await showMealSavedToast(last, language);
       if (mounted.current) setCopying(null);
     },
-    [change, language, load, t, yesterday],
+    [language, load, t, yesterday],
   );
 
   // ---- Deleting (17.3)
@@ -276,7 +344,32 @@ export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Dia
   );
 
   const removeItem = useCallback(
-    async (meal: MealRecord, item: MealItemDraft) => {
+    async (shownMeal: MealRecord, shownItem: MealItemDraft) => {
+      let meal = shownMeal;
+      let item = shownItem;
+      if (itemRemoval(meal, item).kind === 'confirmDelete') {
+        setDeleting(meal);
+        return;
+      }
+      // The offline copy is rebuilt from the Today read: no per 100 g values,
+      // no overrides, no updatedAt. A PATCH built from it would strip the
+      // other items' numbers with no conflict guard, so the day is read
+      // first and the removal works on the meal as the server has it.
+      if (cachedDayRef.current === dateRef.current) {
+        const outcome = await reload();
+        if (!mounted.current) return;
+        const freshMeal = outcome === 'fresh' ? daysRef.current[dateRef.current]?.meals.find((m) => m.id === meal.id) : undefined;
+        const freshItem = freshMeal?.items.find((record) => record.id === item.storedId);
+        if (!freshMeal || !freshItem) {
+          // Still offline (or the read failed) says so; a meal or item gone
+          // meanwhile is simply not there any more on the fresh day.
+          if (outcome === 'cached') showToast(t('health.offline.action_hint'), { kind: 'meal' });
+          else if (outcome !== 'fresh') showToast(t('common.error_body'), { kind: 'meal' });
+          return;
+        }
+        meal = freshMeal;
+        item = draftFromRecord(freshItem);
+      }
       const removal = itemRemoval(meal, item);
       if (removal.kind === 'confirmDelete') {
         setDeleting(meal);
@@ -421,6 +514,16 @@ export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Dia
         ]}
         onClose={() => setDeleting(null)}
         testID="diary.deleteMeal"
+      />
+
+      {/* Only when `presentMealGate` had no host to draw it (copy refused by the membership). */}
+      <MealGateSheet
+        visible={localGate?.visible ?? false}
+        access={localGate?.access ?? healthAccess}
+        onClose={() => setLocalGate((current) => (current ? { ...current, visible: false } : null))}
+        onSeeMemberships={() => navigation.navigate('Plans')}
+        onOpenAccount={() => navigation.navigate('Account')}
+        testID="diary.gate"
       />
     </View>
   );

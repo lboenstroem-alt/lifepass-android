@@ -5,9 +5,11 @@
  * and the meals waiting to sync, Add food on the slot and day, the date bar
  * and its swipe, copy from yesterday with its toast, deleting an item with
  * Undo and the last item's question, offline today from the cache, the
- * other-day offline line, Retry, read-only access, and Icelandic.
+ * other-day offline line, Retry, read-only access, and Icelandic. Also: a
+ * new date from the route, a read for a day the member has left, and a
+ * removal from the offline copy.
  */
-import { NavigationContainer } from '@react-navigation/native';
+import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
@@ -25,6 +27,7 @@ import { resetHealthStoreForTests, useHealthStore } from '../../../../health/sto
 import { setCurrentLanguage, translate } from '../../../../i18n';
 import { addServerDays, todayServerDay } from '../../../../i18n/format';
 import { resetAppStoreForTests, useAppStore } from '../../../../stores/appStore';
+import { resetIntentStoreForTests, useIntentStore } from '../../../../stores/intentStore';
 import { setMealApi, type MealApi } from '../../api/mealApi';
 import { fakeMealApi } from '../../api/testing';
 import { resetMealOutboxForTests, useMealOutbox } from '../../outbox/mealOutbox';
@@ -143,6 +146,7 @@ type Routes = {
   MealCapture: { origin: string; mode: string; slot?: string; date?: string };
 };
 const Stack = createNativeStackNavigator<Routes>();
+const navigationRef = createNavigationContainerRef<Routes>();
 
 function MealEditorStandIn({ route }: NativeStackScreenProps<Routes, 'MealEditor'>) {
   return (
@@ -167,7 +171,7 @@ function MealCaptureStandIn({ route, navigation }: NativeStackScreenProps<Routes
 async function renderDiary(date = TODAY) {
   await render(
     <>
-      <NavigationContainer initialState={{ index: 1, routes: [{ name: 'Start' }, { name: 'Diary', params: { date } }] }}>
+      <NavigationContainer ref={navigationRef} initialState={{ index: 1, routes: [{ name: 'Start' }, { name: 'Diary', params: { date } }] }}>
         <Stack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
           <Stack.Screen name="Start" component={View} />
           <Stack.Screen name="Diary" component={DiaryScreen as never} />
@@ -227,6 +231,7 @@ beforeEach(() => {
   resetAppStoreForTests();
   resetHealthStoreForTests();
   resetMealOutboxForTests();
+  resetIntentStoreForTests();
   registerStoredItemEditor(null);
   setCurrentLanguage('en');
 });
@@ -439,6 +444,11 @@ it('copies yesterday’s confirmed meals into an empty slot today, then says the
   expect(await screen.findByText(en('meal.saved'))).toBeOnTheScreen();
   expect(screen.getByText(en('diary.title'), { exact: true, includeHiddenElements: false })).toBeOnTheScreen();
   expect(screen.queryByTestId('diary.copy.breakfast')).toBeNull();
+
+  // "Food diary" goes through Plan, as iOS `MealSaveFeedback.saved` sends it.
+  await fireEvent.press(screen.getByText(en('diary.title'), { exact: true, includeHiddenElements: false }));
+  expect(useIntentStore.getState().pendingPlanAction?.action).toEqual({ kind: 'openDiary', date: TODAY });
+  expect(useIntentStore.getState().pendingTab).toBe('Plan');
 });
 
 it('a copy refused by the membership presents the gate', async () => {
@@ -456,6 +466,9 @@ it('a copy refused by the membership presents the gate', async () => {
   await fireEvent.press(screen.getByTestId('diary.copy.breakfast'));
   await settle();
   expect(useAppStore.getState().healthAccess).toBe('pass_only');
+  // No app-wide host in this test: the page draws the gate itself.
+  expect(screen.getByText(en('meal.gate.title'))).toBeOnTheScreen();
+  expect(screen.getByText(en('meal.gate.body_pass'))).toBeOnTheScreen();
 });
 
 it('deleting an item patches the meal with the rest, and Undo puts it back', async () => {
@@ -654,3 +667,148 @@ it('offline today with nothing cached says it needs a connection', async () => {
   await renderDiary();
   expect(within(screen.getByTestId('diary.failed')).getByText(en('health.offline.action_hint'))).toBeOnTheScreen();
 });
+
+it('a new date from the route shows that day and reads it again (navigate onto a Diary already on top)', async () => {
+  signIn();
+  const reads = serveDays({ [TODAY]: fullDay(TODAY), [YESTERDAY]: fullDay(YESTERDAY) });
+  await renderDiary(YESTERDAY);
+  expect(within(screen.getByTestId('diary.date')).getByText(en('diary.yesterday'))).toBeOnTheScreen();
+
+  // Plan's openDiary navigates; React Navigation gives the Diary on top new params.
+  await act(async () => {
+    navigationRef.navigate('Diary', { date: TODAY });
+  });
+  await settle();
+  expect(within(screen.getByTestId('diary.date')).getByText(en('diary.today'))).toBeOnTheScreen();
+  expect(reads.filter((date) => date === TODAY).length).toBeGreaterThan(0);
+
+  // The member steps back a day; a link to today brings today back, read afresh.
+  await fireEvent.press(screen.getByTestId('diary.prev'));
+  await settle();
+  const before = reads.filter((date) => date === TODAY).length;
+  await act(async () => {
+    navigationRef.navigate('Diary', { date: TODAY });
+  });
+  await settle();
+  expect(within(screen.getByTestId('diary.date')).getByText(en('diary.today'))).toBeOnTheScreen();
+  expect(reads.filter((date) => date === TODAY).length).toBeGreaterThan(before);
+});
+
+it('a read for a day the member has left never takes the offline banner off the day on screen', async () => {
+  signIn();
+  useHealthStore.setState({ cachedAt: new Date(`${TODAY}T07:30:00.000Z`), today: cachedTodayRead(TODAY) });
+  let releaseYesterday: (value: MealDayRecord) => void = () => undefined;
+  setMealApi(
+    fakeMealApi({
+      mealDay: (date) => {
+        if (date === TODAY) return Promise.reject(new TransportError('offline'));
+        return new Promise<MealDayRecord>((resolve) => {
+          releaseYesterday = resolve;
+        });
+      },
+    }),
+  );
+  await renderDiary();
+  expect(screen.getByTestId('diary.offline')).toBeOnTheScreen();
+
+  // To yesterday (its read hangs), and back to today's offline copy.
+  await fireEvent.press(screen.getByTestId('diary.prev'));
+  await settle();
+  expect(screen.getByTestId('diary.loading')).toBeOnTheScreen();
+  await fireEvent.press(screen.getByTestId('diary.next'));
+  await settle();
+  expect(within(screen.getByTestId('diary.date')).getByText(en('diary.today'))).toBeOnTheScreen();
+  expect(screen.getByTestId('diary.offline')).toBeOnTheScreen();
+
+  await act(async () => releaseYesterday(fullDay(YESTERDAY)));
+  await settle();
+  expect(within(screen.getByTestId('diary.date')).getByText(en('diary.today'))).toBeOnTheScreen();
+  expect(screen.getByTestId('diary.offline')).toBeOnTheScreen();
+  expect(screen.getByText('Oats')).toBeOnTheScreen();
+});
+
+it('a Today read of another day is never shown as today offline', async () => {
+  signIn();
+  useHealthStore.setState({ cachedAt: new Date(`${YESTERDAY}T07:30:00.000Z`), today: cachedTodayRead(YESTERDAY) });
+  serveDays({ [TODAY]: new TransportError('offline') });
+  await renderDiary();
+  expect(within(screen.getByTestId('diary.failed')).getByText(en('health.offline.action_hint'))).toBeOnTheScreen();
+  expect(screen.queryByText('Oats')).toBeNull();
+});
+
+it('removing an item from the offline copy reads the day first and patches the meal as the server has it', async () => {
+  signIn();
+  useHealthStore.setState({ cachedAt: new Date(`${TODAY}T07:30:00.000Z`), today: cachedTodayRead(TODAY, true) });
+  let online = false;
+  const patches: { id: string; body: MealPatchBody }[] = [];
+  setMealApi(
+    fakeMealApi({
+      mealDay: async (date) => {
+        if (!online) throw new TransportError('offline');
+        return date === TODAY ? fullDay(TODAY) : day(dayJSON(date));
+      },
+      patchMeal: async (id, body) => {
+        patches.push({ id, body });
+        return { meal: decodeMealRecord(mealJSON(id, TODAY), 'meal'), replayed: false };
+      },
+    }),
+  );
+  await renderDiary();
+  expect(screen.getByTestId('diary.offline')).toBeOnTheScreen();
+
+  // Still offline: nothing is sent, and the member is told.
+  await act(async () => {
+    screen.getByTestId('diary.item.b2').props.onAccessibilityAction({ nativeEvent: { actionName: 'delete' } });
+  });
+  await settle();
+  expect(patches).toHaveLength(0);
+  expect(await screen.findByText(en('health.offline.action_hint'))).toBeOnTheScreen();
+  await act(async () => dismissToast());
+
+  // Back online: the real day replaces the copy and the removal keeps the other item's numbers.
+  online = true;
+  await act(async () => {
+    screen.getByTestId('diary.item.b2').props.onAccessibilityAction({ nativeEvent: { actionName: 'delete' } });
+  });
+  await settle();
+  expect(patches).toHaveLength(1);
+  expect(patches[0]!.id).toBe('breakfast-1');
+  expect(patches[0]!.body.items?.map((input) => input.id)).toEqual(['b1']);
+  // The server's item (its source and food), and its updatedAt for the conflict guard: never the copy's.
+  expect(patches[0]!.body.items?.[0]).toMatchObject({ source: 'usda', foodId: 'food-b1' });
+  expect(patches[0]!.body.expectedUpdatedAt).toBe(`${TODAY}T08:05:00.123Z`);
+  expect(screen.queryByTestId('diary.offline')).toBeNull();
+});
+
+/** A Today read of `date` with one breakfast (or the full day's two-item breakfast), as the phone caches it. */
+function cachedTodayRead(date: string, twoItems = false) {
+  const items = twoItems
+    ? [
+        { id: 'b1', label: 'Skyr', serving: { unit: 'g' }, amount: 100, nutrients: { kcalLow: 120, kcalHigh: 120 } },
+        { id: 'b2', label: 'Banana', serving: { unit: 'g' }, amount: 120, nutrients: { kcalLow: 90, kcalHigh: 90 } },
+      ]
+    : [{ id: 'ci', label: 'Oats', serving: { unit: 'g' }, amount: 60, nutrients: { kcalLow: 220, kcalHigh: 220 } }];
+  return decodeHealthDay({
+    contractVersion: '2026-09-v1',
+    date,
+    today: date,
+    locale: 'en',
+    access: 'entitled',
+    upcoming: [],
+    meals: {
+      date,
+      meals: [
+        {
+          id: twoItems ? 'breakfast-1' : 'cached-1',
+          logDate: date,
+          loggedAt: `${date}T07:00:00Z`,
+          slot: 'breakfast',
+          confirmed: true,
+          items,
+          totals: { kcalLow: 220, kcalHigh: 220, proteinG: 8, carbsG: 36, fatG: 4 },
+        },
+      ],
+      totals: { kcalLow: 220, kcalHigh: 220, proteinG: 8, carbsG: 36, fatG: 4 },
+    },
+  });
+}
