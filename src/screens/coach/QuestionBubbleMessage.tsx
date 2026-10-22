@@ -8,16 +8,20 @@
 // - "Other" opens an inline field. Where the answer travels to a server with
 //   its own limit (`maxLength`, UTF-16 units), the text is cut to it AS IT IS
 //   TYPED, so the answer the member sees is the answer that is sent.
+// - The bubble only reports the tap. Whether it still answers anything is the
+//   flow's call: only the last open question of the flow that asked it may
+//   (src/features/coach/flows/venueWizard.ts, iOS `selectOption`).
 //
-// Owned by COACH-1 until COACH-2 lands (plan 3.0.1).
+// Owned by COACH-2 (plan 3.0.1).
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { LPText } from '../../components/ui';
 import { truncatedToUTF16 } from '../../features/coach/chat/text';
 import { coachPalette } from '../../features/coach/theme/palette';
 import { useT } from '../../i18n';
+import { fonts } from '../../theme';
 import type { QuestionOption } from '../../types/coach';
 import { assistantBubbleStyle, CoachAssistantAvatar } from './MessageBubble';
 
@@ -32,7 +36,6 @@ type Props = {
 
 export default function QuestionBubbleMessage({ question, options, answered, selectedAnswer, onSelect }: Props) {
   const { t } = useT();
-  const { width } = useWindowDimensions();
   const [showOther, setShowOther] = useState(false);
   const [otherText, setOtherText] = useState('');
   const otherLimit = options.find((option) => option.isOther)?.maxLength;
@@ -53,7 +56,9 @@ export default function QuestionBubbleMessage({ question, options, answered, sel
     <View style={styles.root}>
       <View style={styles.row}>
         <CoachAssistantAvatar size={24} />
-        <View style={[styles.bubble, assistantBubbleStyle, styles.questionCorners, { maxWidth: width * 0.75 }]}>
+        {/* No width cap (iOS QuestionBubbleView): the question takes what the
+            avatar leaves, unlike a message bubble's 75%. */}
+        <View style={[styles.bubble, assistantBubbleStyle, styles.questionCorners]}>
           <LPText size={14} color={coachPalette.textPrimary} style={styles.text}>
             {question}
           </LPText>
@@ -194,7 +199,8 @@ const styles = StyleSheet.create({
     borderWidth: 0.8,
     borderColor: coachPalette.stroke,
   },
-  otherInput: { minWidth: 110, fontSize: 13, color: coachPalette.textPrimary, paddingVertical: 4 },
+  // iOS `.font(.lpSans(size: 13))`, named here rather than left to the injected default.
+  otherInput: { minWidth: 110, fontFamily: fonts.sans, fontSize: 13, color: coachPalette.textPrimary, paddingVertical: 4 },
   otherSend: {
     width: 28,
     height: 28,

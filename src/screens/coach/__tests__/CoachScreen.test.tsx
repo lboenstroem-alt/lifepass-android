@@ -5,8 +5,11 @@
  * appearance, and dictation (en-US, on the phone where it can, stopped when
  * the tab loses focus, never while locked).
  *
- * The four flows are COACH-2 to COACH-5's; here they are the stubs that take
- * nothing, so typed words reach the model.
+ * The four flows are COACH-2 to COACH-5's. The venue wizard (COACH-2) is the
+ * real one, so the words this file sends (typed, dictated or parked) name no
+ * venue type and ask for no plan: they reach the model. The wizard on screen, parked
+ * Home prompts that open it included, is tested in
+ * src/features/coach/flows/__tests__.
  */
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -248,29 +251,29 @@ describe('the chat', () => {
     api.on('POST', '/coach', (request) =>
       Reply.ok({ reply: `re: ${(request.body as { messages: { content: string }[] }).messages.at(-1)!.content}` }),
     );
-    useIntentStore.getState().parkCoachPrompt('Suggest gym classes I should try this week.');
+    useIntentStore.getState().parkCoachPrompt('What should I eat after training?');
     await renderCoach();
     await settle();
-    expect(screen.getByText('re: Suggest gym classes I should try this week.')).toBeOnTheScreen();
+    expect(screen.getByText('re: What should I eat after training?')).toBeOnTheScreen();
 
-    await act(async () => useIntentStore.getState().parkCoachPrompt('Plan a perfect spa evening for me.'));
+    await act(async () => useIntentStore.getState().parkCoachPrompt('Help me unwind after a long week.'));
     await settle();
-    expect(screen.getByText('re: Plan a perfect spa evening for me.')).toBeOnTheScreen();
+    expect(screen.getByText('re: Help me unwind after a long week.')).toBeOnTheScreen();
     expect(api.sentAll('/coach')).toHaveLength(2);
   });
 
   it('a prompt parked while a venue page covers the chat takes the tab back to the chat and is sent at once', async () => {
-    api.on('POST', '/coach', Reply.ok({ reply: 'Here is a spa evening.' }));
+    api.on('POST', '/coach', Reply.ok({ reply: 'Here is a calm evening.' }));
     await renderCoach();
     await act(async () => navigation.navigate('VenueDetail', { slug: 'sky-lagoon' }));
     await settle();
     expect(screen.getByText('VenueDetail {"slug":"sky-lagoon"}')).toBeOnTheScreen();
 
     // Home parks it (the member went to Home and tapped a card).
-    await act(async () => useIntentStore.getState().parkCoachPrompt('Plan a perfect spa evening for me.'));
+    await act(async () => useIntentStore.getState().parkCoachPrompt('Help me unwind after a long week.'));
     await settle();
     expect(screen.queryByText('VenueDetail {"slug":"sky-lagoon"}')).toBeNull();
-    expect(screen.getByText('Here is a spa evening.')).toBeOnTheScreen();
+    expect(screen.getByText('Here is a calm evening.')).toBeOnTheScreen();
     expect(useIntentStore.getState().pendingCoachPrompt).toBeNull();
     expect(api.sentAll('/coach')).toHaveLength(1);
   });
@@ -394,7 +397,7 @@ describe('the drawer', () => {
     expect(screen.getByText(en('coach.drawer.no_recents'))).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: en('common.close') }));
 
-    await fireEvent.changeText(screen.getByTestId('coach.input'), 'pools near Laugardalur?');
+    await fireEvent.changeText(screen.getByTestId('coach.input'), 'somewhere calm near Laugardalur?');
     await fireEvent(screen.getByTestId('coach.input'), 'submitEditing');
     await settle();
 
@@ -405,7 +408,7 @@ describe('the drawer', () => {
     expect(screen.getByRole('header', { name: en('coach.empty.heading') })).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: en('coach.android.a11y.menu') }));
     const drawer = screen.getByTestId('coach.drawer');
-    await fireEvent.press(within(drawer).getByRole('button', { name: 'pools near Laugardalur?' }));
+    await fireEvent.press(within(drawer).getByRole('button', { name: 'somewhere calm near Laugardalur?' }));
     await settle();
     expect(screen.getByText('Three pools.')).toBeOnTheScreen();
   });
@@ -519,10 +522,10 @@ describe('dictation', () => {
     await renderCoach();
     await fireEvent.press(screen.getByRole('button', { name: en('coach.a11y.start_voice') }));
     await settle();
-    await act(async () => fakeSpeech.result('a sauna near me'));
+    await act(async () => fakeSpeech.result('somewhere quiet near me'));
     await fireEvent(screen.getByTestId('coach.input'), 'submitEditing');
     // A final result the native module still delivers after the send.
-    await act(async () => fakeSpeech.result('a sauna near me', true));
+    await act(async () => fakeSpeech.result('somewhere quiet near me', true));
     await settle();
     expect(screen.getByTestId('coach.input').props.value).toBe('');
     expect(fakeSpeech.stops).toBe(0);
