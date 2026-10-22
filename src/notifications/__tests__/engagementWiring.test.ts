@@ -162,3 +162,28 @@ it('a change the nudges do not read sets nothing off', async () => {
   await settle();
   expect(syncs()).toBe(before);
 });
+
+it("a sign-out takes the member's own nudges off (their visits never reach the next person's lock screen)", async () => {
+  const lane = { used: 1, cap: 8, resetsAt: new Date(Date.now() + 20 * 24 * 3600 * 1000) };
+  const subscriber = { ...profile(), usage: { ...profile().usage!, tier: 'plus', network: lane } };
+  useAppStore.setState({
+    isLoading: false,
+    isAuthenticated: true,
+    userId: MEMBER,
+    profile: subscriber,
+    subscription: SUBSCRIPTION,
+    subscriptionLoaded: true,
+  });
+  await settle();
+  expect(notificationsState.scheduled().map((r) => r.identifier).sort()).toEqual([
+    ENGAGEMENT_IDS.stayActive,
+    ENGAGEMENT_IDS.visitsReset,
+  ]);
+
+  // What the store's sign-out sets.
+  useAppStore.setState({ isAuthenticated: false, userId: null, profile: null, subscription: null, subscriptionLoaded: false });
+  await settle();
+  const left = notificationsState.scheduled().map((r) => r.identifier);
+  expect(left).not.toContain(ENGAGEMENT_IDS.stayActive);
+  expect(left).not.toContain(ENGAGEMENT_IDS.visitsReset);
+});
