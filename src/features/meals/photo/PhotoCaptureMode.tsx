@@ -16,11 +16,13 @@
  * With the camera not allowed (or not there): "Camera access is off. You
  * can still choose a photo." and Choose a photo.
  *
- * THE PHOTO IS NEVER KEPT. A shot or a pick is encoded at once (cropped to
- * the guide for a shot, kept whole when picked, at most 1,024 px and 600 KB,
- * metadata stripped byte by byte) and the original is let go; the frozen
- * frame shown is the JPEG that will be sent, from memory. Use photo mints
- * the Idempotency-Key that Try again reuses for the same photo; the request
+ * THE PHOTO IS NEVER KEPT, AND NEVER WRITTEN TO DISK. A shot (a bitmap in
+ * memory) or a pick (read from the Photo Picker's own URI) is encoded at
+ * once in memory (cropped to the guide for a shot, kept whole when picked,
+ * at most 1,024 px and 600 KB, metadata stripped byte by byte; see
+ * ../imageEncoder/pipeline.ts) and the original is let go; the frozen frame
+ * shown is the JPEG that will be sent, from memory. Use photo mints the
+ * Idempotency-Key that Try again reuses for the same photo; the request
  * belongs to the scan coordinator, which outlives the page for Keep going.
  */
 import { Ionicons } from '@expo/vector-icons';
@@ -50,7 +52,7 @@ import { encodeMealImage } from '../imageEncoder/encoder';
 import { nativeMealImagePipeline, sweepMealPhotoFiles } from '../imageEncoder/pipeline';
 
 import { photoGuideRect } from './guideLayout';
-import { pickMealPhoto } from './pickPhoto';
+import { discardPickedPhoto, pickMealPhoto } from './pickPhoto';
 import {
   photoErrorActionKey,
   photoErrorActions,
@@ -189,8 +191,10 @@ export default function PhotoCaptureMode({ model, headerHeight }: CameraModeProp
     setBusy(true);
     let ref: PictureRef;
     try {
-      // A bitmap in memory: no file is written for it.
-      ref = await view.takePictureAsync({ pictureRef: true, quality: 1, exif: false });
+      // A bitmap in memory: no file is written for it. A frame too big to
+      // decode in the memory left is decoded again at half the size, then a
+      // quarter (still far over the 1,024 px sent), instead of failing.
+      ref = await view.takePictureAsync({ pictureRef: true, quality: 1, exif: false, maxDownsampling: 4 });
     } catch {
       if (mounted.current) setBusy(false);
       return;
@@ -207,12 +211,18 @@ export default function PhotoCaptureMode({ model, headerHeight }: CameraModeProp
   const choosePhoto = useCallback(async () => {
     if (busy) return;
     const picked = await pickMealPhoto();
-    if (!mounted.current || picked.kind === 'cancelled') return;
+    if (!mounted.current) {
+      // The mode went away while the picker was open (a check-in link, the
+      // gate): the photo is not used, and a copy the picker made goes now.
+      discardPickedPhoto(picked);
+      return;
+    }
+    if (picked.kind === 'cancelled') return;
     if (picked.kind === 'failed') {
       setPhase({ kind: 'failed', failure: 'unsupported' });
       return;
     }
-    await accept({ kind: 'uri', uri: picked.uri, dropAfterLoad: true }, true);
+    await accept({ kind: 'uri', uri: picked.uri, dropAfterLoad: picked.copy }, true);
   }, [accept, busy]);
 
   const handle = useCallback(
@@ -391,7 +401,13 @@ export default function PhotoCaptureMode({ model, headerHeight }: CameraModeProp
         />
       ) : null}
 
-      <View style={[styles.bottom, { paddingBottom: insets.bottom + 4 }]} pointerEvents="box-none">
+      <View
+        style={[styles.bottom, { paddingBottom: insets.bottom + 4 }]}
+        pointerEvents="box-none"
+        // While the estimate runs, TalkBack stays on its card (iOS `.isModal`).
+        importantForAccessibility={phase.kind === 'estimating' ? 'no-hide-descendants' : 'auto'}
+        accessibilityElementsHidden={phase.kind === 'estimating'}
+      >
         {showsTip ? (
           <View style={styles.tipRow}>
             <TipCard text={t('meal.photo.tip')} okLabel={t('common.ok')} onOk={markTipSeen} />
@@ -518,7 +534,10 @@ function GuideLayer({ phase, guide, photo, scansLeft, onCancel, onKeepGoing, onA
           <Image
             source={{ uri: jpegDataUri(photo.encoded.base64) }}
             resizeMode={photo.fromLibrary ? 'contain' : 'cover'}
-            accessible
+            accessible={phase.kind !== 'estimating'}
+            // While the estimate runs, TalkBack stays on its card (iOS `.isModal`).
+            importantForAccessibility={phase.kind === 'estimating' ? 'no-hide-descendants' : 'auto'}
+            accessibilityElementsHidden={phase.kind === 'estimating'}
             accessibilityRole="image"
             accessibilityLabel={t('meal.photo.preview_label')}
             style={[
@@ -565,6 +584,9 @@ function CenteredCard({ centreX, centreY, width, children }: { readonly centreX:
 function EstimatingCard({ onCancel, onKeepGoing }: { readonly onCancel: () => void; readonly onKeepGoing: () => void }) {
   const { t } = useT();
   return (
+    // `accessibilityViewIsModal` is iOS's half; on Android the layers around
+    // the card hide themselves from TalkBack while it is up (the page header
+    // is MEAL-2's: contract request in MEAL-3's result).
     <View style={styles.card} accessibilityViewIsModal testID="meal.photo.estimating">
       <ActivityIndicator size="large" color={colors.paper} />
       <LPText size={15} weight="semibold" color={colors.paper} align="center">

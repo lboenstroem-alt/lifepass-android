@@ -9,6 +9,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { fileSystemState } from '@test/mocks/expoFileSystem';
 import * as ImagePicker from 'expo-image-picker';
 import { Text } from 'react-native';
 
@@ -34,6 +35,7 @@ import { myFoods, presets, signIn } from '../../capture/__tests__/mealFixtures';
 import { resetFoodsCacheMemory } from '../../foodsCache';
 import { base64FromBytes } from '../../imageEncoder/base64';
 import { MealImageEncoderError, type EncodedMealImage, type MealImageCrop, type MealImageSource } from '../../imageEncoder/encoder';
+import { setMealImageNativeForTests } from '../../imageEncoder/nativeImage';
 import { cameraJpeg } from '../../imageEncoder/__tests__/fakePipeline';
 import { mealRecord, photoItemJson } from '../../itemEditor/__tests__/fixtures';
 import { resetMealOutboxForTests } from '../../outbox';
@@ -175,6 +177,7 @@ afterEach(async () => {
   setMealApi(null);
   setAnalyticsObserver(null);
   setPhotoEncoderForTests(null);
+  setMealImageNativeForTests(undefined);
   await AsyncStorage.clear();
   await localStore.settled();
 });
@@ -239,7 +242,8 @@ describe('a photo, start to finish', () => {
     await shoot();
 
     // A bitmap in memory, cropped to what the member aimed with, and let go.
-    expect(cameraDouble.shots[0]).toEqual(expect.objectContaining({ pictureRef: true, exif: false }));
+    // A frame too big for memory is decoded again smaller instead of failing.
+    expect(cameraDouble.shots[0]).toEqual(expect.objectContaining({ pictureRef: true, exif: false, maxDownsampling: 4 }));
     expect(encodings[0]?.source.kind).toBe('ref');
     expect(encodings[0]?.crop).toEqual(expect.objectContaining({ kind: 'guide', view: { width: 400, height: 860 } }));
     expect(cameraDouble.pictures[0]?.released).toBe(true);
@@ -265,6 +269,40 @@ describe('a photo, start to finish', () => {
     await waitFor(() => expect(screen.getByTestId('meal.photo.use')).toBeOnTheScreen());
     expect(encodings[0]).toEqual({ source: { kind: 'uri', uri: 'file:///cache/ImagePicker/one.jpeg', dropAfterLoad: true }, crop: { kind: 'none' } });
     expect(events).toContainEqual(['meal_photo_taken', { source: 'library' }]);
+  });
+
+  it("reads a pick from the photo's own URI with the app's module: nothing to drop", async () => {
+    const content = 'content://media/picker/0/com.android.providers.media.photopicker/media/1000000042';
+    setMealImageNativeForTests({ encodeJpegAsync: jest.fn(), pickImageAsync: jest.fn(async () => content) });
+    useApi({});
+    await renderPage();
+    await act(async () => fireEvent.press(screen.getByLabelText('Choose a photo')));
+    await waitFor(() => expect(screen.getByTestId('meal.photo.use')).toBeOnTheScreen());
+    expect(pick).not.toHaveBeenCalled();
+    expect(encodings[0]).toEqual({ source: { kind: 'uri', uri: content, dropAfterLoad: false }, crop: { kind: 'none' } });
+  });
+
+  it('deletes the picked copy when the mode goes away while the picker is open', async () => {
+    const copy = 'file:///data/user/0/is.lifepass.android/cache/ImagePicker/late.jpeg';
+    let answer: (value: ImagePicker.ImagePickerResult) => void = () => undefined;
+    pick.mockImplementationOnce(
+      () =>
+        new Promise<ImagePicker.ImagePickerResult>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    useApi({});
+    await renderPage();
+    await act(async () => fireEvent.press(screen.getByLabelText('Choose a photo')));
+    // The member is in the system picker (which writes its copy as it answers);
+    // the page switches away from Photo meanwhile (a link, the gate).
+    fileSystemState.seed(copy, 'original with GPS');
+    await act(async () => pageModel()?.setMode('search'));
+    expect(screen.queryByTestId('meal.photo')).toBeNull();
+    expect(fileSystemState.exists(copy)).toBe(true);
+    await act(async () => answer({ canceled: false, assets: [{ uri: copy, width: 3000, height: 2000 } as never] }));
+    expect(fileSystemState.exists(copy)).toBe(false);
+    expect(encodings).toEqual([]);
   });
 
   it('Retake goes back to the camera', async () => {
@@ -298,6 +336,10 @@ describe('the estimate', () => {
     expect(screen.getByText("Estimating what's on the plate")).toBeOnTheScreen();
     expect(screen.getByText('Cancel')).toBeOnTheScreen();
     expect(screen.getByText('Keep going')).toBeOnTheScreen();
+    // TalkBack stays on the card: the dimmed photo and the bottom layer are hidden from it.
+    expect(screen.getByTestId('meal.photo.frozen', { includeHiddenElements: true })).toBeOnTheScreen();
+    expect(screen.queryByLabelText('The photo that will be sent')).toBeNull();
+    expect(screen.queryByTestId('meal.photo.frozen')).toBeNull();
   });
 
   it('Cancel goes back to the frozen photo, deletes a late draft, and a new Use photo has a new key', async () => {
