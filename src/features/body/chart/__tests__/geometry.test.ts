@@ -1,7 +1,7 @@
 /**
  * The weight chart's arithmetic: the y range with and without a target (iOS
- * `WeightChartDomain`), weeks placed by their dates, and a smoothed line that
- * passes through every weekly average.
+ * `WeightChartDomain`), weeks evenly spaced as iOS's categorical x spaces
+ * them, and a smoothed line that passes through every weekly average.
  */
 import { chartDomain, chartPoints, smoothPath, yFor } from '../geometry';
 
@@ -33,13 +33,23 @@ describe('the points', () => {
     ]);
   });
 
-  it('a week with no average leaves its gap: x is the date, not the index', () => {
+  it('a week with no average takes no room: the weeks left are evenly spaced, as on iOS', () => {
     const points = chartPoints(
       [week('2026-08-03', 74), week('2026-08-10', null), week('2026-08-17', 73), week('2026-08-24', 72)],
       { width: 300, height: 100 },
       { low: 72, high: 74 },
     );
-    expect(points.map((p) => p.x)).toEqual([0, 200, 300]);
+    expect(points.map((p) => p.x)).toEqual([0, 150, 300]);
+    expect(points.map((p) => p.y)).toEqual([0, 50, 100]);
+  });
+
+  it('even when the dates are unevenly spread or unreadable', () => {
+    const points = chartPoints(
+      [week('2026-07-06', 75), week('2026-08-24', 74), week('not a day', 73), week('2026-08-31', 72)],
+      { width: 300, height: 100 },
+      { low: 72, high: 75 },
+    );
+    expect(points.map((p) => p.x)).toEqual([0, 100, 200, 300]);
   });
 
   it('the inset keeps the stroke inside the box', () => {

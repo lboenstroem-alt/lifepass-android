@@ -4,8 +4,6 @@
  * with Swift Charts: `LineMark` with `.catmullRom`, a dashed `RuleMark` at
  * the target, `chartYScale` as `WeightChartDomain` sets it).
  */
-import { dateFromServerDay } from '../../../i18n/format';
-
 import type { WeightTrendWeek } from '../api';
 
 export interface ChartPoint {
@@ -43,17 +41,17 @@ export function chartDomain(values: readonly number[], targetKg: number | null):
   return { low, high };
 }
 
-/** A server day as a day number, for spacing weeks by their dates (a skipped week leaves its gap). */
-function dayNumber(day: string): number | null {
-  const date = dateFromServerDay(day);
-  return date ? Math.round(date.getTime() / 86_400_000) : null;
-}
-
 /**
- * Each week with an average, placed in a `width` x `height` box: x by its
- * date between the first week and the last (the x axis is time, as in iOS's
- * chart, so a hole keeps its width), y by its weight in `domain`, heavier
- * higher. `inset` keeps the stroke inside the box at the extremes.
+ * Each week with an average, placed in a `width` x `height` box: x evenly
+ * spaced in order, first week at the left edge and last at the right, y by
+ * its weight in `domain`, heavier higher. `inset` keeps the stroke inside
+ * the box at the extremes.
+ *
+ * Evenly, not by date: iOS plots `x: .value("week", week.weekStartsOn)`, a
+ * String, which Swift Charts treats as categories, and `chartWeeks` has
+ * already dropped the weeks with no average. So a week the member logged
+ * nothing in takes no room on iOS's line, and the line here has the same
+ * shape and slope.
  */
 export function chartPoints(
   weeks: readonly WeightTrendWeek[],
@@ -63,12 +61,10 @@ export function chartPoints(
   const inset = size.inset ?? 0;
   const usable = weeks.filter((week): week is WeightTrendWeek & { avgKg: number } => week.avgKg !== null);
   if (usable.length === 0) return [];
-  const days = usable.map((week, index) => dayNumber(week.weekStartsOn) ?? index * 7);
-  const first = days[0]!;
-  const span = days[days.length - 1]! - first;
+  const steps = usable.length - 1;
   const plotHeight = Math.max(0, size.height - inset * 2);
   return usable.map((week, index) => ({
-    x: span > 0 ? ((days[index]! - first) / span) * size.width : usable.length === 1 ? size.width / 2 : 0,
+    x: steps > 0 ? (index / steps) * size.width : size.width / 2,
     y: yFor(week.avgKg, domain, plotHeight) + inset,
   }));
 }
