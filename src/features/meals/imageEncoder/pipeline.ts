@@ -1,43 +1,48 @@
 /**
  * The phone's half of the meal photo encoder: decode, crop, scale and JPEG
- * encode with expo-image-manipulator, on its background thread.
+ * encode, off the JS thread.
  *
- * NO MEAL PHOTO IS KEPT ON DISK. As far as Android's image libraries allow,
- * the photo stays in memory:
+ * NO MEAL PHOTO IS WRITTEN TO DISK (plan MEAL-3; iOS `MealImageEncoder`:
+ * "Nothing here writes a file"). Every step runs in memory:
  * - a camera still arrives as a picture ref (a bitmap in memory; expo-camera
  *   writes no file for it) and is decoded with its orientation applied;
- * - the manipulator crops and scales bitmaps in memory.
- * Two steps cannot avoid a file, and each file is deleted the moment it has
- * been read, in the app's private cache (no other app can read it, and the
- * app has `allowBackup: false`):
- * - the system Photo Picker hands back a copy of the picked photo, written
- *   by expo-image-picker into `cache/ImagePicker/` (the original metadata
- *   included): decoded, then deleted at once;
- * - the manipulator's JPEG encoder always writes its result into
- *   `cache/ImageManipulator/` next to the base64 it returns: read back as
- *   base64, then deleted at once.
- * Should the app die between the write and the delete, `sweepMealPhotoFiles`
- * removes both folders the next time Photo opens, at a health wipe and at
- * sign-out. Nothing else in the app uses either library (MEAL-3 owns them).
+ * - a picked photo is decoded straight from the Photo Picker's `content://`
+ *   URI (./nativeImage.ts; Glide, no disk cache);
+ * - expo-image-manipulator crops and scales bitmaps in memory;
+ * - the JPEG is compressed into memory by the app's own module
+ *   (./nativeImage.ts), not by the manipulator's `saveAsync`, which always
+ *   writes a file first.
  *
- * iOS writes nothing at all (ImageIO encodes to memory); the bytes that
- * leave the phone are the same either way: the byte walk runs on what is
- * sent.
+ * FALLBACK, for a binary built without that module (an old dev client): the
+ * libraries' own file path. The picked copy expo-image-picker writes into
+ * `cache/ImagePicker/` is deleted the moment it is decoded, and the JPEG
+ * `saveAsync` writes into `cache/ImageManipulator/` the moment it is read
+ * back; `sweepMealPhotoFiles` removes both folders the next time Photo opens,
+ * at a health wipe and at sign-out, in case the app died in between. Nothing
+ * else in the app uses either library (MEAL-3 owns them).
+ *
+ * The bytes that leave the phone are the same either way: the byte walk runs
+ * on what is sent.
  */
 import { Directory, File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat, type ImageRef } from 'expo-image-manipulator';
 
 import type { LoadedMealImage, MealImagePipeline, MealImageSource } from './encoder';
 import type { Rect, Size } from './cropMath';
+import { mealImageNative } from './nativeImage';
 
-/** The cache folders expo-image-picker and expo-image-manipulator write into. */
+/** The cache folders expo-image-picker and expo-image-manipulator write into (the fallback path only). */
 export const MEAL_PHOTO_CACHE_FOLDERS: readonly string[] = ['ImagePicker', 'ImageManipulator'];
 
 interface NativeLoaded extends LoadedMealImage {
   readonly ref: ImageRef;
 }
 
-/** Delete one file by URI; a file already gone is fine. */
+/**
+ * Delete one of the app's own cache files by URI; a file already gone is
+ * fine. Only `file:` URIs: a picked `content://` URI is the member's own
+ * photo in their library, and is never touched.
+ */
 export function deleteFileQuietly(uri: string | null | undefined): void {
   if (!uri || !uri.startsWith('file:')) return;
   try {
@@ -82,7 +87,7 @@ export const nativeMealImagePipeline: MealImagePipeline = {
       return loaded;
     } finally {
       released(context);
-      // The picked copy carried the original metadata: gone now that the pixels are in memory.
+      // A picked copy (the fallback path) carried the original metadata: gone now that the pixels are in memory.
       if (source.kind === 'uri' && source.dropAfterLoad) deleteFileQuietly(source.uri);
     }
   },
@@ -96,6 +101,9 @@ export const nativeMealImagePipeline: MealImagePipeline = {
       if (crop) context.crop({ originX: crop.x, originY: crop.y, width: crop.width, height: crop.height });
       context.resize({ width: size.width, height: size.height });
       rendered = await context.renderAsync();
+      const native = mealImageNative();
+      // In memory: no file.
+      if (native) return await native.encodeJpegAsync(rendered, quality);
       const result = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: quality, base64: true });
       fileUri = result.uri;
       if (!result.base64) throw new Error('no base64');

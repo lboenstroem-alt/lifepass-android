@@ -1,9 +1,12 @@
 // Photo Picker for meal photos (owner: MEAL-3).
 //
 // NO PLUGIN, ON PURPOSE. Photo mode's "Choose a photo" opens the system Photo
-// Picker through expo-image-picker (on Android 13 and later the system
-// picker; on older phones the same picker from Google Play services, which
-// the library's own manifest declares). Neither needs a media permission.
+// Picker (on Android 13 and later the system picker; on older phones the same
+// picker from Google Play services, which expo-image-picker's manifest
+// declares). Neither needs a media permission. The app opens it through its
+// own module (modules/lifepass-meal-image, which answers with the photo's own
+// URI instead of a copy in the cache); expo-image-picker stays installed for
+// that manifest entry and as the fallback in a binary built without the module.
 //
 // expo-image-picker's config plugin would add nothing Android needs and one
 // thing it must not touch: it adds RECORD_AUDIO unless told
