@@ -376,11 +376,11 @@ describe('the form', () => {
 
   it('the note loses control and format characters', () => {
     expect(cleanNote('Leg\nday')).toBe('Leg day');
-    expect(cleanNote('a‮b')).toBe('ab'); // a bidi override goes
-    expect(cleanNote('a​b')).toBe('ab'); // a zero-width space goes
+    expect(cleanNote('a\u{202E}b')).toBe('ab'); // a bidi override goes
+    expect(cleanNote('a\u{200B}b')).toBe('ab'); // a zero-width space goes
     expect(cleanNote('a\u0007b')).toBe('ab');
     expect(cleanNote('Þórsmörk með Ásu')).toBe('Þórsmörk með Ásu');
-    expect(cleanNote('a﻿b')).toBe('ab'); // the BOM goes
+    expect(cleanNote('a\u{FEFF}b')).toBe('ab'); // the BOM goes
     expect(cleanNote('a\u{E0041}b')).toBe('ab'); // a stray tag goes
   });
 
@@ -388,15 +388,15 @@ describe('the form', () => {
     // The server keeps the joiner and a whole subdivision flag's tags
     // (`stripFormatCharacters`); so does the field, or the family below
     // would reach the server as three people.
-    const family = '\u{1F468}‍\u{1F469}‍\u{1F467}';
+    const family = '\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}';
     expect(cleanNote(`Sund með ${family}`)).toBe(`Sund með ${family}`);
-    const rainbow = '\u{1F3F3}️‍\u{1F308}';
+    const rainbow = '\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}';
     expect(cleanNote(rainbow)).toBe(rainbow);
-    const swimmer = '\u{1F3CA}‍♀️';
+    const swimmer = '\u{1F3CA}\u{200D}\u{2640}\u{FE0F}';
     expect(cleanNote(swimmer)).toBe(swimmer);
     const england = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}';
     expect(cleanNote(`Gym ${england}`)).toBe(`Gym ${england}`);
-    expect(cleanNote('a‍b')).toBe('a‍b'); // a joiner hides nothing
+    expect(cleanNote('a\u{200D}b')).toBe('a\u{200D}b'); // a joiner hides nothing
     // A black flag whose tags never close is a black flag and stray tags.
     expect(cleanNote('\u{1F3F4}\u{E0067}\u{E0062}x')).toBe('\u{1F3F4}x');
     // A whole family counts by its UTF-16 units and is never split.
