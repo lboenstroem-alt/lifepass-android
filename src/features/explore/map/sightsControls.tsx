@@ -19,7 +19,9 @@
 // this zoom: a legend entry for something absent teaches the member to look
 // for it (iOS `trailsDrawnAtThisZoom`).
 import type { ReactNode } from 'react';
+import { LayoutAnimation } from 'react-native';
 
+import { useReduceMotion } from '../../../hooks/useReduceMotion';
 import {
   SightsCreditPlate,
   SightsRetryNotice,
@@ -74,16 +76,31 @@ export const NO_SIGHTS_CONTROLS: SightsMapControls = {
   legendShowsTrails: false,
 };
 
+/**
+ * The toggle's change fades what it adds or takes away over the map (the
+ * legend's sight entries, the credit plate, the notice), as iOS toggles the
+ * layer `withAnimation(.easeInOut(duration: 0.2))` with `.transition(.opacity)`.
+ */
+export const SIGHTS_TOGGLE_FADE_MS = 200;
+
 /** What the sights put over the map, and what the layer draws. */
 export function useSightsMapControls({ zoom: _zoom, ...input }: SightsMapControlsInput): SightsMapControls {
   const screenReaderOn = useScreenReaderOn();
+  const reduceMotion = useReduceMotion();
   const sights = useSightsMap({ ...input, screenReaderOn });
+  const onToggle = () => {
+    // Not under Remove animations.
+    if (!reduceMotion) {
+      LayoutAnimation.configureNext(LayoutAnimation.create(SIGHTS_TOGGLE_FADE_MS, 'easeInEaseOut', 'opacity'));
+    }
+    sights.toggle();
+  };
 
   const credit = sights.attribution ? <SightsCreditPlate text={sights.attribution} /> : null;
   const notice = sights.showsRetryNotice ? <SightsRetryNotice loading={sights.loading} onRetry={sights.retry} /> : null;
 
   return {
-    toggle: <SightsToggle on={sights.showSights} onToggle={sights.toggle} />,
+    toggle: <SightsToggle on={sights.showSights} onToggle={onToggle} />,
     belowLegend: credit || notice ? (
       <>
         {credit}

@@ -7,14 +7,17 @@
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
+import { AccessibilityInfo, LayoutAnimation } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { decodeVenue } from '../../../../api/venues';
+import { readReduceMotion } from '../../../../hooks/useReduceMotion';
 import { setCurrentLanguage } from '../../../../i18n';
 import { createBrowseSession } from '../../../../stores/browseSession';
 import { createLocationStore, type LocationStore } from '../../../../stores/locationStore';
 import { resetSightsFeeds } from '../../../attractions/map';
 import ExploreMap, { type ExploreMapProps } from '../ExploreMap';
+import { SIGHTS_TOGGLE_FADE_MS } from '../sightsControls';
 import { mapboxStandIn } from './mapboxStandIn';
 
 /** What each ShapeSource was last handed (its tap handler included). */
@@ -198,4 +201,24 @@ it('Home’s “See all on the map”: the whole island, top picks only', async 
   serve();
   await renderMap({ showSightsOnOpen: true });
   await waitFor(() => expect(rings()).toEqual(['gullfoss']));
+});
+
+it('fades what the toggle adds or takes away, and not under Remove animations', async () => {
+  const fade = jest.spyOn(LayoutAnimation, 'configureNext');
+  serve();
+  await renderMap();
+  await fireEvent.press(screen.getByTestId('explore.map.sightsToggle'));
+  expect(fade).toHaveBeenCalledWith(LayoutAnimation.create(SIGHTS_TOGGLE_FADE_MS, 'easeInEaseOut', 'opacity'));
+  fade.mockClear();
+  const reduceMotion = AccessibilityInfo.isReduceMotionEnabled as jest.Mock;
+  reduceMotion.mockImplementation(() => Promise.resolve(true));
+  try {
+    await act(async () => void (await readReduceMotion()));
+    await fireEvent.press(screen.getByTestId('explore.map.sightsToggle'));
+    expect(fade).not.toHaveBeenCalled();
+  } finally {
+    reduceMotion.mockImplementation(() => Promise.resolve(false));
+    await act(async () => void (await readReduceMotion()));
+    fade.mockRestore();
+  }
 });
