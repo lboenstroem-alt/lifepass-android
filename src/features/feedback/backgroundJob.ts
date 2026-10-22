@@ -126,6 +126,8 @@ export async function syncFeedbackNotificationsForApp(
 }
 
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
+/** The last coalesced sync, or the task registration the app's leaving started (tests wait on them). */
+let lastWork: Promise<void> = Promise.resolve();
 
 /**
  * Coalesces a burst into one sync, 300 ms after the last call (iOS
@@ -135,7 +137,7 @@ export function scheduleFeedbackNotificationSync(appActive = true): void {
   if (syncTimer !== null) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => {
     syncTimer = null;
-    void syncFeedbackNotificationsForApp(appActive);
+    lastWork = syncFeedbackNotificationsForApp(appActive).catch(() => undefined);
   }, FEEDBACK_SYNC_COALESCE_MS);
 }
 
@@ -289,7 +291,7 @@ export function installFeedbackNotifications(): void {
   // deciding who is signed in.
   const appState = AppState.addEventListener('change', (next) => {
     if (next !== 'background' || useAppStore.getState().isLoading) return;
-    void syncBackgroundTask();
+    lastWork = syncBackgroundTask();
   });
   undo.push(() => appState.remove());
 
@@ -304,4 +306,11 @@ export function resetFeedbackNotificationsForTests(): void {
   installed = null;
   if (syncTimer !== null) clearTimeout(syncTimer);
   syncTimer = null;
+  lastWork = Promise.resolve();
+}
+
+/** Tests: resolves once a coalesced sync that is waiting has run, and whatever it or the app's leaving started has finished. */
+export async function feedbackWorkSettledForTests(): Promise<void> {
+  while (syncTimer !== null) await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  await lastWork;
 }

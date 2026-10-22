@@ -41,6 +41,7 @@ import {
   FEEDBACK_SYNC_COALESCE_MS,
   canGetFeedbackInBackground,
   feedbackRefreshJobEligible,
+  feedbackWorkSettledForTests,
   installFeedbackNotifications,
   resetFeedbackNotificationsForTests,
   runFeedbackBackgroundCheck,
@@ -83,10 +84,10 @@ function clockAt(iso: string): void {
   });
 }
 
-/** Waits past the 300 ms coalescing and lets the sync it starts finish. */
+/** Waits past the 300 ms coalescing and lets the sync it starts (or the task registration) finish. */
 async function afterCoalescing(): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, FEEDBACK_SYNC_COALESCE_MS + 50));
-  for (let i = 0; i < 10; i += 1) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await new Promise<void>((resolve) => setTimeout(resolve, FEEDBACK_SYNC_COALESCE_MS + 20));
+  await feedbackWorkSettledForTests();
 }
 
 /** The two native modules as the real ones behave (see src/background/__tests__/registry.test.ts). */
