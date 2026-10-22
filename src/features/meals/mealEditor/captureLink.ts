@@ -9,11 +9,14 @@
  * public surface is a structural superset of `MealCaptureLink` below, so the
  * Review and Draft screens take it as it is.
  *
- * INTEGRATION (MEAL-2 + MEAL-4): the two packages were built side by side,
+ * MERGE STEP (MEAL-2 + MEAL-4): the two packages were built side by side,
  * so neither could import the other. Once both are merged, the body of
  * `useMealCaptureLink` becomes `return useCaptureModel();` (from
- * '../capture/capturePages'), and the registry here can go. Until then a
- * page registers its link with `attachMealCaptureLink` (the tests do).
+ * '../capture/capturePages'), and the stand-in registry here goes. Without
+ * it Review and Draft never find their page. __tests__/captureIntegration
+ * runs as soon as MEAL-2's page is in the tree and fails until this is
+ * done. Until then a page registers its link with `attachMealCaptureLink`
+ * (the tests do).
  */
 import { NavigationContext } from '@react-navigation/native';
 import { useContext, useSyncExternalStore } from 'react';

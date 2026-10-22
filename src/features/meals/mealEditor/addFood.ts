@@ -10,11 +10,13 @@
  * draft inside a meal page, a `navigate('MealCapture')` would go back to the
  * page underneath (same route name) instead of opening a second one.
  *
- * INTEGRATION (MEAL-2 + MEAL-4): MEAL-2's capture/capturePages.ts has the
+ * MERGE STEP (MEAL-2 + MEAL-4): MEAL-2's capture/capturePages.ts has the
  * same handoff (`openMealCaptureForEditor`, `takeEditorHandoff`) and its
  * page takes it when it opens with origin `editor`. Once both are merged,
  * `openAddFoodPage` calls `openMealCaptureForEditor(options)` and this
- * file's parking spot goes.
+ * file's parking spot goes; without it the foods picked for a draft or a
+ * saved meal are thrown away. __tests__/captureIntegration runs as soon as
+ * MEAL-2's page is in the tree and fails until this is done.
  */
 import { StackActions } from '@react-navigation/native';
 
