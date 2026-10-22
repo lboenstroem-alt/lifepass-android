@@ -24,7 +24,7 @@ export default function ItemEditorHost() {
       sourceWordOverride={shown.sourceWordOverride}
       readOnly={shown.readOnly}
       fromDescription={shown.fromDescription}
-      onClose={dismissItemEditor}
+      onClose={() => dismissItemEditor(shown)}
       testID="itemEditorHost"
     />
   );

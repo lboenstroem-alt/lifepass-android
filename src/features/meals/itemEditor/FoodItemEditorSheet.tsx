@@ -210,6 +210,33 @@ function ItemEditorPresentation({
   const [texts, setTexts] = useState<ItemEditorTexts>(() => syncedTexts(EMPTY_TEXTS, initial, null, false, language));
   const [isCommitting, setCommitting] = useState(false);
   const [inlineErrorKey, setInlineErrorKey] = useState<string | null>(null);
+  /**
+   * A saved meal's change in flight: the sheet stays (no back, no pan down,
+   * no Cancel) until the server has answered, so its outcome is shown here.
+   * Android's rule for a sheet with a request in flight
+   * (src/navigation/guards.ts `sheetBackPolicy`).
+   */
+  const committingStored = context.kind === 'stored' && isCommitting;
+  /**
+   * False once this presentation has closed or unmounted. A commit answering
+   * after that must not close whatever sheet is on screen by then (the
+   * parent's `onClose` clears the CURRENT item, maybe another one) or write
+   * an error nobody sees. iOS `dismiss()` acts on its own sheet only.
+   */
+  const presented = useRef(visible);
+  useEffect(() => {
+    presented.current = visible;
+    return () => {
+      presented.current = false;
+    };
+  }, [visible]);
+  /** The sheet's own close once its work is done, while it is still this presentation. */
+  const closeSelf = (): void => {
+    if (presented.current) onClose();
+  };
+  const showError = (key: string | null): void => {
+    if (presented.current) setInlineErrorKey(key);
+  };
   const [dialog, setDialog] = useState<'remove' | 'deleteMeal' | null>(null);
   const storedMeal = useRef<MealRecord | null>(context.kind === 'stored' ? context.meal : null);
   const kcalInput = useRef<TextInput>(null);
@@ -253,14 +280,14 @@ function ItemEditorPresentation({
       return await patchMealItems(meal, items);
     } catch (error) {
       if (!(error instanceof ApiError)) {
-        setInlineErrorKey('common.error_body');
+        showError('common.error_body');
         return null;
       }
       if (error.isOffline) {
-        setInlineErrorKey('health.offline.action_hint');
+        showError('health.offline.action_hint');
       } else if (error.isProblem('meal_changed')) {
         // Reload, and keep what the member typed: one more tap saves it.
-        setInlineErrorKey('meal.editor.changed_banner');
+        showError('meal.editor.changed_banner');
         try {
           const reloaded = await mealApi().meal(meal.id, language);
           storedMeal.current = reloaded;
@@ -272,16 +299,16 @@ function ItemEditorPresentation({
         switch (useHealthStore.getState().handle(error, { foreground: true })) {
           case 'gate':
             presentMealGate(useAppStore.getState().healthAccess);
-            onClose();
+            closeSelf();
             break;
           case 'pendingDeletion':
-            setInlineErrorKey('health.err.pending_deletion');
+            showError('health.err.pending_deletion');
             break;
           case 'changedElsewhere':
-            onClose();
+            closeSelf();
             break;
           default:
-            setInlineErrorKey('common.error_body');
+            showError('common.error_body');
         }
       }
       return null;
@@ -308,7 +335,7 @@ function ItemEditorPresentation({
       onRestored: context.onCommitted,
       toastOnFailure: true,
     });
-    onClose();
+    closeSelf();
   };
 
   const removeStored = async (confirmed: boolean): Promise<void> => {
@@ -342,7 +369,7 @@ function ItemEditorPresentation({
         toastOnFailure: true,
       });
     }
-    onClose();
+    closeSelf();
   };
 
   const deleteWholeMeal = async (): Promise<void> => {
@@ -352,9 +379,9 @@ function ItemEditorPresentation({
       await mealApi().deleteMeal(context.meal.id);
       track('meal_deleted');
       context.onDeleted();
-      onClose();
+      closeSelf();
     } catch (error) {
-      setInlineErrorKey(error instanceof ApiError && error.isOffline ? 'health.offline.action_hint' : 'common.error_body');
+      showError(error instanceof ApiError && error.isOffline ? 'health.offline.action_hint' : 'common.error_body');
     } finally {
       setCommitting(false);
     }
@@ -463,7 +490,7 @@ function ItemEditorPresentation({
         title={t(primaryTitleKey(context.kind, item))}
         onPress={primary}
         disabled={!amountValid}
-        loading={context.kind === 'stored' && isCommitting}
+        loading={committingStored}
         testID={`${testID}.primary`}
       />
       {offBarcode !== null ? (
@@ -480,6 +507,7 @@ function ItemEditorPresentation({
         visible={visible}
         onClose={onClose}
         onClosed={onClosed}
+        busy={committingStored}
         snapPoints={SNAP_POINTS}
         footer={footer}
         testID={testID}
@@ -487,12 +515,14 @@ function ItemEditorPresentation({
         <View style={styles.toolbar}>
           <Pressable
             onPress={onClose}
+            disabled={committingStored}
             accessibilityRole="button"
             accessibilityLabel={t('common.cancel')}
+            accessibilityState={{ disabled: committingStored }}
             style={styles.toolbarButton}
             testID={`${testID}.cancel`}
           >
-            <LPText size={15} color={colors.paper2}>
+            <LPText size={15} color={committingStored ? colors.paper3 : colors.paper2}>
               {t('common.cancel')}
             </LPText>
           </Pressable>
@@ -742,7 +772,7 @@ function ItemEditorPresentation({
                   void removeStored(false);
                 }
               }}
-              disabled={context.kind === 'stored' && isCommitting}
+              disabled={committingStored}
               accessibilityRole="button"
               accessibilityLabel={t('food.editor.remove')}
               style={styles.remove}

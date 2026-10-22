@@ -8,6 +8,7 @@
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { useState } from 'react';
+import { BackHandler } from 'react-native';
 
 import { ProblemError, TransportError } from '../../../../api';
 import { ToastHost } from '../../../../components/ui';
@@ -289,6 +290,67 @@ describe('an item of a saved meal (R4)', () => {
     await act(async () => fireEvent.press(button(en('food.editor.update'))));
     await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(2));
     expect(patchMeal.mock.calls[1]![1].expectedUpdatedAt).toBe(NEXT);
+  });
+
+  it('while Update is in flight it cannot be closed (back, pan down, Cancel); a failure then shows on it', async () => {
+    const meal = mealRecord({ items: [skyrItemJson(), bananaItemJson()] });
+    let fail: (error: unknown) => void = () => undefined;
+    const patchMeal = jest.fn(() => new Promise<never>((_resolve, reject) => (fail = reject)));
+    setMealApi(fakeMealApi({ patchMeal }));
+    const addListener = jest.spyOn(BackHandler, 'addEventListener');
+    const { item, context, onCommitted } = stored(meal, 0);
+    const onClosed = jest.fn();
+    await render(<Harness item={item} context={context} onClosed={onClosed} />);
+
+    await act(async () => fireEvent.press(button(en('a11y.portion_times', { value: '2' }))));
+    await act(async () => fireEvent.press(screen.getByTestId('itemEditor.primary')));
+    expect(patchMeal).toHaveBeenCalledTimes(1);
+
+    // Locked while the PATCH is out.
+    expect(bottomSheetMock.latest()!.enablePanDownToClose).toBe(false);
+    expect(button(en('common.cancel'))).toBeDisabled();
+    await act(async () => fireEvent.press(button(en('common.cancel'))));
+    const back = addListener.mock.calls.filter(([event]) => event === 'hardwareBackPress').at(-1)![1];
+    let consumed: boolean | null | undefined;
+    await act(async () => {
+      consumed = back();
+    });
+    expect(consumed).toBe(true);
+    expect(onClosed).not.toHaveBeenCalled();
+
+    // It answers: the member learns the edit was not saved, on the sheet, with the edit kept.
+    await act(async () => fail(new TransportError('offline')));
+    expect(await screen.findByText(en('health.offline.action_hint'))).toBeOnTheScreen();
+    expect(onCommitted).not.toHaveBeenCalled();
+    expect(onClosed).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Calories, kcal')).toHaveDisplayValue('211');
+    // Unlocked again.
+    expect(bottomSheetMock.latest()!.enablePanDownToClose).toBe(true);
+    expect(button(en('common.cancel'))).toBeEnabled();
+    addListener.mockRestore();
+  });
+
+  it('a commit answering after its sheet has gone never closes the sheet opened since', async () => {
+    const meal = mealRecord({ items: [skyrItemJson(), bananaItemJson()] });
+    const after = mealRecord({ items: [skyrItemJson('item-skyr', { amount: 2 }), bananaItemJson()], updatedAt: NEXT });
+    let answer: (value: { meal: MealRecord; replayed: boolean | null }) => void = () => undefined;
+    const patchMeal = jest.fn(() => new Promise<{ meal: MealRecord; replayed: boolean | null }>((resolve) => (answer = resolve)));
+    setMealApi(fakeMealApi({ patchMeal, myFoods: () => new Promise(() => undefined) }));
+    const first = stored(meal, 0);
+    const second = stored(meal, 1);
+    const onClose = jest.fn();
+    // The parent takes the first sheet away while its PATCH is out (it is gone from the screen), then opens another item.
+    const view = await render(<FoodItemEditorSheet item={first.item} context={first.context} onClose={onClose} />);
+    await act(async () => fireEvent.press(screen.getByTestId('itemEditor.primary')));
+    await act(async () => view.rerender(<FoodItemEditorSheet item={null} context={first.context} onClose={onClose} />));
+    await act(async () => view.rerender(<FoodItemEditorSheet item={second.item} context={second.context} onClose={onClose} />));
+    expect(screen.getByText('Banana')).toBeOnTheScreen();
+
+    await act(async () => answer({ meal: after, replayed: false }));
+    // The change went through (the meal takes it), but the open sheet stays.
+    expect(first.onCommitted).toHaveBeenCalledWith(after);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText('Banana')).toBeOnTheScreen();
   });
 
   it('without a connection it says so and stays open', async () => {

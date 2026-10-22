@@ -25,7 +25,14 @@ import { setMealApi } from '../../api/mealApi';
 import { fakeMealApi } from '../../api/testing';
 import { mealRecord, newSkyr, photoItemJson, skyrChoice, skyrItemJson } from '../../itemEditor/__tests__/fixtures';
 import ItemEditorHost from '../../itemEditor/ItemEditorHost';
-import { dismissItemEditor, presentStoredItemEditor } from '../../itemEditor/itemEditorPresenter';
+import {
+  attachItemEditorHost,
+  dismissItemEditor,
+  presentItemEditor,
+  presentStoredItemEditor,
+  useItemEditorPresenter,
+  type ItemEditorRequest,
+} from '../../itemEditor/itemEditorPresenter';
 import NewItemEditorSheet from '../../itemEditor/NewItemEditorSheet';
 import { draftFromChoice, draftFromRecord } from '../../types/draftFactory';
 import type { MealRecord } from '../../types/models';
@@ -267,6 +274,19 @@ describe('the item editor for other meal screens', () => {
     expect(screen.getByLabelText('Calories, kcal')).toHaveDisplayValue('211');
     await act(async () => fireEvent.press(screen.getByRole('button', { name: en('food.editor.add') })));
     expect(onAdd.mock.calls[0][0].amount).toBe(2);
+  });
+
+  it('a late close of an earlier request leaves the one on screen', () => {
+    const detach = attachItemEditorHost();
+    const first: ItemEditorRequest = { item: newSkyr(), context: { kind: 'new', onAdd: jest.fn() } };
+    const second: ItemEditorRequest = { item: newSkyr(), context: { kind: 'new', onAdd: jest.fn() } };
+    presentItemEditor(first);
+    presentItemEditor(second);
+    dismissItemEditor(first);
+    expect(useItemEditorPresenter.getState().request).toBe(second);
+    dismissItemEditor(second);
+    expect(useItemEditorPresenter.getState().request).toBeNull();
+    detach();
   });
 
   it('the diary’s stored item opens through the host, and not without one', async () => {

@@ -81,8 +81,13 @@ export function presentStoredItemEditor(request: StoredItemEditorRequest): boole
   });
 }
 
-/** Closes it (the sheet's own close does this). */
-export function dismissItemEditor(): void {
+/**
+ * Closes it (the sheet's own close does this). Given the request it is
+ * closing, only while that one is still on screen: a late close of an
+ * earlier sheet never takes away the one opened since.
+ */
+export function dismissItemEditor(request?: ItemEditorRequest): void {
+  if (request && useItemEditorPresenter.getState().request !== request) return;
   useItemEditorPresenter.setState({ request: null });
 }
 
