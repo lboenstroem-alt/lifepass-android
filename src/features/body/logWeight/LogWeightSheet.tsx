@@ -15,11 +15,19 @@
  *   weigh-in, not two. A weigh-in deleted elsewhere under that key gets a new
  *   key and the "changed on another device" notice; offline says so; a
  *   membership refusal closes the sheet (the store has corrected the access).
+ * - NEVER LOCKED WHILE SAVING: iOS's check-in sheet sets no
+ *   `interactiveDismissDisabled`, so back, the backdrop and pan-down close it
+ *   even with the save in flight (on a bad network that can be the whole
+ *   health timeout). The save runs on: a weigh-in it stores still reaches
+ *   the page through `onWeightLogged`, and the Idempotency-Key makes a retry
+ *   from a new opening safe. What only the sheet would show (its error line,
+ *   closing itself) is skipped once this opening has gone, so a late answer
+ *   never closes the sheet the member has opened again since.
  *
  * The weekly mode (rating, height question, the review that follows) is the
  * weekly check-in's own (PLAN-5); this file is only what Body and goals opens.
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, type Text } from 'react-native';
 
 import { isCancellation, isOffline, isProblem, newIdempotencyKey } from '../../../api';
@@ -78,6 +86,14 @@ function LogWeightSheetBody({ visible, onClose, onClosed, weighIn, checkIn, onWe
   const [isSaving, setIsSaving] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const keyRef = useRef(newIdempotencyKey());
+  // This opening is still on screen (a new opening is a new body: the key above).
+  const current = useRef(true);
+  useEffect(() => {
+    current.current = true;
+    return () => {
+      current.current = false;
+    };
+  }, []);
 
   const { value, isValid } = logWeightValidity(text);
   const canSave = isValid && value !== null;
@@ -98,7 +114,7 @@ function LogWeightSheetBody({ visible, onClose, onClosed, weighIn, checkIn, onWe
       track('weigh_in_logged', { with_rating: false });
       setIsSaving(false);
       onWeightLogged(measurement);
-      onClose();
+      if (current.current) onClose();
     } catch (error) {
       setIsSaving(false);
       if (isCancellation(error)) return;
@@ -114,8 +130,9 @@ function LogWeightSheetBody({ visible, onClose, onClosed, weighIn, checkIn, onWe
         return;
       }
       const outcome = useHealthStore.getState().handle(error, { foreground: true });
-      if (outcome === 'gate') onClose();
-      else setErrorKey('common.error_body');
+      if (outcome === 'gate') {
+        if (current.current) onClose();
+      } else setErrorKey('common.error_body');
     }
   };
 
@@ -124,7 +141,6 @@ function LogWeightSheetBody({ visible, onClose, onClosed, weighIn, checkIn, onWe
       visible={visible}
       onClose={onClose}
       onClosed={onClosed}
-      busy={isSaving}
       fullHeight
       initialFocusRef={titleRef}
       testID="bodygoals.logWeight"

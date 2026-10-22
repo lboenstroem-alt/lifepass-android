@@ -2,10 +2,13 @@
  * "Log weight" (iOS `WeeklyCheckInSheet(mode: .weightOnly)`): the prefill,
  * the range, the last weigh-in line (never "From Apple Health"), the body
  * sent, one Idempotency-Key per opening (a new one after a weigh-in deleted
- * elsewhere), the offline line and a membership refusal closing the sheet.
+ * elsewhere), the offline line, a membership refusal closing the sheet, and
+ * a sheet the member can always close, a save in flight or not (iOS sets no
+ * `interactiveDismissDisabled` on it).
  */
-import { fireEvent, render, screen } from '@testing-library/react-native';
-import { api, Reply } from '@test/server';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { api, Reply, type StubReply } from '@test/server';
+import type { ReactElement } from 'react';
 
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
@@ -132,6 +135,29 @@ describe('saving', () => {
     await settle();
     expect(onClose).toHaveBeenCalled();
     expect(onWeightLogged).not.toHaveBeenCalled();
+  });
+
+  it('a save in flight never locks the sheet; a late answer still reaches the page but never closes a new opening', async () => {
+    let release: (reply: StubReply) => void = () => undefined;
+    api.on('POST', '/health/measurements', () => new Promise<StubReply>((resolve) => (release = resolve)));
+    const { onClose, onWeightLogged, view } = await open();
+    await fireEvent.press(screen.getByTestId('bodygoals.logWeight.save'));
+    await settle();
+    expect(screen.getByTestId('bodygoals.logWeight.save').props.accessibilityState).toMatchObject({ busy: true });
+    const modal = bottomSheetMock.latest()!;
+    expect(modal.enablePanDownToClose).toBe(true);
+    expect((modal.backdropComponent!({}) as ReactElement<{ pressBehavior?: string }>).props.pressBehavior).toBe('close');
+
+    // The member closes it and opens it again before the answer lands.
+    const props = { onClose, weighIn: weighInState(), checkIn: checkInState(null), onWeightLogged };
+    await view.rerender(<LogWeightSheet visible={false} {...props} />);
+    await view.rerender(<LogWeightSheet visible {...props} />);
+    await act(async () => release(Reply.ok(MEASUREMENT, 201)));
+    await settle();
+    expect(onWeightLogged).toHaveBeenCalledWith(expect.objectContaining({ id: 'm-9' }));
+    expect(onClose).not.toHaveBeenCalled();
+    // The new opening is untouched: idle, its own Save.
+    expect(screen.getByTestId('bodygoals.logWeight.save').props.accessibilityState).not.toMatchObject({ busy: true });
   });
 
   it('Save is off without a valid weight', async () => {
