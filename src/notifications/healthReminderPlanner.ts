@@ -17,11 +17,20 @@
  *
  * TWO CLOCKS, ON PURPOSE. A plan date (`2026-09-21`) is the plan's Iceland
  * date and is never shifted; the time is the member's WALL CLOCK on this
- * phone. A member in Tokyo with a 07:00 note for Monday gets it at 07:00
- * Tokyo time on Monday, as on iOS (`DateComponents` without a time zone).
- * So every fire time here is built from a `YYYY-MM-DD` string and the
+ * phone. So every fire time here is built from a `YYYY-MM-DD` string and the
  * member's minutes on the phone's own calendar (`new Date(y, m, d, h, min)`),
- * never from an instant moved by an offset.
+ * never from an instant moved by an offset: a sync on a phone in Tokyo plans
+ * Monday's 07:00 note for 07:00 Tokyo time on Monday.
+ *
+ * KNOWN PLATFORM DIFFERENCE: that wall-clock time is fixed WHEN SCHEDULED.
+ * iOS hands the components to a calendar trigger with no time zone, which
+ * follows the phone into a new zone on its own. expo-notifications has no
+ * one-off calendar trigger on Android, so ./scheduler.ts stores an instant,
+ * worked out in the zone the phone was in at the last sync. Every sync works
+ * it out again and a sync runs on each activation, so the first open after a
+ * zone change moves every pending note to the new zone's wall clock; until
+ * then a pending note fires at the old zone's local time. (F7 contract
+ * request: a time-zone-change receiver that re-runs the syncs.)
  */
 import type { CheckInWeekday } from '../features/body';
 import { isWorkoutKind, type DailyNote, type SessionBrief, type SessionKind } from '../health';
@@ -257,7 +266,11 @@ export function fireComponents(day: string, hour: number, minute: number): FireC
   return Number.isNaN(fireDate(components).getTime()) ? null : components;
 }
 
-/** The instant the components name on the phone's calendar now (iOS `calendar.date(from:)`). */
+/**
+ * The instant the components name on the phone's calendar now (iOS
+ * `calendar.date(from:)`): in the phone's CURRENT zone, which is what is
+ * scheduled (see the header on zone changes).
+ */
 export function fireDate(components: FireComponents): Date {
   return localDate(components.year, components.month, components.day, components.hour, components.minute);
 }

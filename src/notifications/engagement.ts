@@ -27,9 +27,21 @@
  * moved, retimed or reworded from it, and nothing else is read from the
  * health store.
  *
- * All fire at 18:00 on the phone's clock (after work, when a visit is
- * actually possible), on the `engagement` channel, in the account language,
- * with no route (a tap opens the app).
+ * All are planned for 18:00 on the phone's clock (after work, when a visit
+ * is actually possible), on the `engagement` channel, in the account
+ * language, with no route (a tap opens the app).
+ *
+ * KNOWN PLATFORM DIFFERENCE: 18:00 is fixed WHEN SCHEDULED. iOS hands the
+ * components to a calendar trigger with no time zone, which follows the
+ * phone into a new zone; expo-notifications has no one-off calendar trigger
+ * on Android, so ./scheduler.ts stores an instant in the zone of the last
+ * sync. Every sync works 18:00 out again, and one runs on each activation,
+ * so the first open after a zone change puts every nudge back at 18:00
+ * there. Until then a pending nudge fires at 18:00 in the OLD zone, and
+ * stay-active, which by design only fires after a week without an open, is
+ * never corrected that way (a subscriber who flew from Reykjavik to New York
+ * gets it at 14:00 there). F7 contract request: a time-zone-change receiver
+ * that re-runs `runEngagementSync` and the health reminder sync.
  *
  * PERMISSION: asked on the first sync of a SIGNED-IN session (plan 5.5; the
  * class booking may have asked already, and asking is a no-op once
@@ -111,7 +123,7 @@ export interface EngagementInput {
   readonly now: Date;
 }
 
-/** 18:00 on the phone's calendar, `days` after `date` (negative counts back). */
+/** 18:00 on the phone's calendar in its CURRENT zone, `days` after `date` (negative counts back). */
 export function at18(days: number, date: Date): Date {
   const target = new Date(date.getTime());
   target.setDate(target.getDate() + days);
