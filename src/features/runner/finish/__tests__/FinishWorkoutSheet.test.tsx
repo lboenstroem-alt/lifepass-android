@@ -269,6 +269,8 @@ describe('the stub server modes (iOS -LPRunnerStub)', () => {
     expect(posting.sent[0]!.body).toMatchObject({ action: 'done', minutes: 35, feeling: 'ok' });
     expect(closes).toEqual([{ kind: 'saved', response: expect.anything() }]);
     expect(finished()).toEqual([{ outcome: 'saved', feeling_given: true }]);
+    // The sheet leaves with the runner, not after it (it is drawn above every screen).
+    expect(screen.queryByText('Nice work')).toBeNull();
     await localStore.settled();
     expect(await loadRunner(MEMBER)).toBeNull();
   });
@@ -280,6 +282,7 @@ describe('the stub server modes (iOS -LPRunnerStub)', () => {
     await finishAfterSomeWork(controller);
     await fireEvent.press(screen.getByTestId('finish.save'));
     expect(closes).toEqual([{ kind: 'queued' }]);
+    expect(screen.queryByText('Nice work')).toBeNull();
     expect(useWorkoutOutbox.getState().items).toHaveLength(1);
     expect(finished()).toEqual([{ outcome: 'outbox', feeling_given: false }]);
   });
@@ -349,6 +352,7 @@ describe('the stub server modes (iOS -LPRunnerStub)', () => {
     expect(screen.getByTestId('finish.save').props.accessibilityState).toMatchObject({ disabled: true });
     await fireEvent.press(screen.getByTestId('finish.later'));
     expect(closes).toEqual([{ kind: 'later' }]);
+    expect(screen.queryByText('Nice work')).toBeNull();
     await localStore.settled();
     expect((await loadRunner(MEMBER))?.finishKey).not.toBeNull();
   });

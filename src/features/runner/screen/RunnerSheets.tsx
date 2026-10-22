@@ -16,7 +16,13 @@
  * The sheets stay mounted and are driven by `sheet`, so each slides in and
  * out as a sheet does. Their work is in ../finish, ../skip and ../swap; a
  * Save or a Skip that goes through closes the runner itself
- * (`controller.close`), which takes the sheets with it.
+ * (`controller.close`). The sheets are drawn in the UI kit's portal, above
+ * every screen, and the closing runner stays mounted until its transition
+ * ends, so every sheet is hidden the moment the runner closes (a Save, a
+ * Skip, "Finish later today", a wipe) and slides out with it, as on iOS.
+ *
+ * Only the runner's state is read here, not its clock: the page publishes
+ * `now` every second, and the sheets need not draw again for it.
  */
 import { useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 
@@ -43,7 +49,10 @@ export interface RunnerSheetsProps {
 }
 
 export default function RunnerSheets({ controller, sheet, onClose, isOffline }: RunnerSheetsProps) {
-  const { state } = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const readState = () => controller.state;
+  const readClosed = () => controller.isClosed;
+  const state = useSyncExternalStore(controller.subscribe, readState, readState);
+  const closed = useSyncExternalStore(controller.subscribe, readClosed, readClosed);
   const finish = finishFlowFor(controller);
   const skipWorkout = skipWorkoutFlowFor(controller);
   const shown = useRef<RunnerSheet | null>(null);
@@ -59,14 +68,14 @@ export default function RunnerSheets({ controller, sheet, onClose, isOffline }: 
   return (
     <>
       <FinishWorkoutSheet
-        visible={sheet === 'finish'}
+        visible={sheet === 'finish' && !closed}
         flow={finish}
         state={state}
         isOffline={isOffline}
         onClose={onClose}
       />
       <SwapExerciseSheet
-        visible={sheet === 'swap'}
+        visible={sheet === 'swap' && !closed}
         onClose={onClose}
         currentName={current?.name ?? ''}
         setCount={current?.sets.length ?? 1}
@@ -77,7 +86,7 @@ export default function RunnerSheets({ controller, sheet, onClose, isOffline }: 
           onClose();
         }}
       />
-      <SkipWorkoutSheet visible={sheet === 'skipWorkout'} flow={skipWorkout} onClose={onClose} />
+      <SkipWorkoutSheet visible={sheet === 'skipWorkout' && !closed} flow={skipWorkout} onClose={onClose} />
     </>
   );
 }

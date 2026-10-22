@@ -662,12 +662,17 @@ export class RunnerController {
     this.keepAwake(false);
   }
 
-  /** Closes the screen with `result`, once. */
+  /**
+   * Closes the screen with `result`, once. Subscribers hear it (`isClosed`),
+   * so an open sheet slides out with the runner rather than staying over the
+   * screen under it while the runner leaves.
+   */
   close(result: RunnerCloseResult): void {
     if (this.closed) return;
     this.closed = true;
     this.clearSkipUndoTimer();
     this.keepAwake(false);
+    this.publish({});
     this.onClose?.(result);
   }
 
