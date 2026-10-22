@@ -159,6 +159,9 @@ export function openRunner(session: RunnerSessionRef | SessionView, entry: Runne
 }
 
 // A development build started with `runnerStub=<mode>` answers the runner's
-// session calls on the phone, so a device check never writes to production
-// (./finish/devStub.ts). Nothing in a release bundle.
+// session calls on the phone, so a device check never writes to production;
+// a development build without it refuses any Save the stub saw in an earlier
+// launch (./finish/devStub.ts). Nothing in a release bundle. Put in as soon
+// as anything loads the runner (F4's launch rule does, at startup), and
+// again, harmlessly, by ./register.ts before the first activation flush.
 installRunnerDevStub();

@@ -71,11 +71,29 @@ it('a session it does not know fails as an unreadable answer would', async () =>
   await expect(stub('ok').done('nope', body)).rejects.toBeInstanceOf(TransportError);
 });
 
-it('is put in only for a known mode, once, and the live seam answers through it', async () => {
-  const live = workoutSessionPosting();
-  expect(installRunnerDevStub(null)).toBeNull();
+it('without a known mode the stub is not put in (the guard is, ./devStubLaunch.test.ts)', () => {
   expect(installRunnerDevStub('bogus')).toBeNull();
-  expect(workoutSessionPosting()).toBe(live);
+  expect(workoutSessionPosting()).not.toBeInstanceOf(RunnerStubPosting);
+  resetRunnerDevStubForTests();
+  expect(installRunnerDevStub(null)).toBeNull();
+  expect(workoutSessionPosting()).not.toBeInstanceOf(RunnerStubPosting);
+});
+
+it('a Save is marked before the stub answers it, by its key and by its session and moment', async () => {
+  const marked: string[][] = [];
+  const posting = new RunnerStubPosting('offline', {
+    lookup: async () => known,
+    hasBeenAway: () => false,
+    delays: { done: 0, skip: 0 },
+    mark: async (marks) => {
+      marked.push([...marks]);
+    },
+  });
+  await expect(posting.done('sess-1', body, 'k-1')).rejects.toBeInstanceOf(TransportError);
+  expect(marked).toEqual([['key:k-1', `save:sess-1@${t0.toISOString()}`]]);
+});
+
+it('is put in once, for a known mode, and the live seam answers through it', async () => {
   expect(installRunnerDevStub('offline-then-online')).toBe('offline-then-online');
   expect(installRunnerDevStub('ok')).toBeNull();
   const posting = workoutSessionPosting() as RunnerStubPosting;
@@ -86,13 +104,14 @@ it('is put in only for a known mode, once, and the live seam answers through it'
   await saveRunner(startRunnerState({ session: known, origin: 'today', now: t0, today: '2026-09-16' }), MEMBER);
   jest.useFakeTimers();
   try {
-    const first = posting.done('sess-1', body);
-    jest.advanceTimersByTime(400);
-    await expect(first).rejects.toBeInstanceOf(TransportError);
+    // The Save is marked on disk first, then the stub takes its 400 ms.
+    const first = posting.done('sess-1', body).catch((error: unknown) => error);
+    await jest.advanceTimersByTimeAsync(400);
+    expect(await first).toBeInstanceOf(TransportError);
     // The app goes to the background: from now on the stub answers.
     (AppState.addEventListener as jest.Mock).mock.calls.at(-1)?.[1]('background');
     const second = posting.done('sess-1', body);
-    jest.advanceTimersByTime(400);
+    await jest.advanceTimersByTimeAsync(400);
     jest.useRealTimers();
     await expect(second).resolves.toMatchObject({ session: { id: 'sess-1', status: 'done' } });
   } finally {
