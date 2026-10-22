@@ -49,6 +49,14 @@ function answering(...answers: (ApiError | 'ok')[]): jest.Mock<Promise<MealWrite
   });
 }
 
+/** Lets the model's awaits run until `mock` has been called `count` times. */
+async function waitForCalls(mock: jest.Mock, count: number): Promise<void> {
+  for (let turn = 0; turn < 50 && mock.mock.calls.length < count; turn += 1) {
+    await Promise.resolve();
+  }
+  expect(mock).toHaveBeenCalledTimes(count);
+}
+
 beforeEach(() => {
   resetAppStoreForTests();
   resetHealthStoreForTests();
@@ -239,6 +247,33 @@ describe('Save (OP-34)', () => {
     expect(model.state.isSaving).toBe(false);
   });
 
+  it('stays saving while the retry with the fresh key is in flight, so a second Save tap sends nothing', async () => {
+    let settle: (result: MealWriteResult) => void = () => undefined;
+    const createMeal = jest
+      .fn<Promise<MealWriteResult>, [MealCreateBody, string]>()
+      .mockImplementationOnce(async () => {
+        throw problem('idempotency_key_reused', 422);
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise<MealWriteResult>((resolve) => {
+            settle = resolve;
+          }),
+      );
+    setMealApi(fakeMealApi({ createMeal }));
+    const { model } = page();
+    model.add([draftFromChoice(choice())], 'search');
+    const first = model.save();
+    await waitForCalls(createMeal, 2);
+    expect(model.state.isSaving).toBe(true);
+    await expect(model.save()).resolves.toEqual({ kind: 'failed' });
+    expect(createMeal).toHaveBeenCalledTimes(2);
+    expect(model.state.saveErrorKey).toBeNull();
+    settle({ meal: storedMeal(TODAY), replayed: false });
+    await expect(first).resolves.toMatchObject({ kind: 'saved' });
+    expect(model.state.isSaving).toBe(false);
+  });
+
   it('offline: the meal waits in the outbox under the Save key, the member is told, and the page closes', async () => {
     const createMeal = answering(offline());
     setMealApi(fakeMealApi({ createMeal }));
@@ -328,5 +363,23 @@ describe('drafts', () => {
     model.openDraft('draft-1', meal);
     expect(model.state.drafts['draft-1']).toBe(meal);
     expect(bindings.openDraftRoute).toHaveBeenCalledWith('draft-1');
+  });
+});
+
+describe('the page', () => {
+  it('a disposed model changes nothing; bound again for the same page, it works again', () => {
+    const { model, bindings } = page();
+    model.dispose();
+    model.add([draftFromChoice(choice())], 'search');
+    expect(model.state.tray).toEqual([]);
+    model.close();
+    expect(bindings.close).not.toHaveBeenCalled();
+
+    // React set the page's effect up again (Fast Refresh, new navigation objects).
+    model.bind(bindings);
+    model.add([draftFromChoice(choice())], 'search');
+    expect(model.state.tray).toHaveLength(1);
+    model.close();
+    expect(bindings.close).toHaveBeenCalledWith('kept');
   });
 });

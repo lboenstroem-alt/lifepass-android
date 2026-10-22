@@ -211,8 +211,16 @@ export class MealCaptureModel {
   // -------------------------------------------------------------------------
   // The page
 
+  /**
+   * The page's hooks. Binding again after a `dispose` brings the model back:
+   * React runs an effect's cleanup and setup again for the SAME page (Fast
+   * Refresh, Strict Mode, new navigation objects), and the page must not be
+   * left with a model that ignores every change. A page that has really gone
+   * never binds again.
+   */
   bind(bindings: CapturePageBindings): void {
     this.bindings = bindings;
+    this.alive = true;
   }
 
   /** The page has gone: nothing it started may change it or call back into it. */
@@ -446,7 +454,11 @@ export class MealCaptureModel {
       }
       if (error.isProblem('idempotency_key_reused') && !retriedKey) {
         this.saveKey = newIdempotencyKey();
-        return this.post(body, profileId, true);
+        // AWAITED, so the `finally` below runs only once the retry has
+        // settled: `isSaving` stays true across it (iOS's `defer` after
+        // `return await post(...)`) and a second Save tap cannot start a
+        // parallel POST with the same fresh key.
+        return await this.post(body, profileId, true);
       }
       switch (useHealthStore.getState().handle(error, { foreground: true })) {
         case 'presentConsent':
