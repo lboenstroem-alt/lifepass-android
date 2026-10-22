@@ -32,6 +32,7 @@ import { registerHealthWipeHook } from '../../health/wipe';
 import { useAppStore } from '../../stores/appStore';
 import { installPlanOutbox } from '../plan';
 
+import { installRunnerDevStub, resetRunnerFilesForFixtureLaunch } from './finish/devStub';
 import { wipeRunnerLocal } from './outbox/localWipe';
 import { workoutPlanOutboxSource } from './outbox/planSource';
 import { activateWorkoutRunnerSupport } from './outbox/support';
@@ -40,8 +41,19 @@ import { useRunnerProgress } from './persistence/progressIndex';
 
 installPlanOutbox('workout', workoutPlanOutboxSource);
 
+// Development builds: the runner's stub server, or the guard that keeps a
+// Save the stub saw from reaching production (once per launch; ../index.ts
+// usually got here first).
+installRunnerDevStub();
+
 registerActivationHook('runner.outbox', async ({ memberId, trigger }) => {
   if (!useAppStore.getState().profile) return;
+  // A device-QA launch (`runnerStub`, development builds only) starts with no
+  // workout in progress and nothing queued: the files go before anything
+  // below reads or flushes them (iOS WorkoutRunnerSupport.activate,
+  // ./finish/devStub.ts). Null in every other launch, so nothing waits.
+  const fixtureReset = resetRunnerFilesForFixtureLaunch(memberId);
+  if (fixtureReset) await fixtureReset;
   if (trigger === 'profile') {
     await activateWorkoutRunnerSupport(memberId, { flushNow: true });
   } else {

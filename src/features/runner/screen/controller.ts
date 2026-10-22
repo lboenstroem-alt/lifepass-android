@@ -633,6 +633,11 @@ export class RunnerController {
   // ---------------------------------------------------------------------------
   // For RUN-3's swap, skip-workout and finish sheets
 
+  /** The runner's clock (tests set their own): the finish sheet's minutes and the Save's moment. */
+  time(): Date {
+    return this.clock();
+  }
+
   /**
    * Applies a model change made outside this class (a swap, the Save key and
    * moment), writes it down and keeps the keep-awake right. Returns the new
@@ -657,12 +662,17 @@ export class RunnerController {
     this.keepAwake(false);
   }
 
-  /** Closes the screen with `result`, once. */
+  /**
+   * Closes the screen with `result`, once. Subscribers hear it (`isClosed`),
+   * so an open sheet slides out with the runner rather than staying over the
+   * screen under it while the runner leaves.
+   */
   close(result: RunnerCloseResult): void {
     if (this.closed) return;
     this.closed = true;
     this.clearSkipUndoTimer();
     this.keepAwake(false);
+    this.publish({});
     this.onClose?.(result);
   }
 

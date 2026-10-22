@@ -1,19 +1,21 @@
 // The workout runner's public contract (plan 3.0.3).
 //
-// RUN-1 owns the data functions and everything they re-export: the pure
+// RUN-1 built the data functions and everything they re-export: the pure
 // model (./model), runner.json and Plan's Resume row (./persistence), the
-// save rules (./saveRules) and the workout outbox (./outbox). Ownership of
-// `openRunner` passes to RUN-3 after RUN-1 merges.
+// save rules (./saveRules) and the workout outbox (./outbox). RUN-3 owns
+// `openRunner` and the launch rule behind it (./launch).
 //
 // Used by PLAN-2 (the Today card: Start, Resume, "Waiting to sync"), Home's
 // Today row, PLAN-1 (the failed-outbox banner and the outbox flush before
 // Plan's read), F4's launch rule (src/app/launchTab.ts: a workout in
 // progress keeps the tab it was left on), and the runner screen and sheets
 // (RUN-2, RUN-3).
-import { openRootModal } from '../../navigation/navigationRef';
+import type { SessionView } from '../../health/models';
 import type { RunnerEntry } from '../../navigation/types';
 import { useAppStore } from '../../stores/appStore';
 
+import { installRunnerDevStub } from './finish/devStub';
+import { launchRunner, type RunnerSessionRef } from './launch/launchRunner';
 import { activateWorkoutOutbox, hasPendingWorkoutNow, useWorkoutOutbox } from './outbox/workoutOutbox';
 import { resumableWorkoutFor } from './persistence/runnerStore';
 
@@ -101,10 +103,15 @@ export interface ResumableWorkout {
   readonly sessionId: string | null;
 }
 
-/** What `openRunner` needs of a session (a full session object satisfies it). */
-export interface RunnerSessionRef {
-  readonly id: string;
-}
+export { launchRunner, type RunnerLaunchOutcome, type RunnerSessionRef } from './launch/launchRunner';
+export {
+  decideRunnerLaunch,
+  runnerEntryFor,
+  RunnerLaunchDecisions,
+  type RunnerLaunchDecision,
+} from './launch/decision';
+export { onRunnerClosed, type RunnerClosedListener } from './screen/closeEvents';
+export type { RunnerCloseResult } from './screen/controller';
 
 /** The signed-in member's id, as their health folder is named. */
 function signedInMemberId(): string | null {
@@ -138,7 +145,23 @@ export async function hasPendingWorkout(sessionId: string): Promise<boolean> {
   return hasPendingWorkoutNow(sessionId);
 }
 
-/** Opens the full-screen runner on `session` (RUN-3 owns the body; this one only routes). */
-export function openRunner(session: RunnerSessionRef, entry: RunnerEntry): void {
-  openRootModal('WorkoutRunner', { sessionId: session.id, entry });
+/**
+ * Opens the full-screen runner on `session` (iOS PlanView `presentRunner`):
+ * a session saved on this phone and waiting to sync says so instead, a
+ * workout in progress for this session is restored, and another session's
+ * workout with sets logged is never replaced without asking
+ * (./launch/launchRunner.ts). Pass the whole session where there is one
+ * (Plan's rows): the runner opens on exactly that row, a past date's too.
+ * `entry` is `today`, `missed` ("Do it now") or `resume`.
+ */
+export function openRunner(session: RunnerSessionRef | SessionView, entry: RunnerEntry): void {
+  void launchRunner(session, entry);
 }
+
+// A development build started with `runnerStub=<mode>` answers the runner's
+// session calls on the phone, so a device check never writes to production;
+// a development build without it refuses any Save the stub saw in an earlier
+// launch (./finish/devStub.ts). Nothing in a release bundle. Put in as soon
+// as anything loads the runner (F4's launch rule does, at startup), and
+// again, harmlessly, by ./register.ts before the first activation flush.
+installRunnerDevStub();
