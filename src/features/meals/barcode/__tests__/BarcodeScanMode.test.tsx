@@ -17,6 +17,7 @@ import { dismissToast } from '../../../../components/ui/Toast';
 import * as localStore from '../../../../health/localStore';
 import { resetHealthStoreForTests } from '../../../../health/store';
 import { resetMealGatePresenter } from '../../../../health/gate/mealGate';
+import { setCurrentLanguage, translate } from '../../../../i18n';
 import { todayServerDay } from '../../../../i18n/format';
 import { setAnalyticsObserver } from '../../../../lib/analytics';
 import MealCaptureNavigator from '../../../../navigation/MealCaptureNavigator';
@@ -191,6 +192,21 @@ describe('the camera', () => {
     await act(async () => fireEvent.press(screen.getByTestId('meal.barcode.privacy.ok')));
     expect(screen.queryByTestId('meal.barcode.privacy')).toBeNull();
     expect(await AsyncStorage.getItem(BARCODE_TIP_KEY)).toBe('true');
+  });
+
+  // The same iOS test in Icelandic: the card names the IP address and the app version, not the stale wording.
+  it('says it in Icelandic too', async () => {
+    await AsyncStorage.removeItem(BARCODE_TIP_KEY);
+    resetTipSeenForTests();
+    // jest.setup.ts puts English back once the page has unmounted.
+    setCurrentLanguage('is');
+    useApi();
+    await renderPage();
+    const card = await screen.findByTestId('meal.barcode.privacy');
+    expect(card).toHaveTextContent(translate('meal.barcode.privacy', 'is'), { exact: false });
+    expect(card).toHaveTextContent(/IP-tala símans og útgáfa appsins/);
+    expect(card).not.toHaveTextContent(/strikamerkisins og IP-tala/);
+    expect(screen.getByText(translate('meal.barcode.hint', 'is'))).toBeOnTheScreen();
   });
 
   it('wants the same code in two frames, and looks a UPC-A up as the 13 digits iOS saves', async () => {
