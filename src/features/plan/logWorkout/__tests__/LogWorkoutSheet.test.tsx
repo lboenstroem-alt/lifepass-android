@@ -8,7 +8,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { expectRequestValid } from '@test/contract';
 import { api, Reply } from '@test/server';
 import { useState } from 'react';
-import { AccessibilityInfo, StyleSheet } from 'react-native';
+import { AccessibilityInfo, DeviceEventEmitter, StyleSheet } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { UiKitProvider } from '../../../../components/ui';
@@ -102,6 +102,19 @@ async function pressID(testID: string) {
   await act(async () => settle());
 }
 
+async function hardwareBack() {
+  await act(async () => {
+    DeviceEventEmitter.emit('hardwareBackPress');
+  });
+  await act(async () => settle());
+}
+
+/** Waits out a delayed answer from the stub server. */
+async function answerLands(ms: number) {
+  await act(async () => new Promise((resolve) => setTimeout(resolve, ms)));
+  await act(async () => settle());
+}
+
 const saveButton = () => screen.getByTestId('logworkout.save');
 const title = () => screen.queryByRole('header', { name: en('logworkout.title') });
 
@@ -171,7 +184,7 @@ describe('Save', () => {
     await render(<Harness />);
     await press('Gym');
     await press('45 minutes');
-    await fireEvent.changeText(screen.getByTestId('logworkout.note'), '  Leg day​ with Sam  ');
+    await fireEvent.changeText(screen.getByTestId('logworkout.note'), '  Leg day\u{200B} with Sam  ');
     await pressID('logworkout.save');
 
     const sent = api.sent(PATH, 'POST');
@@ -228,9 +241,53 @@ describe('Save', () => {
     expect(screen.getByTestId('logworkout.note')).toHaveProp('editable', false);
     expect(handlers.onClose).not.toHaveBeenCalled();
     // The answer lands, and the sheet closes.
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 150)));
-    await act(async () => settle());
+    await answerLands(150);
     expect(handlers.onResult).toHaveBeenCalledTimes(1);
+  });
+
+  it('a step after the answer that throws is not a failed Save: the sheet closes, and nothing is sent again', async () => {
+    api.on('POST', PATH, Reply.ok(ANSWER));
+    handlers.onResult.mockImplementation(() => {
+      throw new Error('the card could not take the answer');
+    });
+    await render(<Harness />);
+    await press('Gym');
+    await press('45 minutes');
+    await pressID('logworkout.save');
+    expect(handlers.onResult).toHaveBeenCalledTimes(1);
+    // The rest still runs: the toast, and the sheet closes.
+    expect(useHealthStore.getState().toastKey).toBe('logworkout.saved');
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('logworkout.error')).toBeNull();
+    expect(title()).toBeNull();
+    expect(api.sentAll(PATH, 'POST')).toHaveLength(1);
+  });
+});
+
+describe('hardware back', () => {
+  it('closes the sheet while nothing is in flight', async () => {
+    await render(<Harness />);
+    await press('Gym');
+    await hardwareBack();
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+    expect(title()).toBeNull();
+    expect(api.sentAll(PATH, 'POST')).toHaveLength(0);
+  });
+
+  it('is refused while a Save is in flight; the answer closes the sheet', async () => {
+    api.on('POST', PATH, Reply.delayed(100, Reply.ok(ANSWER)));
+    await render(<Harness />);
+    await press('Swim');
+    await press('30 minutes');
+    await fireEvent.press(saveButton());
+    await act(async () => settle());
+    await hardwareBack();
+    expect(handlers.onClose).not.toHaveBeenCalled();
+    expect(title()).toBeOnTheScreen();
+    await answerLands(150);
+    expect(handlers.onResult).toHaveBeenCalledTimes(1);
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+    expect(title()).toBeNull();
   });
 });
 
@@ -245,7 +302,10 @@ describe('refusals', () => {
     expect(screen.getByTestId('logworkout.error')).toHaveTextContent(en('logworkout.limit'));
     expect(title()).toBeOnTheScreen();
     expect(handlers.onResult).not.toHaveBeenCalled();
+    // TalkBack hears the limit once: announced, and the line is no live region.
+    expect(spoken).toHaveBeenCalledTimes(1);
     expect(spoken).toHaveBeenCalledWith(en('logworkout.limit'));
+    expect(screen.getByTestId('logworkout.error').props.accessibilityLiveRegion).toBeUndefined();
     spoken.mockRestore();
     const first = api.sent(PATH, 'POST').headers['idempotency-key'];
 
@@ -262,6 +322,7 @@ describe('refusals', () => {
 
   it('offline says it needs a connection and keeps the sheet', async () => {
     api.on('POST', PATH, Reply.fail());
+    const spoken = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
     await render(<Harness />);
     await press('Gym');
     await press('45 minutes');
@@ -269,6 +330,12 @@ describe('refusals', () => {
     expect(screen.getByTestId('logworkout.error')).toHaveTextContent(en('health.offline.action_hint'));
     expect(title()).toBeOnTheScreen();
     expect(saveButton()).toBeEnabled();
+    // Each failure is said once, also when a retry's line follows another.
+    api.on('POST', PATH, LIMIT);
+    await pressID('logworkout.save');
+    expect(screen.getByTestId('logworkout.error')).toHaveTextContent(en('logworkout.limit'));
+    expect(spoken.mock.calls).toEqual([[en('health.offline.action_hint')], [en('logworkout.limit')]]);
+    spoken.mockRestore();
   });
 
   it('changed elsewhere closes the sheet and asks Plan to read again', async () => {
@@ -353,13 +420,24 @@ describe('the note', () => {
     expect(screen.getByTestId('logworkout.note.count')).toHaveTextContent(en('logworkout.note_count', { count: '140' }));
   });
 
-  it('grows to four lines at any text size before it scrolls', async () => {
+  it('grows to exactly four lines at any text size before it scrolls', async () => {
     const { unmount } = await render(<Harness />);
     const style = () => StyleSheet.flatten(screen.getByTestId('logworkout.note').props.style);
+    /** The height left for lines once the padding and the border are taken. */
+    const linesHeight = () => {
+      const { maxHeight, paddingVertical, borderWidth } = style();
+      return (maxHeight as number) - 2 * (paddingVertical as number) - 2 * (borderWidth as number);
+    };
+    // The line height is set, so the cap is four of them (Android scales a
+    // set line height with the text size, as the cap does).
+    const lineHeight = style().lineHeight as number;
+    expect(lineHeight).toBeGreaterThan(15);
+    expect(linesHeight()).toBeCloseTo(4 * lineHeight);
     const atDefault = style().maxHeight as number;
     await unmount();
     setTestFontScale(2);
     await render(<Harness />);
+    expect(linesHeight()).toBeCloseTo(4 * lineHeight * 2);
     expect(style().maxHeight as number).toBeGreaterThan(atDefault * 1.5);
     // Every choice is still there at the largest text sizes.
     expect(screen.getByRole('button', { name: 'Run or walk' })).toBeOnTheScreen();

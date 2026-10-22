@@ -9,7 +9,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { expectRequestValid } from '@test/contract';
 import { api, Reply } from '@test/server';
 import { useState } from 'react';
-import { AccessibilityInfo } from 'react-native';
+import * as ReactNative from 'react-native';
+import { AccessibilityInfo, DeviceEventEmitter } from 'react-native';
 
 import { TransportError } from '../../../../api';
 import { stubApiClientPerTest } from '../../../../api/testing';
@@ -80,6 +81,19 @@ async function press(name: string) {
 }
 
 const header = (key: string) => screen.queryByRole('header', { name: en(key) });
+
+async function hardwareBack() {
+  await act(async () => {
+    DeviceEventEmitter.emit('hardwareBackPress');
+  });
+  await act(async () => settle());
+}
+
+/** Waits out a delayed answer from the stub server. */
+async function answerLands(ms: number) {
+  await act(async () => new Promise((resolve) => setTimeout(resolve, ms)));
+  await act(async () => settle());
+}
 
 beforeEach(() => {
   bottomSheetMock.reset();
@@ -152,8 +166,17 @@ describe('move', () => {
   ])('a %s refusal keeps the sheet open on the skip, with its line', async (slug, reason, lineKey) => {
     const events = recordAnalytics();
     const spoken = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    const setFocus = jest.mocked(AccessibilityInfo.setAccessibilityFocus);
+    // The test renderer has no native views: the line that says why gets tag 77.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const reactNative: typeof ReactNative = require('react-native');
+    const handle = jest.spyOn(reactNative, 'findNodeHandle').mockImplementation(((instance: unknown) => {
+      const testID = (instance as { props?: { testID?: string } } | null)?.props?.testID;
+      return testID === 'noenergy.blocked' ? 77 : instance == null ? null : 41;
+    }) as typeof ReactNative.findNodeHandle);
     api.on('POST', PATH, Reply.problem(409, slug));
     await render(<Harness />);
+    setFocus.mockClear();
     await press(en('noenergy.move'));
     expect(header('noenergy.title')).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: en('noenergy.move') })).toBeNull();
@@ -162,9 +185,28 @@ describe('move', () => {
     expect(handlers.onResult).not.toHaveBeenCalled();
     expect(handlers.onClose).not.toHaveBeenCalled();
     expect(events).toEqual([{ event: 'workout_move_refused', params: { reason } }]);
-    // TalkBack hears why the move it just activated has gone.
-    expect(spoken).toHaveBeenCalledWith(en(lineKey));
+    // The move TalkBack was on has gone: its focus lands on the line that
+    // says why (and reads it there), not lost at the top of the window, and
+    // the line is not also announced, so it is heard once.
+    expect(setFocus).toHaveBeenCalledTimes(1);
+    expect(setFocus).toHaveBeenCalledWith(77);
+    expect(spoken).not.toHaveBeenCalled();
     spoken.mockRestore();
+    handle.mockRestore();
+  });
+
+  it('a step after the answer that throws is not a failed move: the sheet still closes, with no error line', async () => {
+    api.on('POST', PATH, Reply.ok(ANSWER));
+    handlers.onResult.mockImplementation(() => {
+      throw new Error('the card could not take the answer');
+    });
+    await render(<Harness />);
+    await press(en('noenergy.move'));
+    expect(api.sentAll(PATH, 'POST')).toHaveLength(1);
+    expect(handlers.onResult).toHaveBeenCalledTimes(1);
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('noenergy.error')).toBeNull();
+    expect(header('noenergy.title')).toBeNull();
   });
 
   it('session_action_not_allowed closes the sheet: the plan changed elsewhere', async () => {
@@ -229,6 +271,44 @@ describe('skip', () => {
     await press(en('noenergy.reason.time'));
     await press(en('noenergy.skip_confirm'));
     expect(api.sent(PATH, 'POST').body).toEqual({ action: 'skip', skipReason: 'time' });
+  });
+});
+
+describe('hardware back', () => {
+  it('closes the sheet while nothing is in flight', async () => {
+    await render(<Harness />);
+    await hardwareBack();
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+    expect(header('noenergy.title')).toBeNull();
+  });
+
+  it('is refused while a move is in flight; the answer closes the sheet', async () => {
+    api.on('POST', PATH, Reply.delayed(100, Reply.ok(ANSWER)));
+    await render(<Harness />);
+    await fireEvent.press(screen.getByRole('button', { name: en('noenergy.move') }));
+    await act(async () => settle());
+    await hardwareBack();
+    expect(handlers.onClose).not.toHaveBeenCalled();
+    expect(header('noenergy.title')).toBeOnTheScreen();
+    await answerLands(150);
+    expect(handlers.onResult).toHaveBeenCalledTimes(1);
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+    expect(header('noenergy.title')).toBeNull();
+  });
+
+  it('is refused while a skip is in flight; the answer closes the sheet', async () => {
+    api.on('POST', PATH, Reply.delayed(100, Reply.ok(ANSWER)));
+    await render(<Harness startsInSkipMode />);
+    await press(en('noenergy.reason.tired'));
+    await fireEvent.press(screen.getByRole('button', { name: en('noenergy.skip_confirm') }));
+    await act(async () => settle());
+    await hardwareBack();
+    expect(handlers.onClose).not.toHaveBeenCalled();
+    expect(header('noenergy.skip_title')).toBeOnTheScreen();
+    await answerLands(150);
+    expect(handlers.onResult).toHaveBeenCalledTimes(1);
+    expect(handlers.onClose).toHaveBeenCalledTimes(1);
+    expect(header('noenergy.skip_title')).toBeNull();
   });
 });
 

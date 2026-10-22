@@ -35,6 +35,7 @@ import { useT } from '../../../i18n';
 import { todayServerDay } from '../../../i18n/format';
 import { track } from '../../../lib/analytics';
 import { colors, hairline, sans } from '../../../theme';
+import { afterAnswer } from '../logWorkout/afterAnswer';
 import ChoiceChip from '../logWorkout/ChoiceChip';
 import { alreadyLoggedKey, dateLine, logWorkoutEntry, minutesSuffix, pullLine, showsPullLine } from '../logWorkout/copy';
 import {
@@ -78,7 +79,7 @@ export interface LogWorkoutSheetProps {
 
 /** The note grows to four lines, then scrolls (iOS `lineLimit(1...4)`). */
 const NOTE_MAX_LINES = 4;
-/** One line of the 15 pt note, and the field's vertical padding. */
+/** One line of the 15 pt note (its style's `lineHeight`), and the field's vertical padding. */
 const NOTE_LINE_HEIGHT = 20;
 const NOTE_PADDING = 28;
 
@@ -94,7 +95,9 @@ export default function LogWorkoutSheet({
 }: LogWorkoutSheetProps) {
   const { t, language } = useT();
   const { fontScale } = useWindowDimensions();
-  const noteMaxHeight = NOTE_PADDING + NOTE_MAX_LINES * NOTE_LINE_HEIGHT * fontScale;
+  // The cap holds the padding and the hairline border too: the lines get
+  // exactly four line heights.
+  const noteMaxHeight = NOTE_PADDING + 2 * hairline + NOTE_MAX_LINES * NOTE_LINE_HEIGHT * fontScale;
   const titleRef = useRef<Text>(null);
   const minutesRef = useRef<TextInput>(null);
   const noteRef = useRef<TextInput>(null);
@@ -143,18 +146,13 @@ export default function LogWorkoutSheet({
     Keyboard.dismiss();
     setErrorKey(null);
     const kind = current.kind ?? 'other';
+
+    // Only the request is inside the try: once the server has answered, the
+    // workout is logged, and nothing after it may turn into a failed Save
+    // (../logWorkout/afterAnswer.ts).
+    let response: unknown;
     try {
-      const response = await postSessionAction(session.id, body, started.key);
-      update(saveSucceeded);
-      track('plan_extra_logged', {
-        kind,
-        entry: logWorkoutEntry(session),
-        relative: cardDate === day ? 'today' : 'past',
-      });
-      onResult(response);
-      // The toast says it (and TalkBack hears every toast as it appears).
-      useHealthStore.getState().setToast('logworkout.saved');
-      onClose();
+      response = await postSessionAction(session.id, body, started.key);
     } catch (error) {
       update(saveFailed);
       const failure = logWorkoutFailure(error);
@@ -164,10 +162,29 @@ export default function LogWorkoutSheet({
         onClose();
         return;
       }
-      if (alive.current) setErrorKey(logWorkoutErrorKey(failure));
-      // Five on one day: the row is full until one is removed.
-      if (failure === 'limit') announce(t('logworkout.limit'));
+      // Five on one day (the row is full until one is removed), offline, or
+      // anything else: the line under Save. TalkBack hears it once, from
+      // here; the line itself is no live region, so it is never said twice.
+      const key = logWorkoutErrorKey(failure);
+      if (key && alive.current) {
+        setErrorKey(key);
+        announce(t(key));
+      }
+      return;
     }
+
+    update(saveSucceeded);
+    afterAnswer(() =>
+      track('plan_extra_logged', {
+        kind,
+        entry: logWorkoutEntry(session),
+        relative: cardDate === day ? 'today' : 'past',
+      }),
+    );
+    afterAnswer(() => onResult(response));
+    // The toast says it (and TalkBack hears every toast as it appears).
+    afterAnswer(() => useHealthStore.getState().setToast('logworkout.saved'));
+    onClose();
   };
 
   // ---- The lines about this day ------------------------------------------
@@ -211,7 +228,7 @@ export default function LogWorkoutSheet({
         {t('logworkout.footer')}
       </LPText>
       {errorKey ? (
-        <LPText size={13} color={colors.destructive} accessibilityLiveRegion="polite" testID="logworkout.error">
+        <LPText size={13} color={colors.destructive} testID="logworkout.error">
           {t(errorKey)}
         </LPText>
       ) : null}
@@ -413,7 +430,9 @@ const styles = StyleSheet.create({
   minutesRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   input: { ...sans(15), color: colors.paper },
   minutesInput: { ...sans(17), flex: 1, paddingVertical: 12 },
-  note: { paddingVertical: 14, textAlignVertical: 'top' },
+  // The line height is set, not left to the font, so the four-line cap above
+  // holds exactly (Android scales it with the text size, as `fontScale` does).
+  note: { paddingVertical: NOTE_PADDING / 2, lineHeight: NOTE_LINE_HEIGHT, textAlignVertical: 'top' },
   footer: { gap: 8 },
   capsule: { borderRadius: 999 },
   pressed: { opacity: 0.75 },

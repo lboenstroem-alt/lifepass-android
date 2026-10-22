@@ -27,11 +27,12 @@ import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, findNodeHandle, Pressable, StyleSheet, View, type Text } from 'react-native';
 
 import { newIdempotencyKey } from '../../../api';
-import { announce, LPText, PrimaryButton, Sheet } from '../../../components/ui';
+import { LPText, PrimaryButton, Sheet } from '../../../components/ui';
 import { postSessionAction, SessionAction, useHealthStore, type SessionActionBody, type SkipReason } from '../../../health';
 import { useT } from '../../../i18n';
 import { track } from '../../../lib/analytics';
 import { colors, hairline, radius } from '../../../theme';
+import { afterAnswer } from '../logWorkout/afterAnswer';
 import ChoiceChip from '../logWorkout/ChoiceChip';
 import {
   blockedLineKey,
@@ -101,16 +102,20 @@ export default function NoEnergySheet({
       stepShown.current = true;
       return;
     }
-    const timer = setTimeout(() => {
-      try {
-        const tag = titleRef.current ? findNodeHandle(titleRef.current) : null;
-        if (typeof tag === 'number') AccessibilityInfo.setAccessibilityFocus(tag);
-      } catch {
-        // No accessibility service bound: nothing to move.
-      }
-    }, 0);
+    const timer = setTimeout(() => focusOn(titleRef.current), 0);
     return () => clearTimeout(timer);
   }, [mode]);
+
+  // A refused move takes away the card TalkBack was on, but the step stays
+  // the same, so the effect above does not run. Focus lands on the line that
+  // says why (TalkBack reads it as it lands, so it is not announced as well),
+  // right above the Skip it that is left.
+  const blockedRef = useRef<Text>(null);
+  useEffect(() => {
+    if (moveRefused === null) return;
+    const timer = setTimeout(() => focusOn(blockedRef.current), 0);
+    return () => clearTimeout(timer);
+  }, [moveRefused]);
 
   const setBusy = (key: BusyKey | null) => {
     busyRef.current = key;
@@ -123,48 +128,55 @@ export default function NoEnergySheet({
   const blocked = blockedLineKey(session, context);
   const move = moveCopy(tomorrowTitle);
 
+  const failed = (error: unknown) => {
+    const failure = noEnergyFailure(error);
+    switch (failure.kind) {
+      case 'cancelled':
+        break;
+      case 'moveRefused':
+        // The sheet stays open and turns into the skip it can still offer,
+        // rather than closing on a refusal. TalkBack's focus goes to the
+        // line that says why (the effect on `moveRefused` above).
+        track('workout_move_refused', { reason: failure.reason });
+        if (alive.current) {
+          setMoveRefused(failure.reason);
+          setMode('choose');
+        }
+        break;
+      case 'changed':
+        onChangedElsewhere();
+        onClose();
+        break;
+      case 'offline':
+        if (alive.current) setErrorKey('health.offline.action_hint');
+        break;
+      case 'other':
+        if (failure.api) useHealthStore.getState().handle(error, { foreground: true });
+        if (alive.current) setErrorKey('common.error_body');
+        break;
+    }
+  };
+
   const post = async (body: SessionActionBody, busyKey: BusyKey, onSuccess: () => void) => {
     if (busyRef.current !== null) return;
     setBusy(busyKey);
     setErrorKey(null);
+    // Only the request is inside the try: once the server has moved or
+    // skipped the session, nothing after it may show the error line, whose
+    // Move would go out again under a new key (../logWorkout/afterAnswer.ts).
+    let response: unknown;
     try {
       // A fresh key per tap: each is its own action (iOS mints one per post).
-      const response = await postSessionAction(session.id, body, newIdempotencyKey());
-      onSuccess();
-      onResult(response);
-      onClose();
+      response = await postSessionAction(session.id, body, newIdempotencyKey());
     } catch (error) {
-      const failure = noEnergyFailure(error);
-      switch (failure.kind) {
-        case 'cancelled':
-          break;
-        case 'moveRefused':
-          // The sheet stays open and turns into the skip it can still offer,
-          // rather than closing on a refusal.
-          track('workout_move_refused', { reason: failure.reason });
-          if (alive.current) {
-            setMoveRefused(failure.reason);
-            setMode('choose');
-            // The move a TalkBack user just activated has gone: say why.
-            const line = blockedLineKey(session, { moveRefused: failure.reason, startsInSkipMode });
-            if (line) announce(t(line));
-          }
-          break;
-        case 'changed':
-          onChangedElsewhere();
-          onClose();
-          break;
-        case 'offline':
-          if (alive.current) setErrorKey('health.offline.action_hint');
-          break;
-        case 'other':
-          if (failure.api) useHealthStore.getState().handle(error, { foreground: true });
-          if (alive.current) setErrorKey('common.error_body');
-          break;
-      }
-    } finally {
       setBusy(null);
+      failed(error);
+      return;
     }
+    afterAnswer(onSuccess);
+    afterAnswer(() => onResult(response));
+    setBusy(null);
+    onClose();
   };
 
   const moveIt = () =>
@@ -197,7 +209,7 @@ export default function NoEnergySheet({
           </View>
 
           {blocked ? (
-            <LPText size={13} color={colors.paper2} testID="noenergy.blocked">
+            <LPText ref={blockedRef} size={13} color={colors.paper2} testID="noenergy.blocked">
               {t(blocked)}
             </LPText>
           ) : null}
@@ -286,6 +298,16 @@ export default function NoEnergySheet({
       )}
     </Sheet>
   );
+}
+
+/** Moves TalkBack onto `target` (an accessible element), if one is drawn. */
+function focusOn(target: Text | null): void {
+  try {
+    const tag = target ? findNodeHandle(target) : null;
+    if (typeof tag === 'number') AccessibilityInfo.setAccessibilityFocus(tag);
+  } catch {
+    // No accessibility service bound, or the element has gone: nothing to move.
+  }
 }
 
 /** A choice of the first step: an icon, a title and a line under it, a spinner while it posts. */
