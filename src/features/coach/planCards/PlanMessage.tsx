@@ -19,7 +19,7 @@
  * cards are gone, and what the model reads of it on a later free chat.
  */
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { Kicker, LPText } from '../../../components/ui';
 import { hiddenFromAccessibility } from '../../../components/ui/a11y';
@@ -32,13 +32,12 @@ import { refineChipLabel } from '../dayPlan/model';
 import { bookPlanClass, openPlanSight, openPlanVenue, planPayloadOf, refineDayPlan, restartDayPlan } from '../dayPlan/wizard';
 import type { CoachMessageRendererProps } from '../flows/types';
 import { coachPalette } from '../theme/palette';
-import { PLAN_CARD_WIDTH, PlanClassCard, PlanSightCard, PlanVenueCard } from './PlanCards';
-
-/** The steps and chips sit this far in, clear of the avatar (iOS `.padding(.leading, 34)`). */
-const PLAN_INDENT = 34;
+import { PLAN_INDENT, PLAN_STEP_INSET, planCardWidth, PlanClassCard, PlanSightCard, PlanVenueCard } from './PlanCards';
 
 export default function PlanMessage({ message, busy }: CoachMessageRendererProps) {
   const { t } = useT();
+  // iOS's 250, narrowed on a window too small for it (./PlanCards.tsx `planCardWidth`).
+  const cardWidth = planCardWidth(useWindowDimensions().width);
   const payload = planPayloadOf(message);
   if (!payload) return <MessageBubble role="assistant" text={message.text} />;
   const { plan, venues } = payload;
@@ -56,7 +55,13 @@ export default function PlanMessage({ message, busy }: CoachMessageRendererProps
 
       <View style={styles.indent}>
         {plan.steps.map((step, index) => (
-          <StepRow key={`${index}-${step.id}`} step={step} venues={venues} isLast={index === plan.steps.length - 1} />
+          <StepRow
+            key={`${index}-${step.id}`}
+            step={step}
+            venues={venues}
+            isLast={index === plan.steps.length - 1}
+            cardWidth={cardWidth}
+          />
         ))}
       </View>
 
@@ -104,10 +109,12 @@ function StepRow({
   step,
   venues,
   isLast,
+  cardWidth,
 }: {
   step: CoachPlanStep;
   venues: Readonly<Record<string, Venue>>;
   isLast: boolean;
+  cardWidth: number;
 }) {
   const { t, language } = useT();
   const distance = step.distance ? planDistanceLabel(step.distance, language, t) : null;
@@ -123,12 +130,12 @@ function StepRow({
 
       <Kicker text={t(`coach.plan.slot.${step.slot}`)} color={coachPalette.textMeta} style={styles.slot} />
       {step.note !== '' ? (
-        <LPText size={13} color={coachPalette.textSecondary} style={styles.note}>
+        <LPText size={13} color={coachPalette.textSecondary} style={[styles.note, { maxWidth: cardWidth + 20 }]}>
           {step.note}
         </LPText>
       ) : null}
 
-      <StepCard step={step} venues={venues} distance={distance} basis={basis} />
+      <StepCard step={step} venues={venues} distance={distance} basis={basis} width={cardWidth} />
     </View>
   );
 }
@@ -138,26 +145,28 @@ function StepCard({
   venues,
   distance,
   basis,
+  width,
 }: {
   step: CoachPlanStep;
   venues: Readonly<Record<string, Venue>>;
   distance: string | null;
   basis: 'drive' | 'straight_line' | null;
+  width: number;
 }) {
   switch (step.kind) {
     case 'venue': {
       const full = venues[step.venue.slug];
       if (full) {
-        return (
-          <VenueMiniCard venue={full} onBook={(venue) => openPlanVenue(venue.slug)} detailLine={distance} width={PLAN_CARD_WIDTH} />
-        );
+        return <VenueMiniCard venue={full} onBook={(venue) => openPlanVenue(venue.slug)} detailLine={distance} width={width} />;
       }
-      return <PlanVenueCard venue={step.venue} detailLine={distance} onOpen={() => openPlanVenue(step.venue.slug)} />;
+      return <PlanVenueCard venue={step.venue} detailLine={distance} onOpen={() => openPlanVenue(step.venue.slug)} width={width} />;
     }
     case 'class':
-      return <PlanClassCard session={step.classSession} distance={distance} basis={basis} onBook={bookPlanClass} />;
+      return <PlanClassCard session={step.classSession} distance={distance} basis={basis} onBook={bookPlanClass} width={width} />;
     case 'sight':
-      return <PlanSightCard sight={step.sight} distance={distance} basis={basis} onOpen={() => openPlanSight(step.sight.slug)} />;
+      return (
+        <PlanSightCard sight={step.sight} distance={distance} basis={basis} onOpen={() => openPlanSight(step.sight.slug)} width={width} />
+      );
   }
 }
 
@@ -167,13 +176,13 @@ const styles = StyleSheet.create({
   intro: { paddingHorizontal: 14, paddingVertical: 10, flexShrink: 1 },
   introText: { lineHeight: 20 },
   indent: { paddingLeft: PLAN_INDENT },
-  step: { paddingLeft: 24, gap: 6, alignItems: 'flex-start' },
+  step: { paddingLeft: PLAN_STEP_INSET, gap: 6, alignItems: 'flex-start' },
   stepGap: { paddingBottom: 20 },
   rail: { position: 'absolute', left: 2, top: 0, bottom: 0, width: 10, alignItems: 'center' },
   railLine: { position: 'absolute', top: 12, bottom: 0, width: 1.5, backgroundColor: coachPalette.stroke },
   railDot: { marginTop: 2, width: 10, height: 10, borderRadius: 5, backgroundColor: coachPalette.accent },
   slot: { fontFamily: 'monospace', fontSize: 10, letterSpacing: 1.4 },
-  note: { lineHeight: 18, maxWidth: PLAN_CARD_WIDTH + 20 },
+  note: { lineHeight: 18 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     flexDirection: 'row',

@@ -1,12 +1,16 @@
 /**
- * A plan sight's picture (iOS `CachedImage` as `PlanSightCard` uses it):
- * cached in memory and on disk, three attempts with the app's usual short
- * back-off (`IMAGE_ATTEMPTS`, `imageRetryDelayMs`), nothing while it loads,
- * and the sight's ring once it has failed. `onFailed` lets the card drop the
- * credit line too: "Photo: X" beside a ring would credit a picture nobody can
- * see.
+ * A plan card's picture, drawn over the card's own band colour: cached in
+ * memory and on disk, three attempts with the app's usual short back-off
+ * (`IMAGE_ATTEMPTS`, `imageRetryDelayMs`), and NOTHING while it loads (no
+ * placeholder glyph: the band shows through, as iOS draws it).
  *
- * Decorative to TalkBack: the card around it names the sight.
+ * - A sight (iOS `CachedImage` in `PlanSightCard`): the sight's ring once it
+ *   has failed. `onFailed` lets the card drop the credit line too: "Photo: X"
+ *   beside a ring would credit a picture nobody can see.
+ * - A venue before its full row loads (iOS `AsyncImage` over `Color.coachTile`
+ *   in `PlanVenueCard`): no fallback, the bare band stays.
+ *
+ * Decorative to TalkBack: the card around it names the place.
  */
 import { Image, type ImageContentFit } from 'expo-image';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -27,19 +31,19 @@ interface LoadState {
 
 const freshState = (uri: string): LoadState => ({ uri, attempt: 0, failed: false, loaded: false, retryDue: null });
 
-export default function PlanSightImage({
+export default function PlanCardImage({
   uri,
   contentFit,
-  fallback,
+  fallback = null,
   onFailed,
   testID,
 }: {
   /** Already resolved. */
   uri: string;
   contentFit: ImageContentFit;
-  /** Drawn once every attempt has failed (the ring). */
-  fallback: ReactNode;
-  onFailed: () => void;
+  /** Drawn once every attempt has failed (a sight's ring); none leaves the band bare. */
+  fallback?: ReactNode;
+  onFailed?: () => void;
   testID?: string;
 }) {
   const reduceMotion = useReduceMotion();
@@ -51,7 +55,7 @@ export default function PlanSightImage({
   useEffect(() => {
     if (!current.failed || reported.current === uri) return;
     reported.current = uri;
-    onFailed();
+    onFailed?.();
   }, [current.failed, uri, onFailed]);
 
   const { retryDue } = current;

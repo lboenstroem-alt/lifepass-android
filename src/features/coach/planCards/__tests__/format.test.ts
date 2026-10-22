@@ -3,7 +3,7 @@
  * when-line in Reykjavík time, the sight card's credit (a photo only with
  * its photographer, never the plate), and its travel line (the step's own
  * distance first, a ferry, a road drive only where a road goes; a straight
- * line never with a car).
+ * line never with a car, and the filled car only for a measured drive).
  */
 import { translate, type Lang, type Params } from '../../../../i18n';
 import {
@@ -73,10 +73,11 @@ describe('the sight card’s travel line', () => {
   const road = { roadAccess: 'road' as const, driveFromReykjavik: { minutes: 95, km: 125 } };
 
   it('the step’s own distance first, with its own icon: a car only for a drive', () => {
-    expect(planSightTravelLine(road, '12 min drive', 'drive', en)).toEqual({ text: '12 min drive', icon: 'car' });
-    expect(planSightTravelLine(road, 'about 4 km away', 'straight_line', en)).toEqual({ text: 'about 4 km away', icon: 'pin' });
-    expect(distanceIcon('straight_line')).toBe('pin');
-    expect(distanceIcon(null)).toBe('pin');
+    expect(planSightTravelLine(road, '12 min drive', 'drive', en)).toEqual({ text: '12 min drive', icon: 'drive' });
+    expect(planSightTravelLine(road, 'about 4 km away', 'straight_line', en)).toEqual({ text: 'about 4 km away', icon: 'straight' });
+    expect(distanceIcon('drive')).toBe('drive');
+    expect(distanceIcon('straight_line')).toBe('straight');
+    expect(distanceIcon(null)).toBe('straight');
   });
 
   it('then a ferry sight’s sentence', () => {
@@ -86,10 +87,10 @@ describe('the sight card’s travel line', () => {
     });
   });
 
-  it('then the drive from Reykjavík, only where a road goes', () => {
+  it('then the drive from Reykjavík, only where a road goes (the outline car, not a measured drive’s)', () => {
     expect(planSightTravelLine(road, null, null, en)).toEqual({
       text: en('coach.plan.sight.from_reykjavik', { duration: '1 h 35 min' }),
-      icon: 'car',
+      icon: 'road',
     });
     expect(planSightTravelLine({ roadAccess: 'road', driveFromReykjavik: { minutes: 45, km: 50 } }, null, null, is)?.text).toBe(
       is('coach.plan.sight.from_reykjavik', { duration: `45 ${is('attraction.minutes_short')}` }),

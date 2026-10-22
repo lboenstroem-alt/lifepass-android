@@ -59,17 +59,23 @@ export function planSightCreditLine(
   return `${t('attraction.photo')}: ${sight.imageCredit}`;
 }
 
-/** The icon beside a travel line: a car only for a measured drive. */
-export type TravelIcon = 'car' | 'pin' | 'ferry';
+/**
+ * The icon beside a travel line (iOS SF Symbols in brackets):
+ * - `drive`: a measured drive, the filled car (`car.fill`), and only that;
+ * - `straight`: a straight line, the location arrow (`location`), never a car;
+ * - `road`: the usual road time from Reykjavík, the outline car (`car`);
+ * - `ferry`: reached by ferry (`ferry`).
+ */
+export type TravelIcon = 'drive' | 'straight' | 'road' | 'ferry';
 
 export interface TravelLine {
   readonly text: string;
   readonly icon: TravelIcon;
 }
 
-/** The icon for a step's own distance: a straight line gets a pin, never a car. */
+/** The icon for a step's own distance (iOS `DistanceLine`): a straight line never gets a car. */
 export function distanceIcon(basis: CoachPlanDistance['basis'] | null | undefined): TravelIcon {
-  return basis === 'drive' ? 'car' : 'pin';
+  return basis === 'drive' ? 'drive' : 'straight';
 }
 
 /**
@@ -87,6 +93,6 @@ export function planSightTravelLine(
   if (distanceLabel) return { text: distanceLabel, icon: distanceIcon(basis) };
   if (sight.roadAccess === 'ferry') return { text: t('attraction.ferry_no_port'), icon: 'ferry' };
   const drive = roadDriveFromReykjavik(sight);
-  if (drive) return { text: t('coach.plan.sight.from_reykjavik', { duration: sightDuration(drive.minutes, t) }), icon: 'car' };
+  if (drive) return { text: t('coach.plan.sight.from_reykjavik', { duration: sightDuration(drive.minutes, t) }), icon: 'road' };
   return null;
 }

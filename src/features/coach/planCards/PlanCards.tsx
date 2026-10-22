@@ -19,7 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
-import { LPText, VenueImage } from '../../../components/ui';
+import { LPText, normaliseImageUrl } from '../../../components/ui';
 import { hiddenFromAccessibility } from '../../../components/ui/a11y';
 import { useT } from '../../../i18n';
 import { colors } from '../../../theme';
@@ -27,7 +27,7 @@ import { AttractionRing, kindRegionLine, PLATE_PAPER } from '../../attractions';
 import type { CoachPlanClass } from '../../classes/sheet';
 import type { CoachPlanDistance, CoachPlanSight, CoachPlanVenue } from '../dayPlan/decode';
 import { coachPalette } from '../theme/palette';
-import PlanSightImage from './PlanSightImage';
+import PlanCardImage from './PlanCardImage';
 import {
   classWhenLine,
   distanceIcon,
@@ -41,6 +41,26 @@ import {
 /** One column width for every kind of card, so the sequence reads as one list (iOS `cardWidth`). */
 export const PLAN_CARD_WIDTH = 250;
 
+/** The steps and chips sit this far in, clear of the avatar (iOS `.padding(.leading, 34)`). */
+export const PLAN_INDENT = 34;
+/** A step's slot label, note and card sit this far right of the rail. */
+export const PLAN_STEP_INSET = 24;
+/** The chat's own padding on each side (CoachScreen's `chat` style). */
+const CHAT_PADDING = 16;
+
+/** What sits beside a card on each row of the chat. */
+const PLAN_CARD_SURROUND = CHAT_PADDING * 2 + PLAN_INDENT + PLAN_STEP_INSET;
+
+/**
+ * The card width for a window `windowWidth` wide: iOS's 250 ("fits beside the
+ * rail on a 375 pt phone"), narrowed on a smaller window so Book and See the
+ * place stay on screen. Android phones go well under 340 dp once Display size
+ * is raised, which iPhones never do.
+ */
+export function planCardWidth(windowWidth: number): number {
+  return Math.max(0, Math.min(PLAN_CARD_WIDTH, Math.floor(windowWidth - PLAN_CARD_SURROUND)));
+}
+
 /**
  * The card's fill: the Coach's glass (rgb 10 20 46 at 0.72) laid over the
  * photo's ink (rgb 8 14 30 at 0.38), as iOS stacks the two backgrounds
@@ -48,13 +68,15 @@ export const PLAN_CARD_WIDTH = 250;
  */
 const CARD_FILL = 'rgba(10,19,44,0.83)';
 
+/** iOS's SF Symbols, as Ionicons: `car.fill`, `location` (the arrow), `car`, `ferry`. */
 const ICONS: Readonly<Record<TravelIcon, keyof typeof Ionicons.glyphMap>> = {
-  car: 'car',
-  pin: 'location-outline',
+  drive: 'car',
+  straight: 'navigate-outline',
+  road: 'car-outline',
   ferry: 'boat-outline',
 };
 
-/** A travel line: a car only for a measured drive, a pin for a straight line, a boat for a ferry. */
+/** A travel line: the filled car only for a measured drive, an arrow for a straight line (./format.ts `TravelIcon`). */
 export function TravelLineView({ text, icon, testID }: { text: string; icon: TravelIcon; testID?: string }) {
   return (
     <View style={styles.travel} testID={testID}>
@@ -82,15 +104,23 @@ export function PlanVenueCard({
   venue,
   detailLine,
   onOpen,
+  width = PLAN_CARD_WIDTH,
 }: {
   venue: CoachPlanVenue;
   detailLine: string | null;
   onOpen: () => void;
+  width?: number;
 }) {
   const { t } = useT();
+  const imageUrl = normaliseImageUrl(venue.imageUrl);
   return (
-    <View style={[styles.card, styles.venueCard]} testID={`coach.plan.venue.${venue.slug}`}>
-      <VenueImage uri={venue.imageUrl} height={110} style={{ width: PLAN_CARD_WIDTH }} />
+    <View style={[styles.card, { width }]} testID={`coach.plan.venue.${venue.slug}`}>
+      {/* The Coach's tile, bare until a photo loads (or if none does): no placeholder glyph, as iOS. */}
+      <View style={[styles.venueBand, { width }]} testID={`coach.plan.venue.${venue.slug}.band`}>
+        {imageUrl !== null ? (
+          <PlanCardImage uri={imageUrl} contentFit="cover" testID={`coach.plan.venue.${venue.slug}.image`} />
+        ) : null}
+      </View>
       <View style={styles.venueInfo}>
         <LPText size={14} weight="semibold" color="#FFFFFF" numberOfLines={1}>
           {venue.name}
@@ -140,22 +170,26 @@ export function PlanClassCard({
   distance,
   basis,
   onBook,
+  width = PLAN_CARD_WIDTH,
 }: {
   session: CoachPlanClass;
   distance: string | null;
   basis: CoachPlanDistance['basis'] | null;
   onBook: (session: CoachPlanClass) => Promise<void>;
+  width?: number;
 }) {
   const { t, language } = useT();
   const [resolving, setResolving] = useState(false);
   const resolvingRef = useRef(false);
   const mounted = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Armed in the body too: Fast Refresh (and StrictMode) run the cleanup
+    // and then this again on a card that is still on screen.
+    mounted.current = true;
+    return () => {
       mounted.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const title = session.title ?? t('classes.unnamed');
   const book = () => {
@@ -169,7 +203,7 @@ export function PlanClassCard({
   };
 
   return (
-    <View style={[styles.card, styles.padded]} testID={`coach.plan.class.${session.id}`}>
+    <View style={[styles.card, styles.padded, { width }]} testID={`coach.plan.class.${session.id}`}>
       <View style={styles.iconRow}>
         <Ionicons name="calendar-outline" size={12} color={coachPalette.textPrimary} {...hiddenFromAccessibility} />
         <LPText size={12} weight="semibold" color={coachPalette.textPrimary} numberOfLines={1} style={styles.flexShrink}>
@@ -217,11 +251,13 @@ export function PlanSightCard({
   distance,
   basis,
   onOpen,
+  width = PLAN_CARD_WIDTH,
 }: {
   sight: CoachPlanSight;
   distance: string | null;
   basis: CoachPlanDistance['basis'] | null;
   onOpen: () => void;
+  width?: number;
 }) {
   const { t } = useT();
   const [photoFailed, setPhotoFailed] = useState(false);
@@ -235,13 +271,13 @@ export function PlanSightCard({
   return (
     <Pressable
       onPress={onOpen}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.card, { width }, pressed && styles.pressed]}
       accessibilityRole="button"
       testID={`coach.plan.sight.${sight.slug}`}
     >
-      <View style={[styles.sightBand, { backgroundColor: plate ? PLATE_PAPER : coachPalette.tile }]}>
+      <View style={[styles.sightBand, { width, backgroundColor: plate ? PLATE_PAPER : coachPalette.tile }]}>
         {imageUrl !== null && !photoFailed ? (
-          <PlanSightImage
+          <PlanCardImage
             uri={imageUrl}
             contentFit={plate ? 'contain' : 'cover'}
             fallback={ring}
@@ -280,14 +316,13 @@ export function PlanSightCard({
 
 const styles = StyleSheet.create({
   card: {
-    width: PLAN_CARD_WIDTH,
     backgroundColor: CARD_FILL,
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: coachPalette.glassStroke,
     overflow: 'hidden',
   },
-  venueCard: {},
+  venueBand: { height: 110, overflow: 'hidden', backgroundColor: coachPalette.tile },
   padded: { padding: 12, gap: 6 },
   venueInfo: { paddingHorizontal: 10, paddingTop: 10, paddingBottom: 6, gap: 4, alignItems: 'flex-start' },
   pricePill: {
@@ -314,7 +349,7 @@ const styles = StyleSheet.create({
   iconRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   travel: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   flexShrink: { flexShrink: 1 },
-  sightBand: { width: PLAN_CARD_WIDTH, height: 120, overflow: 'hidden' },
+  sightBand: { height: 120, overflow: 'hidden' },
   ringBox: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   sightInfo: { padding: 10, gap: 4, alignItems: 'flex-start' },
   openRow: { gap: 4, marginTop: 2 },

@@ -7,12 +7,14 @@
  * calls the right one with the right argument.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { StrictMode } from 'react';
 
 import { decodeVenue } from '../../../../api/venues';
 import { setCurrentLanguage, translate, type Params } from '../../../../i18n';
 import type { CoachFlowBubble } from '../../store/messages';
 import { decodeCoachPlan } from '../../dayPlan/decode';
 import { PLAN_MESSAGE_KIND, type PlanMessagePayload } from '../../dayPlan/wizard';
+import { PLAN_CARD_WIDTH, planCardWidth } from '../PlanCards';
 import PlanMessage from '../PlanMessage';
 
 // expo-font (behind @expo/vector-icons) imports expo-asset, which npm left
@@ -22,6 +24,9 @@ jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset')
 jest.mock('../../../favourites', () => ({
   useFavourite: () => ({ isFavourite: false, loading: false, toggle: async () => undefined }),
 }));
+// The window the cards are drawn in: a 390 dp phone unless a test narrows it.
+const mockWindow = { width: 390, height: 844, scale: 3, fontScale: 1 };
+jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({ __esModule: true, default: () => mockWindow }));
 jest.mock('../../dayPlan/wizard', () => ({
   ...jest.requireActual('../../dayPlan/wizard'),
   refineDayPlan: jest.fn(async () => undefined),
@@ -115,6 +120,7 @@ async function draw(message: CoachFlowBubble, busy = false) {
 
 beforeEach(() => {
   setCurrentLanguage('en');
+  mockWindow.width = 390;
   for (const action of [wizard.refineDayPlan, wizard.restartDayPlan, wizard.bookPlanClass, wizard.openPlanVenue, wizard.openPlanSight]) {
     action.mockClear();
   }
@@ -155,6 +161,28 @@ describe('the venue step', () => {
     expect(wizard.openPlanVenue).toHaveBeenCalledWith('sky-lagoon');
   });
 
+  it('before its row loads, the photo band is the bare Coach tile: no placeholder glyph', async () => {
+    await draw(planMessage());
+    expect(screen.getByTestId('coach.plan.venue.sky-lagoon.band')).toBeOnTheScreen();
+    expect(screen.queryByTestId('coach.plan.venue.sky-lagoon.image', HIDDEN)).toBeNull();
+    expect(screen.queryByTestId('venueImage.placeholder', HIDDEN)).toBeNull();
+  });
+
+  it('the plan’s own photo, once there is one, over the same bare band', async () => {
+    const withPhoto = {
+      ...WIRE_PLAN,
+      steps: WIRE_PLAN.steps.map((step) =>
+        step.kind === 'venue' ? { ...step, venue: { ...step.venue, imageUrl: 'https://cdn.example/sky lagoon.jpg' } } : step,
+      ),
+    };
+    await draw(planMessage(withPhoto));
+    // Normalised as every venue photo is (a raw space is percent-encoded).
+    expect(screen.getByTestId('coach.plan.venue.sky-lagoon.image.image', HIDDEN).props.source).toEqual([
+      { uri: 'https://cdn.example/sky%20lagoon.jpg' },
+    ]);
+    expect(screen.queryByTestId('venueImage.placeholder', HIDDEN)).toBeNull();
+  });
+
   it('once its row is in: the carousel’s card, with the heart and the distance line', async () => {
     await draw(planMessage(WIRE_PLAN, { 'sky-lagoon': SKY_LAGOON }));
     expect(screen.queryByTestId('coach.plan.venue.sky-lagoon')).toBeNull();
@@ -174,7 +202,7 @@ describe('the class step', () => {
     expect(screen.getByText(en('classes.unnamed'))).toBeOnTheScreen();
     expect(screen.getByText('Hress')).toBeOnTheScreen();
     expect(screen.getByText(en('coach.plan.distance.drive', { minutes: '12' }))).toBeOnTheScreen();
-    expect(screen.getByTestId('coach.plan.class.cls_1.distance.car', HIDDEN)).toBeOnTheScreen();
+    expect(screen.getByTestId('coach.plan.class.cls_1.distance.drive', HIDDEN)).toBeOnTheScreen();
   });
 
   it('Book hands the session to the class sheet’s lookup, spins meanwhile and ignores a second tap', async () => {
@@ -191,6 +219,21 @@ describe('the class step', () => {
     await act(async () => finish());
     expect(screen.queryByTestId('coach.plan.class.cls_1.spinner')).toBeNull();
   });
+
+  it('the spinner still clears after the card’s effects ran twice (StrictMode, Fast Refresh)', async () => {
+    let finish: () => void = () => undefined;
+    wizard.bookPlanClass.mockImplementationOnce(() => new Promise<void>((resolve) => (finish = resolve)));
+    await render(
+      <StrictMode>
+        <PlanMessage message={planMessage()} busy={false} />
+      </StrictMode>,
+    );
+    await act(async () => undefined);
+    await fireEvent.press(screen.getByTestId('coach.plan.class.cls_1.book'));
+    expect(screen.getByTestId('coach.plan.class.cls_1.spinner')).toBeOnTheScreen();
+    await act(async () => finish());
+    expect(screen.queryByTestId('coach.plan.class.cls_1.spinner')).toBeNull();
+  });
 });
 
 describe('the sight step', () => {
@@ -200,7 +243,8 @@ describe('the sight step', () => {
     expect(screen.getByText(`${en('attraction.photo')}: Jane Doe`)).toBeOnTheScreen();
     expect(screen.getByText(`${en('attraction.kind.waterfall')} · ${en('attraction.region.south')}`)).toBeOnTheScreen();
     expect(screen.getByText(en('coach.plan.sight.from_reykjavik', { duration: '1 h 35 min' }))).toBeOnTheScreen();
-    expect(screen.getByTestId('coach.plan.sight.seljalandsfoss.travel.car', HIDDEN)).toBeOnTheScreen();
+    // The usual road time from Reykjavík: the outline car, not a measured drive's.
+    expect(screen.getByTestId('coach.plan.sight.seljalandsfoss.travel.road', HIDDEN)).toBeOnTheScreen();
     await fireEvent.press(screen.getByText(en('coach.plan.sight.open')));
     expect(wizard.openPlanSight).toHaveBeenCalledWith('seljalandsfoss');
   });
@@ -220,15 +264,16 @@ describe('the sight step', () => {
     expect(screen.queryByTestId('coach.plan.sight.seljalandsfoss.credit')).toBeNull();
   });
 
-  it('a step’s straight line is a pin and "about N km away", never a drive', async () => {
+  it('a step’s straight line is an arrow and "about N km away", never a drive', async () => {
     const wire = {
       ...WIRE_PLAN,
       steps: [{ ...WIRE_PLAN.steps[0], distance: { basis: 'straight_line', km: 31.6 } }],
     };
     await draw(planMessage(wire));
     expect(screen.getByText(en('coach.plan.distance.straight', { km: '32' }))).toBeOnTheScreen();
-    expect(screen.getByTestId('coach.plan.sight.seljalandsfoss.travel.pin', HIDDEN)).toBeOnTheScreen();
-    expect(screen.queryByTestId('coach.plan.sight.seljalandsfoss.travel.car', HIDDEN)).toBeNull();
+    expect(screen.getByTestId('coach.plan.sight.seljalandsfoss.travel.straight', HIDDEN)).toBeOnTheScreen();
+    expect(screen.queryByTestId('coach.plan.sight.seljalandsfoss.travel.drive', HIDDEN)).toBeNull();
+    expect(screen.queryByTestId('coach.plan.sight.seljalandsfoss.travel.road', HIDDEN)).toBeNull();
   });
 
   it('a ferry sight says so, with no drive', async () => {
@@ -257,6 +302,30 @@ describe('the chips', () => {
     expect(screen.getByRole('button', { name: en('coach.plan.new') })).toBeDisabled();
     await fireEvent.press(chip);
     expect(wizard.refineDayPlan).not.toHaveBeenCalled();
+  });
+});
+
+describe('the card width', () => {
+  it('is iOS’s 250 wherever it fits beside the rail, narrower on a smaller window', () => {
+    expect(planCardWidth(390)).toBe(PLAN_CARD_WIDTH);
+    expect(planCardWidth(340)).toBe(PLAN_CARD_WIDTH);
+    expect(planCardWidth(320)).toBe(230);
+    expect(planCardWidth(307.5)).toBe(217);
+  });
+
+  it('every kind of card, and the note, follow it on a narrow window', async () => {
+    mockWindow.width = 320;
+    await draw(planMessage());
+    for (const id of ['coach.plan.venue.sky-lagoon', 'coach.plan.class.cls_1', 'coach.plan.sight.seljalandsfoss']) {
+      expect(screen.getByTestId(id)).toHaveStyle({ width: 230 });
+    }
+    expect(screen.getByText('Soak for an hour.')).toHaveStyle({ maxWidth: 250 });
+  });
+
+  it('the loaded venue’s carousel card too', async () => {
+    mockWindow.width = 320;
+    await draw(planMessage(WIRE_PLAN, { 'sky-lagoon': SKY_LAGOON }));
+    expect(screen.getByTestId('coach.venue.sky-lagoon')).toHaveStyle({ width: 230 });
   });
 });
 
