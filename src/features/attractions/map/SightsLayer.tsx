@@ -8,13 +8,14 @@
  * never as a native view per sight:
  *   - trails: a white casing pass, then a light-blue line pass, under every
  *     ring and venue, and not tappable (the trailhead ring opens the walk);
- *   - sights: an invisible tap target, a soft shadow, the hollow ring, the
- *     centre dot, and the top picks' names.
+ *   - the rings' soft shadows (a source that takes no taps);
+ *   - sights: an invisible tap target, the hollow ring, the centre dot, and
+ *     the top picks' names.
  * What is drawn for this camera (which rings, which names and where, which
  * trails) is worked out by ./useSightsMap.ts and handed in as `content`.
  *
  * THE ORDER IS FIXED AT MOUNT. Mapbox stacks a layer added later on top of
- * the ones before it, so both sources are mounted with the map, empty until
+ * the ones before it, so every source is mounted with the map, empty until
  * there is something to draw, and stay mounted with the layer off. Trails
  * stay under the rings, and the rings under the venues' names (EXPL-2's
  * layer, after this one), whatever loads first.
@@ -42,6 +43,7 @@ import {
   pickSight,
   SIGHT_FILTERS,
   SIGHT_LAYER_IDS,
+  SIGHT_SHADOWS_SOURCE_ID,
   SIGHT_STYLES,
   SIGHTS_SOURCE_ID,
   TRAIL_STYLES,
@@ -94,9 +96,11 @@ function SightsLayer({ visible, onSelectSight, content }: SightsLayerProps) {
         <LineLayer id={SIGHT_LAYER_IDS.trailCasing} style={TRAIL_STYLES.casing} />
         <LineLayer id={SIGHT_LAYER_IDS.trailLine} style={TRAIL_STYLES.line} />
       </ShapeSource>
+      <ShapeSource id={SIGHT_SHADOWS_SOURCE_ID} shape={sights}>
+        <CircleLayer id={SIGHT_LAYER_IDS.shadow} style={SIGHT_STYLES.shadow} />
+      </ShapeSource>
       <ShapeSource id={SIGHTS_SOURCE_ID} shape={sights} onPress={onPress} hitbox={FINGER}>
         <CircleLayer id={SIGHT_LAYER_IDS.hit} style={SIGHT_STYLES.hit} />
-        <CircleLayer id={SIGHT_LAYER_IDS.shadow} style={SIGHT_STYLES.shadow} />
         <CircleLayer id={SIGHT_LAYER_IDS.ring} style={SIGHT_STYLES.ring} />
         <CircleLayer id={SIGHT_LAYER_IDS.dot} style={SIGHT_STYLES.dot} filter={SIGHT_FILTERS.dot} />
         <SymbolLayer id={SIGHT_LAYER_IDS.name} style={SIGHT_STYLES.name} filter={SIGHT_FILTERS.name} />

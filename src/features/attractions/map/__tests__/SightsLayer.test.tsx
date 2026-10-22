@@ -6,7 +6,16 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
 import { sight } from '../../__tests__/fixtures';
-import { NO_SIGHTS, NO_TRAILS, SIGHT_LAYER_IDS, SIGHTS_SOURCE_ID, sightFeatures, TRAILS_SOURCE_ID, trailFeatures } from '../features';
+import {
+  NO_SIGHTS,
+  NO_TRAILS,
+  SIGHT_LAYER_IDS,
+  SIGHT_SHADOWS_SOURCE_ID,
+  SIGHTS_SOURCE_ID,
+  sightFeatures,
+  TRAILS_SOURCE_ID,
+  trailFeatures,
+} from '../features';
 import { EMPTY_SIGHTS_LAYOUT } from '../sightsLayout';
 import SightsLayer from '../SightsLayer';
 import type { SightsLayerContent } from '../useSightsMap';
@@ -56,9 +65,10 @@ it('mounts both sources from the start, trails under the rings, the rings’ lay
     TRAILS_SOURCE_ID,
     SIGHT_LAYER_IDS.trailCasing,
     SIGHT_LAYER_IDS.trailLine,
+    SIGHT_SHADOWS_SOURCE_ID,
+    SIGHT_LAYER_IDS.shadow,
     SIGHTS_SOURCE_ID,
     SIGHT_LAYER_IDS.hit,
-    SIGHT_LAYER_IDS.shadow,
     SIGHT_LAYER_IDS.ring,
     SIGHT_LAYER_IDS.dot,
     SIGHT_LAYER_IDS.name,
@@ -79,8 +89,11 @@ it('draws what it is handed while on, and nothing (sources still in place) while
 it('asks Mapbox about the finger’s own point, so each ring’s target decides', async () => {
   await render(<SightsLayer visible zoom={6} onSelectSight={onSelectSight} content={content()} />);
   expect(mapboxLayers.sources[SIGHTS_SOURCE_ID].hitbox).toEqual({ width: 1, height: 1 });
-  // Trails are not tappable: the trailhead ring opens the walk.
+  // Trails are not tappable (the trailhead ring opens the walk), and nor is a
+  // shadow, which reaches past a ring whose target is the ring itself.
   expect(mapboxLayers.sources[TRAILS_SOURCE_ID].onPress).toBeUndefined();
+  expect(mapboxLayers.sources[SIGHT_SHADOWS_SOURCE_ID].onPress).toBeUndefined();
+  expect(mapboxLayers.sources[SIGHT_SHADOWS_SOURCE_ID].shape).toBe(SIGHTS);
 });
 
 it('opens the sight a tap meant (the top tier first) and makes it the open one', async () => {

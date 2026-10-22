@@ -27,7 +27,9 @@
  * THE TAP TARGET. An invisible circle per ring, 34 pt across (40 for a top
  * pick), or the ring itself beside a venue (`hitSize`). The source answers a
  * tap only where one of its layers is drawn under the finger: the target, the
- * ring, or the name (a name is part of its sight's button on iOS too).
+ * ring, or the name (a name is part of its sight's button on iOS too). The
+ * shadows, which reach past the ring, are drawn from a source that takes no
+ * taps (`SIGHT_SHADOWS_SOURCE_ID`).
  */
 import type { CircleLayerStyle, LineLayerStyle, SymbolLayerStyle } from '@rnmapbox/maps';
 
@@ -42,6 +44,12 @@ import type { SightsLayout } from './sightsLayout';
 
 /** The source and layer ids on the Explore map. */
 export const SIGHTS_SOURCE_ID = 'lifepass-sights';
+/**
+ * The rings' shadows, from the same features through a source of their own
+ * that takes no taps: a shadow reaches past its ring, and a tap on it must
+ * not open a sight whose target is the ring alone (beside a venue).
+ */
+export const SIGHT_SHADOWS_SOURCE_ID = 'lifepass-sight-shadows';
 export const TRAILS_SOURCE_ID = 'lifepass-trails';
 export const SIGHT_LAYER_IDS = {
   hit: 'lifepass-sight-hit',
