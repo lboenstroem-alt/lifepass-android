@@ -28,7 +28,7 @@
  *     the layer on (`onOpenSight`'s `at`).
  */
 import { Ionicons } from '@expo/vector-icons';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type KeyboardEvent } from 'react-native';
 
 import type { AttractionMarker } from '../../api/attractions';
@@ -94,12 +94,15 @@ export default function SightsSearchGroup({ query, onOpenSight }: SightsSearchGr
     if (matches.length > 0) scroll.current?.flashScrollIndicators();
   }, [matches.length]);
 
-  if (matches.length === 0) return null;
+  const open = useCallback(
+    (sight: AttractionMarker) => {
+      Keyboard.dismiss();
+      onOpenSight(sight.slug, { latitude: sight.latitude, longitude: sight.longitude });
+    },
+    [onOpenSight],
+  );
 
-  const open = (sight: AttractionMarker) => {
-    Keyboard.dismiss();
-    onOpenSight(sight.slug, { latitude: sight.latitude, longitude: sight.longitude });
-  };
+  if (matches.length === 0) return null;
 
   return (
     <View
@@ -140,7 +143,10 @@ export default function SightsSearchGroup({ query, onOpenSight }: SightsSearchGr
 /** Where the space below the search row ends: the keyboard's top while it is up, else the screen's foot. */
 function useAreaBottom(): number {
   const { height } = useWindowDimensions();
-  const [keyboardTop, setKeyboardTop] = useState<number | null>(null);
+  // The group appears on the first letter typed, with the keyboard already up.
+  const [keyboardTop, setKeyboardTop] = useState<number | null>(() =>
+    Keyboard.isVisible() ? (Keyboard.metrics()?.screenY ?? null) : null,
+  );
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (event: KeyboardEvent) => setKeyboardTop(event.endCoordinates.screenY));
     const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardTop(null));

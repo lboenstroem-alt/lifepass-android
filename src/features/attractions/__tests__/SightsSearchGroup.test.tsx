@@ -6,7 +6,7 @@
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { api, Reply } from '@test/server';
-import { Keyboard } from 'react-native';
+import { Keyboard, View } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../api/testing';
 import { setCurrentLanguage } from '../../../i18n';
@@ -164,5 +164,44 @@ describe('loading the sights', () => {
     await renderGroup('thing');
     await act(async () => undefined);
     expect(api.sentAll('/attractions')).toHaveLength(0);
+  });
+});
+
+describe('the space below the search row', () => {
+  type Measure = (callback: (x: number, y: number, width: number, height: number) => void) => void;
+
+  it('ends at the keyboard while it is up, from the moment the group appears', async () => {
+    jest.spyOn(Keyboard, 'isVisible').mockReturnValue(true);
+    jest.spyOn(Keyboard, 'metrics').mockReturnValue({ screenX: 0, screenY: 500, width: 400, height: 300 });
+    // The group's top in the window: 100 points down, so 400 points to the keyboard.
+    const measure = jest
+      .spyOn(View.prototype as unknown as { measureInWindow: Measure }, 'measureInWindow')
+      .mockImplementation((callback) => callback(20, 100, 350, 200));
+    try {
+      hold();
+      await renderGroup('foss');
+      await fireEvent(screen.getByTestId('explore.sights'), 'layout', { nativeEvent: { layout: { x: 20, y: 100, width: 350, height: 200 } } });
+      expect(screen.getByTestId('explore.sights.rows')).toHaveStyle({ maxHeight: 120 });
+    } finally {
+      measure.mockRestore();
+      jest.restoreAllMocks();
+    }
+  });
+
+  it('ends at the foot of the screen with the keyboard down', async () => {
+    jest.spyOn(Keyboard, 'isVisible').mockReturnValue(false);
+    const measure = jest
+      .spyOn(View.prototype as unknown as { measureInWindow: Measure }, 'measureInWindow')
+      .mockImplementation((callback) => callback(20, 100, 350, 200));
+    try {
+      hold();
+      await renderGroup('foss');
+      await fireEvent(screen.getByTestId('explore.sights'), 'layout', { nativeEvent: { layout: { x: 20, y: 100, width: 350, height: 200 } } });
+      // The test screen is 1334 points tall: 30 % of 1234 is past the ceiling.
+      expect(screen.getByTestId('explore.sights.rows')).toHaveStyle({ maxHeight: 180 });
+    } finally {
+      measure.mockRestore();
+      jest.restoreAllMocks();
+    }
   });
 });
