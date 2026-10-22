@@ -21,6 +21,7 @@ import { registerHealthWipeHook } from '../../health/wipe';
 import { selectHasHealthConsent, useAppStore } from '../../stores/appStore';
 import { installPlanFeedback, type PlanFeedbackBridge } from '../plan';
 
+import { installFeedbackNotifications } from './backgroundJob';
 import { isCardEmpty } from './cardState';
 import { feedbackCardStateNow } from './cardStateNow';
 import { feedbackEnvironment, supportsFeedback, useFeedbackStore } from './feedbackStore';
@@ -56,3 +57,8 @@ export const planFeedbackBridge: PlanFeedbackBridge = {
 };
 
 installPlanFeedback(planFeedbackBridge);
+
+// The notifications and the background refresh (NOTIF-2, ./backgroundJob.ts):
+// the sync after every change and activation, and the WorkManager job, which
+// a headless run finds here too (src/background/task.ts loads this file).
+installFeedbackNotifications();
