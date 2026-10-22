@@ -4,7 +4,7 @@
  * elsewhere, no connection, leaving it), the capture page's tray reviewed
  * and saved through the page, read-only, a meal gone, and a failed read.
  */
-import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
+import { createNavigationContainerRef, NavigationContainer, StackActions, type InitialState } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { Text } from 'react-native';
@@ -486,6 +486,152 @@ describe('a draft', () => {
   });
 });
 
+describe('a removal the leave question held back', () => {
+  // An estimate opened by id, outside a meal page (Plan's drafts list, the diary).
+  const pending = () => mealRecord({ items: [photoItemJson(), skyrItemJson()], confirmed: false, source: 'photo' });
+
+  function Drafts() {
+    return <Text testID="route.Drafts">Drafts</Text>;
+  }
+
+  /** Plan's root, its drafts list, and the editor on top: what a re-press of the Plan tab pops. */
+  async function renderOverDrafts(deleteMeal: () => Promise<void> = async () => undefined) {
+    setMealApi(fakeMealApi({ meal: async () => pending(), deleteMeal }));
+    await render(
+      <NavigationContainer ref={navigationRef} initialState={{ index: 2, routes: [{ name: 'Start' }, { name: 'Drafts' }, { name: 'Editor' }] }}>
+        <Stack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
+          <Stack.Screen name="Start" component={Start} />
+          <Stack.Screen name="Drafts" component={Drafts} />
+          <Stack.Screen name="Editor">{() => <MealEditorView mode={{ kind: 'stored', mealId: 'meal-1', capture: null }} />}</Stack.Screen>
+        </Stack.Navigator>
+      </NavigationContainer>,
+    );
+    await settle();
+  }
+
+  /** A tab re-press (src/navigation/CustomTabBar.tsx): pop the tab's stack to its root. */
+  async function popToTop() {
+    await act(async () => navigationRef.dispatch(StackActions.popToTop()));
+    expect(currentRoute()).toBe('Editor');
+    expect(screen.getByText(en('meal.draft_leave.title'))).toBeOnTheScreen();
+  }
+
+  it('a tab re-press asks first; Keep then lands on the tab’s root, not one screen back', async () => {
+    await renderOverDrafts();
+    await popToTop();
+    await act(async () => fireEvent.press(screen.getByTestId('mealEditor.leave.keep')));
+    await settle();
+    expect(currentRoute()).toBe('Start');
+  });
+
+  it('Discard deletes the estimate, then lands on the root too', async () => {
+    const deleteMeal = jest.fn(async () => undefined);
+    await renderOverDrafts(deleteMeal);
+    await popToTop();
+    await act(async () => fireEvent.press(screen.getByTestId('mealEditor.leave.discard')));
+    await settle();
+    expect(deleteMeal).toHaveBeenCalledWith('meal-1');
+    expect(currentRoute()).toBe('Start');
+  });
+
+  it('a Discard that fails stays, and forgets the pop: a later leave goes back one screen', async () => {
+    await renderOverDrafts(async () => Promise.reject(new TransportError('offline')));
+    await popToTop();
+    await act(async () => fireEvent.press(screen.getByTestId('mealEditor.leave.discard')));
+    await settle();
+    expect(currentRoute()).toBe('Editor');
+    expect(screen.getByText(en('health.offline.action_hint'))).toBeOnTheScreen();
+    await act(async () => fireEvent.press(button(en('common.back'))));
+    await act(async () => fireEvent.press(screen.getByTestId('mealEditor.leave.keep')));
+    await settle();
+    expect(currentRoute()).toBe('Drafts');
+  });
+
+  it('Cancel forgets it: the top bar’s back and Keep then go back one screen', async () => {
+    await renderOverDrafts();
+    await popToTop();
+    await act(async () => fireEvent.press(screen.getByTestId('mealEditor.leave.cancel')));
+    expect(currentRoute()).toBe('Editor');
+    await act(async () => fireEvent.press(button(en('common.back'))));
+    await act(async () => fireEvent.press(screen.getByTestId('mealEditor.leave.keep')));
+    await settle();
+    expect(currentRoute()).toBe('Drafts');
+  });
+
+  // Inside a meal page: a tapped notification or a check-in link asks the
+  // root stack to pop to the tabs (TabNavigator `switchTo`), and parks the
+  // tab switch until the tabs are on top again.
+  const Root = createNativeStackNavigator();
+  const Page = createNativeStackNavigator();
+
+  function Main() {
+    return <Text testID="route.Main">Main</Text>;
+  }
+  function Capture() {
+    return <Text testID="route.Capture">Capture</Text>;
+  }
+
+  async function renderDraftInPage(capture: ReturnType<typeof fakeCapture>, deleteMeal: () => Promise<void> = async () => undefined) {
+    setMealApi(fakeMealApi({ deleteMeal }));
+    const meal = pending();
+    function MealPage() {
+      return (
+        <Page.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
+          <Page.Screen name="Capture" component={Capture} />
+          <Page.Screen name="Draft">{() => <MealEditorView mode={{ kind: 'draft', meal, capture }} />}</Page.Screen>
+        </Page.Navigator>
+      );
+    }
+    const initialState: InitialState = {
+      index: 1,
+      routes: [{ name: 'Main' }, { name: 'MealCapture', state: { index: 1, routes: [{ name: 'Capture' }, { name: 'Draft' }] } }],
+    };
+    await render(
+      <NavigationContainer ref={navigationRef} initialState={initialState}>
+        <Root.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
+          <Root.Screen name="Main" component={Main} />
+          <Root.Screen name="MealCapture" component={MealPage} />
+        </Root.Navigator>
+      </NavigationContainer>,
+    );
+    await settle();
+  }
+
+  async function popToMain() {
+    await act(async () => navigationRef.dispatch(StackActions.popTo('Main')));
+    expect(currentRoute()).toBe('Draft');
+    expect(screen.getByText(en('meal.draft_leave.title'))).toBeOnTheScreen();
+  }
+
+  it('a notification while a draft is open in the meal page: Keep leaves the page for the tabs', async () => {
+    const capture = fakeCapture();
+    await renderDraftInPage(capture);
+    await popToMain();
+    await act(async () => fireEvent.press(screen.getByTestId('mealEditor.leave.keep')));
+    await settle();
+    expect(currentRoute()).toBe('Main');
+  });
+
+  it('… and Discard deletes it and closes the page', async () => {
+    const deleteMeal = jest.fn(async () => undefined);
+    const capture = fakeCapture();
+    await renderDraftInPage(capture, deleteMeal);
+    await popToMain();
+    await act(async () => fireEvent.press(screen.getByTestId('mealEditor.leave.discard')));
+    await settle();
+    expect(deleteMeal).toHaveBeenCalledWith('meal-1');
+    expect(capture.closed).toHaveBeenCalled();
+  });
+
+  it('the top bar’s back inside the page still goes back to the camera after Keep', async () => {
+    await renderDraftInPage(fakeCapture());
+    await act(async () => fireEvent.press(button(en('common.back'))));
+    await act(async () => fireEvent.press(screen.getByTestId('mealEditor.leave.keep')));
+    await settle();
+    expect(currentRoute()).toBe('Capture');
+  });
+});
+
 describe('the tray, reviewed as a new meal', () => {
   it('shows the page’s items and saves through the page, which closes it', async () => {
     const save = jest.fn(async (): Promise<MealCaptureSaveOutcome> => ({ kind: 'queued' }));
@@ -504,6 +650,16 @@ describe('the tray, reviewed as a new meal', () => {
     await settle();
     expect(save).toHaveBeenCalledTimes(1);
     expect(capture.closed).toHaveBeenCalled();
+  });
+
+  it('a save that throws stops spinning and says so', async () => {
+    const capture = fakeCapture({ tray: [newSkyr()] }, async () => Promise.reject(new Error('boom')));
+    await renderEditor({ kind: 'tray', capture });
+    await act(async () => fireEvent.press(button(en('meal.editor.save'))));
+    await settle();
+    expect(screen.getByText(en('common.error_body'))).toBeOnTheScreen();
+    expect(button(en('meal.editor.save'))).toBeEnabled();
+    expect(capture.closed).not.toHaveBeenCalled();
   });
 
   it('a failed save stays, with the page’s reason', async () => {

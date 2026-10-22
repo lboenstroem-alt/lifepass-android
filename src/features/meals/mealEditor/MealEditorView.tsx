@@ -150,7 +150,13 @@ export default function MealEditorView({ mode, onChanged, testID = 'mealEditor' 
   };
   /** The page is going: a removal it starts is never held back by the leave question. */
   const leaving = useRef(false);
-  /** The removal the member started (Android back) while the leave question is up. */
+  /**
+   * The removal the leave question held back (Android back, a tab re-press's
+   * pop to the top, a notification's or a link's `popTo('Main')`). Keep, and
+   * a Discard that went through, finish THAT removal, as iOS finishes the
+   * leave the member asked for; only Cancel (or a tap outside, or back on the
+   * question, which press Cancel) and a Discard that failed forget it.
+   */
   const pendingLeave = useRef<NavigationAction | null>(null);
   /** The tray joins a draft inside a meal page once: a handed draft at once, one read by id on its first read. */
   const trayJoined = useRef(mode.kind === 'draft');
@@ -174,12 +180,17 @@ export default function MealEditorView({ mode, onChanged, testID = 'mealEditor' 
     leaving.current = true;
     const pending = pendingLeave.current;
     pendingLeave.current = null;
-    // Inside a meal page: after a save the whole page closes; otherwise back
-    // to the page (iOS `capture.path.removeLast()`).
+    // Inside a meal page: after a save (or a discard) the whole page closes;
+    // otherwise back to the page (iOS `capture.path.removeLast()`), unless
+    // the member asked for more than that (a held removal, below).
     if (capture && mode.kind !== 'tray' && savedRef.current) {
       capture.close();
       return;
     }
+    // The removal the question held back, as asked: a pop to a tab's root
+    // lands on the root, a `popTo('Main')` leaves the meal page for the tab
+    // a notification or a link asked for. It still names this screen as
+    // already asked, so the guard lets it through.
     if (pending) {
       navigation.dispatch(pending);
       return;
@@ -400,6 +411,9 @@ export default function MealEditorView({ mode, onChanged, testID = 'mealEditor' 
       forgetDraftThumbnail(current.id);
       mealDeleted();
     } catch (error) {
+      // The member stays, with the reason; a removal held back for the
+      // discard is not carried out later by some other leave.
+      pendingLeave.current = null;
       setErrorKey(error instanceof ApiError && error.isOffline ? 'health.offline.action_hint' : 'common.error_body');
     }
   };
@@ -539,13 +553,20 @@ export default function MealEditorView({ mode, onChanged, testID = 'mealEditor' 
     if (!canSave) return;
     if (mode.kind === 'tray') {
       setSaving(true);
-      const outcome = await mode.capture.save();
-      setSaving(false);
-      setErrorKey(mode.capture.store.getState().saveErrorKey);
-      if (outcome.kind !== 'failed') {
-        setSaved();
-        leaving.current = true;
-        mode.capture.close();
+      try {
+        const outcome = await mode.capture.save();
+        setErrorKey(mode.capture.store.getState().saveErrorKey);
+        if (outcome.kind !== 'failed') {
+          setSaved();
+          leaving.current = true;
+          mode.capture.close();
+        }
+      } catch {
+        // The page's save answers with an outcome; should it ever throw, the
+        // button must not spin for good (iOS always resets `isSaving`).
+        setErrorKey('common.error_body');
+      } finally {
+        setSaving(false);
       }
       return;
     }
@@ -839,12 +860,11 @@ export default function MealEditorView({ mode, onChanged, testID = 'mealEditor' 
           { label: t('common.cancel'), role: 'cancel' },
         ]}
       />
+      {/* The kit's Dialog runs onClose BEFORE the button's onPress, so the
+          held removal is forgotten by Cancel itself, never by onClose. */}
       <Dialog
         visible={dialog === 'leaveDraft'}
-        onClose={() => {
-          setDialog(null);
-          pendingLeave.current = null;
-        }}
+        onClose={() => setDialog(null)}
         presentation="actionSheet"
         titleVisibility="visible"
         title={t('meal.draft_leave.title')}
@@ -860,13 +880,19 @@ export default function MealEditorView({ mode, onChanged, testID = 'mealEditor' 
           {
             label: t('meal.draft_leave.discard'),
             role: 'destructive',
-            onPress: () => {
-              pendingLeave.current = null;
-              void deleteMeal(true);
-            },
+            // Once deleted, `mealDeleted` leaves through `leave()`, which
+            // finishes the held removal (or closes the meal page).
+            onPress: () => void deleteMeal(true),
             testID: `${testID}.leave.discard`,
           },
-          { label: t('common.cancel'), role: 'cancel', testID: `${testID}.leave.cancel` },
+          {
+            label: t('common.cancel'),
+            role: 'cancel',
+            onPress: () => {
+              pendingLeave.current = null;
+            },
+            testID: `${testID}.leave.cancel`,
+          },
         ]}
       />
       <Dialog
