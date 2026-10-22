@@ -1,33 +1,21 @@
-// @f4-stub (plan 3.0 rule 5; RUN-2 → RUN-3): the runner's finish, swap and skip-workout sheets, filled by RUN-3.
+// @f4-stub (plan 3.0 rule 5; RUN-2 → RUN-3): the finish and skip-workout sheets are still to come (RUN-3).
 /**
  * The runner's sheets, mounted by the runner screen (./WorkoutRunnerView.tsx)
- * over the page. Marked as a stub so REL-1's "no stub ships" check holds the
- * release until RUN-3 has filled it: without it "Finish workout", "Save and
- * finish", "Swap" and "Skip this workout" open nothing, and a workout could
- * never be saved.
+ * over the page (RUN-3; iOS `.sheet(isPresented:)` on `WorkoutRunnerView`):
  *
- *   'finish'       FinishWorkoutSheet: from "Finish workout" (the big button
- *                  or the quiet one) and the Leave dialog's "Save and
- *                  finish". On open it mints the Save key (`ensureFinishKey`
- *                  through `controller.apply`) and prefills the minutes.
  *   'swap'         SwapExerciseSheet: from "Swap" (shown only when
- *                  `controller.swapOptions()` is not empty).
- *   'skipWorkout'  SkipWorkoutSheet: from the Leave dialog's "Skip this
- *                  workout" (offered only when `controller.canSkipWorkout`
- *                  and online).
- *
- * The sheets change the workout through `controller.apply(change)` (it
- * writes runner.json and keeps the keep-awake right), end it with
- * `controller.endRunner()` and leave with `controller.close(result)`.
- *
- * RUN-3 replaces this body (and the marker) and keeps the signature;
- * ownership of this file passes to RUN-3 once RUN-2 has merged (plan 3.0
- * rule 2). Until then a development build says "Not in this build yet"
- * (as F4's stub screens do) and its Close resets the screen's `sheet`; a
- * release build opens nothing.
+ *                  `controller.swapOptions()` is not empty). A row swaps and
+ *                  closes the sheet.
+ *   'finish'       not yet: a development build says so.
+ *   'skipWorkout'  not yet: a development build says so.
  */
+import { useSyncExternalStore } from 'react';
+
 import { Dialog } from '../../../components/ui';
 import { useT } from '../../../i18n';
+import { currentExercise } from '../model/state';
+import SwapExerciseSheet from '../swap/SwapExerciseSheet';
+import { swapExercise } from '../swap/swapFlow';
 
 import type { RunnerController } from './controller';
 
@@ -37,26 +25,40 @@ export interface RunnerSheetsProps {
   readonly controller: RunnerController;
   /** The sheet to show, or null. */
   readonly sheet: RunnerSheet | null;
-  /** The sheet closed itself (Cancel, back, Keep going). */
+  /** The sheet closed itself (Cancel, back, Keep going, a swap chosen). */
   readonly onClose: () => void;
   /** The health store's last error was a lost connection (iOS `isOffline`). */
   readonly isOffline: boolean;
 }
 
-/** The package that fills this slot, shown to the developer. */
-const OWNER = 'RUN-3';
-
-export default function RunnerSheets({ sheet, onClose }: RunnerSheetsProps) {
+export default function RunnerSheets({ controller, sheet, onClose, isOffline }: RunnerSheetsProps) {
   const { t } = useT();
-  if (!__DEV__ || sheet === null) return null;
+  const { state } = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const current = currentExercise(state);
   return (
-    <Dialog
-      visible
-      onClose={onClose}
-      title={t('nav.stub.not_in_build')}
-      message={`${sheet} · ${OWNER}`}
-      buttons={[{ label: t('common.close'), role: 'cancel', testID: 'runner.sheetStub.close' }]}
-      testID={`stub.runner.${sheet}`}
-    />
+    <>
+      <SwapExerciseSheet
+        visible={sheet === 'swap'}
+        onClose={onClose}
+        currentName={current?.name ?? ''}
+        setCount={current?.sets.length ?? 1}
+        options={controller.swapOptions()}
+        canUseForRestOfPlan={!isOffline}
+        onSelect={(option, forRestOfPlan) => {
+          swapExercise(controller, option, forRestOfPlan);
+          onClose();
+        }}
+      />
+      {__DEV__ && (sheet === 'finish' || sheet === 'skipWorkout') ? (
+        <Dialog
+          visible
+          onClose={onClose}
+          title={t('nav.stub.not_in_build')}
+          message={`${sheet} · RUN-3`}
+          buttons={[{ label: t('common.close'), role: 'cancel', testID: 'runner.sheetStub.close' }]}
+          testID={`stub.runner.${sheet}`}
+        />
+      ) : null}
+    </>
   );
 }
