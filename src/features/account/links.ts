@@ -34,17 +34,17 @@ export function whatsAppGreeting(language: Lang): string {
 }
 
 const WHATSAPP_NUMBER = /^[1-9]\d{7,14}$/;
-const PLAIN_HTTPS = /^https:\/\/[^\s?#]+$/;
 
 /**
  * What the Account screen's WhatsApp row opens: the server's `url` with the
  * greeting as `?text=` (iOS `WhatsAppSupport.chatURL`), or null when there is
- * no chat (switched off, an older server) or the value is not a plain https
- * link and a full international number, so a bad value hides the row rather
- * than opening the wrong thing.
+ * no chat (switched off, an older server) or the value is not exactly
+ * `https://wa.me/<number>` for a full international number, so a bad value
+ * (another host, another number) hides the row rather than opening the wrong
+ * thing.
  */
 export function whatsAppChatUrl(chat: WhatsAppSupport | null | undefined, language: Lang): string | null {
-  if (!chat || !WHATSAPP_NUMBER.test(chat.number) || !PLAIN_HTTPS.test(chat.url)) return null;
+  if (!chat || !WHATSAPP_NUMBER.test(chat.number) || chat.url !== `https://wa.me/${chat.number}`) return null;
   return `${chat.url}?text=${encodeURIComponent(whatsAppGreeting(language))}`;
 }
 

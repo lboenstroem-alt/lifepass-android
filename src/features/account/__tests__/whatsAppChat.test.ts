@@ -2,7 +2,7 @@
  * The Account screen's WhatsApp link (iOS `WhatsAppSupport.chatURL`): the
  * server's `url` with the greeting in the app language as `?text=`, encoded
  * byte for byte as the website encodes it, and nothing for a value that is
- * not a plain https link and a full international number.
+ * not exactly https://wa.me/<number> for a full international number.
  */
 import { whatsAppChatUrl, whatsAppGreeting } from '../links';
 
@@ -31,6 +31,10 @@ describe('whatsAppChatUrl', () => {
     ['3545550000', 'http://wa.me/3545550000'], // not https
     ['3545550000', 'https://wa.me/3545550000?text=hi'], // its own query
     ['3545550000', 'wa.me/3545550000'], // no scheme
+    ['3545550000', 'https://example.com/3545550000'], // not wa.me
+    ['3545550000', 'https://wa.me.example.com/3545550000'], // not wa.me
+    ['3545550000', 'https://wa.me/3545559999'], // another number
+    ['3545550000', 'https://wa.me/3545550000/'], // not the bare link
   ])('hides the row for %s %s', (number, url) => {
     expect(whatsAppChatUrl({ number, url }, 'en')).toBeNull();
   });
