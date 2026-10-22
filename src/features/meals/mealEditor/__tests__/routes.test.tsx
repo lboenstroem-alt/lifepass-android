@@ -23,6 +23,8 @@ import { navigationRef as appNavigationRef } from '../../../../navigation/naviga
 import { resetAppStoreForTests, useAppStore } from '../../../../stores/appStore';
 import { setMealApi } from '../../api/mealApi';
 import { fakeMealApi } from '../../api/testing';
+import type { MealCaptureModel } from '../../capture/captureModel';
+import { pageKeyOf, registerCapturePage, resetCapturePagesForTests, takeEditorHandoff } from '../../capture/capturePages';
 import { mealRecord, newSkyr, photoItemJson, skyrChoice, skyrItemJson } from '../../itemEditor/__tests__/fixtures';
 import ItemEditorHost from '../../itemEditor/ItemEditorHost';
 import {
@@ -36,8 +38,8 @@ import {
 import NewItemEditorSheet from '../../itemEditor/NewItemEditorSheet';
 import { draftFromChoice, draftFromRecord } from '../../types/draftFactory';
 import type { MealRecord } from '../../types/models';
-import { openAddFoodPage, takeAddFoodHandoff, dropAddFoodHandoff } from '../addFood';
-import { attachMealCaptureLink, pageKeyOf, resetMealCaptureLinksForTests, type MealCaptureLink, type MealCaptureLinkState } from '../captureLink';
+import { openAddFoodPage, dropAddFoodHandoff } from '../addFood';
+import { type MealCaptureLink, type MealCaptureLinkState } from '../captureLink';
 import { draftThumbnail, forgetDraftThumbnail, rememberDraftThumbnail } from '../draftThumbnails';
 import MealDraftScreen from '../MealDraftScreen';
 import MealEditorScreen from '../MealEditorScreen';
@@ -98,7 +100,8 @@ function capturePage(pageLink: MealCaptureLink | null): ComponentType<{ navigati
   return function Capture({ navigation }: { navigation: unknown }) {
     useEffect(() => {
       const key = pageKeyOf(navigation);
-      return pageLink && key ? attachMealCaptureLink(key, pageLink) : undefined;
+      // The editors read only the link's surface of MEAL-2's model.
+      return pageLink && key ? registerCapturePage(key, pageLink as unknown as MealCaptureModel) : undefined;
     }, [navigation]);
     return <Text testID="route.Capture">Capture</Text>;
   };
@@ -128,7 +131,7 @@ beforeEach(() => {
   bottomSheetMock.reset();
   resetAppStoreForTests();
   resetHealthStoreForTests();
-  resetMealCaptureLinksForTests();
+  resetCapturePagesForTests();
   setMealApi(null);
   signIn();
 });
@@ -209,13 +212,13 @@ describe('Add food on a draft or a saved meal', () => {
         payload: { name: 'MealCapture', params: { origin: 'editor', slot: 'dinner', date: '2026-10-21', mode: 'search' } },
       }),
     );
-    expect(takeAddFoodHandoff()).toBe(receiver);
+    expect(takeEditorHandoff()).toBe(receiver);
     // Taken once.
-    expect(takeAddFoodHandoff()).toBeNull();
+    expect(takeEditorHandoff()).toBeNull();
 
     openAddFoodPage({ slot: 'dinner', date: '2026-10-21', onAddToMeal: receiver });
     dropAddFoodHandoff(receiver);
-    expect(takeAddFoodHandoff()).toBeNull();
+    expect(takeEditorHandoff()).toBeNull();
     ready.mockRestore();
     rootState.mockRestore();
     dispatch.mockRestore();
@@ -224,7 +227,7 @@ describe('Add food on a draft or a saved meal', () => {
   it('does nothing before the app is ready', () => {
     const ready = jest.spyOn(appNavigationRef, 'isReady').mockReturnValue(false);
     expect(openAddFoodPage({ slot: 'dinner', date: '2026-10-21', onAddToMeal: jest.fn() })).toBe(false);
-    expect(takeAddFoodHandoff()).toBeNull();
+    expect(takeEditorHandoff()).toBeNull();
     ready.mockRestore();
   });
 });

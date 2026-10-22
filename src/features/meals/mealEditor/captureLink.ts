@@ -8,19 +8,10 @@
  * page's stack key (capture/capturePages.ts, `useCaptureModel()`). Its
  * public surface is a structural superset of `MealCaptureLink` below, so the
  * Review and Draft screens take it as it is.
- *
- * MERGE STEP (MEAL-2 + MEAL-4): the two packages were built side by side,
- * so neither could import the other. Once both are merged, the body of
- * `useMealCaptureLink` becomes `return useCaptureModel();` (from
- * '../capture/capturePages'), and the stand-in registry here goes. Without
- * it Review and Draft never find their page. __tests__/captureIntegration
- * runs as soon as MEAL-2's page is in the tree and fails until this is
- * done. Until then a page registers its link with `attachMealCaptureLink`
- * (the tests do).
  */
-import { NavigationContext } from '@react-navigation/native';
-import { useContext, useSyncExternalStore } from 'react';
+import { useSyncExternalStore } from 'react';
 
+import { useCaptureModel } from '../capture/capturePages';
 import type { MealCaptureMode, MealCaptureOrigin, MealSlot } from '../../../navigation/types';
 import type { MealItemDraft } from '../types/draft';
 import type { MealEntrySource, MealRecord } from '../types/models';
@@ -70,34 +61,9 @@ export interface MealCaptureLink {
   discardTray(): void;
 }
 
-// ---------------------------------------------------------------------------
-// Which page is which (until MEAL-2's registry is reachable, see above)
-
-const links = new Map<string, MealCaptureLink>();
-
-/** A page's link under its stack's key. Returns the removal. */
-export function attachMealCaptureLink(pageKey: string, link: MealCaptureLink): () => void {
-  links.set(pageKey, link);
-  return () => {
-    if (links.get(pageKey) === link) links.delete(pageKey);
-  };
-}
-
-interface KeyedNavigation {
-  getState(): { readonly key?: string } | undefined;
-}
-
-/** The key of the stack the calling screen is in: the meal page's key inside one. */
-export function pageKeyOf(navigation: unknown): string | null {
-  const state = (navigation as KeyedNavigation | undefined)?.getState?.();
-  return typeof state?.key === 'string' ? state.key : null;
-}
-
 /** The meal page the calling screen sits in, or null outside one. */
 export function useMealCaptureLink(): MealCaptureLink | null {
-  const navigation = useContext(NavigationContext);
-  const key = pageKeyOf(navigation);
-  return key ? (links.get(key) ?? null) : null;
+  return useCaptureModel();
 }
 
 const NO_STATE_STORE = {
@@ -109,9 +75,4 @@ const NO_STATE_STORE = {
 export function useMealCaptureState(link: MealCaptureLink | null): MealCaptureLinkState | null {
   const store = link?.store ?? NO_STATE_STORE;
   return useSyncExternalStore(store.subscribe, store.getState, store.getState);
-}
-
-/** Tests: no page open. */
-export function resetMealCaptureLinksForTests(): void {
-  links.clear();
 }
