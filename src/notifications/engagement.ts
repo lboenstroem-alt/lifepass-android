@@ -59,6 +59,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 
 import type { UsageLane } from '../api/profile';
+import { registerSignOutCleaner } from '../app/signOut';
 import { requestedFixtureState } from '../dev/fixtureSession';
 import { isLiveStatus, selectHasLiveProgram, useHealthStore } from '../health';
 import { translate, type Lang } from '../i18n';
@@ -71,7 +72,7 @@ import {
 } from '../stores/appStore';
 
 import { permissionStatus, requestIfUndetermined } from './permissions';
-import { removePending, scheduleAt } from './scheduler';
+import { removeEverywhere, removePending, scheduleAt } from './scheduler';
 
 /** When the app first ran on this phone (iOS `engagement.first_open_at`), ISO 8601. Never wiped: it is the phone's. */
 export const FIRST_OPEN_KEY = 'engagement.first_open_at';
@@ -332,12 +333,31 @@ function purchaseSignals(state: AppStoreState): readonly boolean[] {
   ];
 }
 
+/** The nudges that are the member's own: stay-active, and visits-reset with their remaining visits in it. */
+export function isMembersOwnNudge(identifier: string): boolean {
+  return identifier === ENGAGEMENT_IDS.stayActive || identifier === ENGAGEMENT_IDS.visitsReset;
+}
+
+/**
+ * At a sign-out, the member's own nudges go, pending or in the shade,
+ * WHATEVER THE PERMISSION. The signed-out sync that follows the sign-out
+ * removes them too, but only once it gets past the permission check: with
+ * notifications refused in system settings it stops first (iOS's `default:
+ * break` does the same), and visits-reset, maybe weeks away, would then
+ * carry "You still have 7 visits" to the lock screen of whoever turns
+ * notifications back on next. Removing needs no permission. The ladder
+ * rungs are the phone's (its first open), not the member's, and stay.
+ */
+export function removeMembersOwnNudges(): Promise<void> {
+  return removeEverywhere(isMembersOwnNudge);
+}
+
 let installed = false;
 
 /**
- * Wires the sync to launch, the foreground and the purchase state (once;
- * loaded with the notification layer's session hooks,
- * src/notifications/register.ts).
+ * Wires the sync to launch, the foreground and the purchase state, and the
+ * member's own nudges to a sign-out (once; loaded with the notification
+ * layer's session hooks, ./reminderStartup.ts).
  *
  * Changes while the launch screen is still up wait for it: launch ending is
  * itself a sync, with everything launch read.
@@ -345,6 +365,8 @@ let installed = false;
 export function installEngagementNudges(): void {
   if (installed) return;
   installed = true;
+
+  registerSignOutCleaner('notifications.engagement', () => removeMembersOwnNudges());
 
   // Every return to the foreground pushes the stay-active clock out another
   // week and picks up purchases made since the last sync.

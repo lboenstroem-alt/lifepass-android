@@ -14,9 +14,22 @@ import { notificationsState } from '@test/mocks/expoNotifications';
 
 import { decodeProfile, type Profile, type Usage } from '../../api/profile';
 import type { Subscription } from '../../api/subscriptions';
+import type * as SignOut from '../../app/signOut';
 import { resetHealthStoreForTests } from '../../health/store';
 import { resetAppStoreForTests, useAppStore } from '../../stores/appStore';
 import { ENGAGEMENT_IDS, installEngagementNudges, resetEngagementForTests } from '../engagement';
+
+const mockCleaners: Record<string, SignOut.SignOutCleaner> = {};
+
+// Only this module's sign-out cleaner, captured: the real registry would load
+// every package's register file and run their cleaners too.
+jest.mock('../../app/signOut', () => ({
+  ...jest.requireActual<typeof SignOut>('../../app/signOut'),
+  registerSignOutCleaner: (id: string, cleaner: SignOut.SignOutCleaner) => {
+    mockCleaners[id] = cleaner;
+    return () => undefined;
+  },
+}));
 
 const MEMBER = '8c2c1b36-2a7e-4b1f-9e0e-2f1c4f0a9c11';
 
@@ -186,4 +199,43 @@ it("a sign-out takes the member's own nudges off (their visits never reach the n
   const left = notificationsState.scheduled().map((r) => r.identifier);
   expect(left).not.toContain(ENGAGEMENT_IDS.stayActive);
   expect(left).not.toContain(ENGAGEMENT_IDS.visitsReset);
+});
+
+it("notifications refused in system settings: the sign-out still takes the member's own nudges off, the phone's ladder stays", async () => {
+  const lane = { used: 1, cap: 8, resetsAt: new Date(Date.now() + 20 * 24 * 3600 * 1000) };
+  const subscriber = { ...profile(), usage: { ...profile().usage!, tier: 'plus', network: lane } };
+  useAppStore.setState({
+    isLoading: false,
+    isAuthenticated: true,
+    userId: MEMBER,
+    profile: subscriber,
+    subscription: SUBSCRIPTION,
+    subscriptionLoaded: true,
+  });
+  await settle();
+  expect(notificationsState.scheduled().map((r) => r.identifier).sort()).toEqual([
+    ENGAGEMENT_IDS.stayActive,
+    ENGAGEMENT_IDS.visitsReset,
+  ]);
+  // One of them already in the shade, and a ladder rung from before the purchase.
+  await notificationsState.fire(ENGAGEMENT_IDS.visitsReset);
+  await Notifications.scheduleNotificationAsync({
+    identifier: ENGAGEMENT_IDS.noPurchaseDay12,
+    content: { title: 'x', body: 'y' },
+    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(Date.now() + 3 * 24 * 3600 * 1000) },
+  });
+
+  // The member turns LifePass notifications off in system settings, then signs out.
+  notificationsState.setPermission('denied');
+  const cleaner = mockCleaners['notifications.engagement'];
+  expect(cleaner).toBeDefined();
+  useAppStore.setState({ isAuthenticated: false, userId: null, profile: null, subscription: null, subscriptionLoaded: false });
+  await cleaner!({ memberId: MEMBER });
+  await settle();
+
+  const left = [
+    ...notificationsState.scheduled().map((r) => r.identifier),
+    ...notificationsState.presented().map((n) => n.request.identifier),
+  ];
+  expect(left).toEqual([ENGAGEMENT_IDS.noPurchaseDay12]);
 });
