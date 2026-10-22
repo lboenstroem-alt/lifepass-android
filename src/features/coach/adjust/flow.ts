@@ -41,26 +41,24 @@ import {
   appendProgramUser,
   appendProposalMessage,
   applyFeedbackSafetyHook,
-  isProgramQuestion,
-  markProgramAnswered,
-  programStoreChanged,
-  readProgramContext,
-  startProgram,
-  weekdayList,
-  type ProgramContext,
-} from '../program';
-import { closeProgramQuestions } from '../program/messages';
-import {
+  closeProgramQuestions,
   DAY_CHOICES,
   defaultTrainingDays,
   goalLabelKey,
+  isProgramQuestion,
   lengthLabelKey,
+  markProgramAnswered,
   PROGRAM_GOALS,
   PROGRAM_LENGTHS,
+  programStoreChanged,
+  readProgramContext,
+  startProgram,
   targetDirection,
+  weekdayList,
+  type ProgramContext,
   type ProgramGoal,
   type ProgramLength,
-} from '../program/model';
+} from '../program';
 import { coachHost } from '../store/host';
 import { isOpenQuestion, type CoachMessage } from '../store/messages';
 
@@ -295,25 +293,20 @@ export async function selectAdjustOption(messageId: string, value: string, label
   const host = coachHost();
   const message = host.messages().find((candidate) => candidate.id === messageId);
 
-  // The two chips a gate bubble offers belong to no flow yet. "Start a new
-  // plan instead" on the menu is the second of them.
-  switch (value) {
-    case V.open:
-      if (!message || message.answered) return;
-      markProgramAnswered(messageId, label);
-      appendProgramUser(label);
-      await beginAdjust(readProgramContext(), 'gate');
-      return;
-    case V.newPlan:
-      if (!message || message.answered) return;
-      markProgramAnswered(messageId, label);
-      appendProgramUser(label);
-      endAdjustFlow();
-      appendProgramBubble('program.make_new.replaces_running');
-      await startProgram({ entry: 'intent', showUserBubble: false, skipExistingPlanGates: true });
-      return;
-    default:
-      break;
+  // "Start a new plan instead" on the menu leaves the flow rather than
+  // changing it. (iOS answers the running-plan gate's "Adjust my plan" and
+  // "Start a new plan" here too, in its one handler for every programme and
+  // adjust chip. Here those two sit on the wizard's bubbles, `flow:
+  // 'program'`, so COACH-4 answers them, and "Adjust my plan" comes back
+  // through its handoff as `beginAdjust`: one answer for each gate chip.)
+  if (value === V.newPlan) {
+    if (!message || message.answered) return;
+    markProgramAnswered(messageId, label);
+    appendProgramUser(label);
+    endAdjustFlow();
+    appendProgramBubble('program.make_new.replaces_running');
+    await startProgram({ entry: 'intent', showUserBubble: false, skipExistingPlanGates: true });
+    return;
   }
 
   // Only the open question of the open flow may answer: a chip left on an

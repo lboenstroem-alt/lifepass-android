@@ -37,7 +37,7 @@ import {
   targetDirection,
   type ProgramGoal,
   type ProgramLength,
-} from '../program/model';
+} from '../program';
 
 // ---------------------------------------------------------------------------
 // Where the flow starts
@@ -356,7 +356,8 @@ export function keyForSubmit(flow: AdjustFlowState): { readonly flow: AdjustFlow
  * Every chip value the flow asks with (iOS `ProgramOptionValue.adjust*`).
  * Each starts `adjust.`, so a tap on any of them comes back here even from a
  * bubble the wizard drew. `open` and `newPlan` also sit on the wizard's own
- * running-plan gate (COACH-4 handles them there).
+ * running-plan gate, where COACH-4 answers them (`open` is never on a bubble
+ * this flow draws; `newPlan` is also the menu's "Start a new plan instead").
  *
  * Exact values are matched before the prefixes: `adjust.goal` is the menu's
  * row, `adjust.goal.lose_weight` an answer to its question.

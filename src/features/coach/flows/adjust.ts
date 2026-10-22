@@ -17,7 +17,7 @@
  * - It has no bubbles of its own: its questions are COACH-1's question
  *   bubbles, and a revision lands as the programme's proposal card.
  */
-import { installProgramAdjustHandoff } from '../program/adjustHandoff';
+import { installProgramAdjustHandoff } from '../program';
 import {
   abandonAdjust,
   beginAdjust,

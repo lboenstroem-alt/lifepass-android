@@ -15,7 +15,7 @@
  */
 import type { ApiError } from '../../../api';
 import { isMissingRoute } from '../../../api/targetWeight';
-import { ProgramOptionValue } from '../program/model';
+import { ProgramOptionValue } from '../program';
 
 import { AdjustOptionValue } from './model';
 

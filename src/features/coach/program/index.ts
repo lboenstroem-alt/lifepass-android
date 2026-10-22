@@ -16,6 +16,11 @@
  *   its outcome comes back through `setProposalOutcome`.
  * - The bubble builders, so every turn is in the health lane, and the chip
  *   values and answer models the menus are made of.
+ * - `closeProgramQuestions(predicate)`: closes open programme questions,
+ *   whatever their kind (Adjust my plan asks again after typed words).
+ * - `oneOf` and `targetDirection`: the answer readers Adjust my plan's
+ *   menus share with the wizard (a goal into lose or gain asks the safety
+ *   question and the target).
  */
 export { canRevise, installProgramAdjustHandoff, programAdjustHandoff, type ProgramAdjustHandoff } from './adjustHandoff';
 export {
@@ -31,6 +36,7 @@ export {
   appendProgramQuestion,
   appendProgramUser,
   appendProposalMessage,
+  closeProgramQuestions,
   isProgramQuestion,
   markProgramAnswered,
   ProgramMessageKind,
@@ -42,9 +48,11 @@ export {
   defaultTrainingDays,
   goalLabelKey,
   lengthLabelKey,
+  oneOf,
   PROGRAM_GOALS,
   PROGRAM_LENGTHS,
   ProgramOptionValue,
+  targetDirection,
   type ProgramEntry,
   type ProgramGoal,
   type ProgramLength,
