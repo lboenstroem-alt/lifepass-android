@@ -1,4 +1,4 @@
-// @f4-stub (plan 3.0 rule 5; RUN-2 → RUN-3): the finish and skip-workout sheets are still to come (RUN-3).
+// @f4-stub (plan 3.0 rule 5; RUN-2 → RUN-3): the finish sheet is still to come (RUN-3).
 /**
  * The runner's sheets, mounted by the runner screen (./WorkoutRunnerView.tsx)
  * over the page (RUN-3; iOS `.sheet(isPresented:)` on `WorkoutRunnerView`):
@@ -6,14 +6,18 @@
  *   'swap'         SwapExerciseSheet: from "Swap" (shown only when
  *                  `controller.swapOptions()` is not empty). A row swaps and
  *                  closes the sheet.
+ *   'skipWorkout'  SkipWorkoutSheet: from the Leave dialog's "Skip this
+ *                  workout" (offered only when `controller.canSkipWorkout`
+ *                  and online).
  *   'finish'       not yet: a development build says so.
- *   'skipWorkout'  not yet: a development build says so.
  */
 import { useSyncExternalStore } from 'react';
 
 import { Dialog } from '../../../components/ui';
 import { useT } from '../../../i18n';
 import { currentExercise } from '../model/state';
+import SkipWorkoutSheet from '../skip/SkipWorkoutSheet';
+import { skipWorkoutFlowFor } from '../skip/skipWorkoutFlow';
 import SwapExerciseSheet from '../swap/SwapExerciseSheet';
 import { swapExercise } from '../swap/swapFlow';
 
@@ -35,6 +39,7 @@ export default function RunnerSheets({ controller, sheet, onClose, isOffline }: 
   const { t } = useT();
   const { state } = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const current = currentExercise(state);
+  const skipWorkout = skipWorkoutFlowFor(controller);
   return (
     <>
       <SwapExerciseSheet
@@ -49,7 +54,8 @@ export default function RunnerSheets({ controller, sheet, onClose, isOffline }: 
           onClose();
         }}
       />
-      {__DEV__ && (sheet === 'finish' || sheet === 'skipWorkout') ? (
+      <SkipWorkoutSheet visible={sheet === 'skipWorkout'} flow={skipWorkout} onClose={onClose} />
+      {__DEV__ && sheet === 'finish' ? (
         <Dialog
           visible
           onClose={onClose}
