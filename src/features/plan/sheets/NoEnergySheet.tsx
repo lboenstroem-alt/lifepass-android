@@ -24,10 +24,10 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View, type Text } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, findNodeHandle, Pressable, StyleSheet, View, type Text } from 'react-native';
 
 import { newIdempotencyKey } from '../../../api';
-import { LPText, PrimaryButton, Sheet } from '../../../components/ui';
+import { announce, LPText, PrimaryButton, Sheet } from '../../../components/ui';
 import { postSessionAction, SessionAction, useHealthStore, type SessionActionBody, type SkipReason } from '../../../health';
 import { useT } from '../../../i18n';
 import { track } from '../../../lib/analytics';
@@ -93,6 +93,25 @@ export default function NoEnergySheet({
     };
   }, []);
 
+  // The step changed under TalkBack's focus (the tapped choice is gone): it
+  // moves to the new step's title, where VoiceOver starts reading a sheet.
+  const stepShown = useRef(false);
+  useEffect(() => {
+    if (!stepShown.current) {
+      stepShown.current = true;
+      return;
+    }
+    const timer = setTimeout(() => {
+      try {
+        const tag = titleRef.current ? findNodeHandle(titleRef.current) : null;
+        if (typeof tag === 'number') AccessibilityInfo.setAccessibilityFocus(tag);
+      } catch {
+        // No accessibility service bound: nothing to move.
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [mode]);
+
   const setBusy = (key: BusyKey | null) => {
     busyRef.current = key;
     if (alive.current) setBusyState(key);
@@ -126,6 +145,9 @@ export default function NoEnergySheet({
           if (alive.current) {
             setMoveRefused(failure.reason);
             setMode('choose');
+            // The move a TalkBack user just activated has gone: say why.
+            const line = blockedLineKey(session, { moveRefused: failure.reason, startsInSkipMode });
+            if (line) announce(t(line));
           }
           break;
         case 'changed':

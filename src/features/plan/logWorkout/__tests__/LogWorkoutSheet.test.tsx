@@ -8,12 +8,14 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { expectRequestValid } from '@test/contract';
 import { api, Reply } from '@test/server';
 import { useState } from 'react';
+import { AccessibilityInfo, StyleSheet } from 'react-native';
 
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { UiKitProvider } from '../../../../components/ui';
 import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
 import { decodeSessionView, useHealthStore, type SessionView } from '../../../../health';
 import { resetHealthStoreForTests } from '../../../../health/store';
+import { restoreTestFontScale, setTestFontScale } from '../../../../hooks/testing';
 import { translate } from '../../../../i18n';
 import { addServerDays, todayServerDay } from '../../../../i18n/format';
 import { setAnalyticsObserver } from '../../../../lib/analytics';
@@ -104,6 +106,7 @@ const saveButton = () => screen.getByTestId('logworkout.save');
 const title = () => screen.queryByRole('header', { name: en('logworkout.title') });
 
 beforeEach(() => {
+  setTestFontScale(1);
   bottomSheetMock.reset();
   resetHealthStoreForTests();
   setAnalyticsObserver(null);
@@ -111,6 +114,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  restoreTestFontScale();
   setAnalyticsObserver(null);
   await settle();
 });
@@ -233,6 +237,7 @@ describe('Save', () => {
 describe('refusals', () => {
   it('the 5-a-day refusal keeps the sheet open with the limit line; a retry reuses the key, a change mints one', async () => {
     api.on('POST', PATH, LIMIT);
+    const spoken = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
     await render(<Harness />);
     await press('Gym');
     await press('45 minutes');
@@ -240,6 +245,8 @@ describe('refusals', () => {
     expect(screen.getByTestId('logworkout.error')).toHaveTextContent(en('logworkout.limit'));
     expect(title()).toBeOnTheScreen();
     expect(handlers.onResult).not.toHaveBeenCalled();
+    expect(spoken).toHaveBeenCalledWith(en('logworkout.limit'));
+    spoken.mockRestore();
     const first = api.sent(PATH, 'POST').headers['idempotency-key'];
 
     await pressID('logworkout.save');
@@ -344,6 +351,19 @@ describe('the note', () => {
     await fireEvent.changeText(note, 'a'.repeat(200));
     expect(screen.getByTestId('logworkout.note')).toHaveProp('value', 'a'.repeat(140));
     expect(screen.getByTestId('logworkout.note.count')).toHaveTextContent(en('logworkout.note_count', { count: '140' }));
+  });
+
+  it('grows to four lines at any text size before it scrolls', async () => {
+    const { unmount } = await render(<Harness />);
+    const style = () => StyleSheet.flatten(screen.getByTestId('logworkout.note').props.style);
+    const atDefault = style().maxHeight as number;
+    await unmount();
+    setTestFontScale(2);
+    await render(<Harness />);
+    expect(style().maxHeight as number).toBeGreaterThan(atDefault * 1.5);
+    // Every choice is still there at the largest text sizes.
+    expect(screen.getByRole('button', { name: 'Run or walk' })).toBeOnTheScreen();
+    expect(screen.getByTestId('logworkout.save')).toBeOnTheScreen();
   });
 
   it('Return ends the note instead of adding a line', async () => {

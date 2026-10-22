@@ -9,6 +9,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { expectRequestValid } from '@test/contract';
 import { api, Reply } from '@test/server';
 import { useState } from 'react';
+import { AccessibilityInfo } from 'react-native';
 
 import { TransportError } from '../../../../api';
 import { stubApiClientPerTest } from '../../../../api/testing';
@@ -150,6 +151,7 @@ describe('move', () => {
     ['session_move_past_week', 'past_week', 'noenergy.move_past_week'],
   ])('a %s refusal keeps the sheet open on the skip, with its line', async (slug, reason, lineKey) => {
     const events = recordAnalytics();
+    const spoken = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
     api.on('POST', PATH, Reply.problem(409, slug));
     await render(<Harness />);
     await press(en('noenergy.move'));
@@ -160,6 +162,9 @@ describe('move', () => {
     expect(handlers.onResult).not.toHaveBeenCalled();
     expect(handlers.onClose).not.toHaveBeenCalled();
     expect(events).toEqual([{ event: 'workout_move_refused', params: { reason } }]);
+    // TalkBack hears why the move it just activated has gone.
+    expect(spoken).toHaveBeenCalledWith(en(lineKey));
+    spoken.mockRestore();
   });
 
   it('session_action_not_allowed closes the sheet: the plan changed elsewhere', async () => {
