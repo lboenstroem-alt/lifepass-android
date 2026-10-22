@@ -49,3 +49,16 @@ useAppStore.subscribe((state) => {
   languageSeen = state.language;
   void ensureChannels(state.language);
 });
+
+// NOTIF-1 (shared-file edit, F7 sign-off at merge): the engagement nudges
+// and the health reminders, loaded AFTER this layer's own startup above and
+// in a try, so nothing in their import tree can cost the handler, the
+// channels or the account language. Intended home: their own SHARED_LAYERS
+// entry in src/app/registrations.ts (F3 contract request), and then these
+// lines go (./reminderStartup.ts).
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- loaded last, in its own try (see above)
+  require('./reminderStartup');
+} catch {
+  // ./reminderStartup.ts reports a failing install itself; failing to load at all costs only the reminders.
+}

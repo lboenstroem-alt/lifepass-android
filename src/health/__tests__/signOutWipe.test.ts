@@ -87,7 +87,9 @@ it('the id the health store last knew names the folder when the sign-out names n
 it('with nobody to name, the health notifications and the feedback member still go', async () => {
   const later = new Date(Date.now() + 3_600_000);
   await scheduleAt('health.weeklycheckin', later, { title: 'a', body: 'b' }, 'health');
-  await scheduleAt('engagement.stayactive', later, { title: 'a', body: 'b' }, 'engagement');
+  // A ladder rung is the phone's, not the member's: a sign-out leaves it
+  // (the member's own nudges, stay-active and visits-reset, go: NOTIF-1).
+  await scheduleAt('engagement.nopurchase.d5', later, { title: 'a', body: 'b' }, 'engagement');
   await AsyncStorage.setItem(FeedbackKeys.lastProfileId, MEMBER_A);
   const seen: HealthWipeContext[] = [];
   const unregister = registerHealthWipeHook('test.seen', (context) => void seen.push(context));
@@ -95,7 +97,7 @@ it('with nobody to name, the health notifications and the feedback member still 
   await useAppStore.getState().handleSignOut();
   unregister();
 
-  expect(notificationsState.scheduled().map((n) => n.identifier)).toEqual(['engagement.stayactive']);
+  expect(notificationsState.scheduled().map((n) => n.identifier)).toEqual(['engagement.nopurchase.d5']);
   expect(await AsyncStorage.getItem(FeedbackKeys.lastProfileId)).toBeNull();
   // The feedback summary and the Coach's health messages still go.
   expect(seen).toEqual([{ profileId: null, reason: 'signout' }]);
