@@ -48,7 +48,7 @@
 // CONTRACTS. `openedSight` (for EXPL-1's search group, iOS
 // `openSearchedSight`) and the sights' controls (`useSightsMapControls`,
 // ./sightsControls, ATTR-2's on merge).
-import { Camera, LocationPuck, MapView, MarkerView } from '@rnmapbox/maps';
+import { Camera, LocationPuck, MapView, MarkerView, type MapState } from '@rnmapbox/maps';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import { StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 
@@ -202,9 +202,22 @@ function LiveExploreMap({
   const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
   const [reportedZoom, setReportedZoom] = useState<number | null>(null);
   const zoom = reportedZoom ?? regionZoom(initialRegion, mapSize.width, mapSize.height);
-  // The toggle, the legend's sight entries and what hangs under the legend
-  // (ATTR-2's, through ./sightsControls).
-  const sights = useSightsMapControls({ showSights, setShowSights, zoom });
+  // The camera as last reported at the end of a move: where the sights layer
+  // lays out its rings, names and trails (iOS `onMapCameraChange(.onEnd)`).
+  const [camera, setCamera] = useState<MapState['properties'] | null>(null);
+  // The toggle, the legend's sight entries, what hangs under the legend and
+  // what the layer draws (ATTR-2's, through ./sightsControls).
+  const sights = useSightsMapControls({
+    showSights,
+    setShowSights,
+    zoom,
+    active,
+    camera,
+    openingRegion: initialRegion,
+    mapSize,
+    venues: located,
+    openedSight,
+  });
 
   // MARK: Location
 
@@ -478,11 +491,14 @@ function LiveExploreMap({
         logoPosition={{ bottom: Math.max(0, bottomInset) + 4, left: 8 }}
         attributionPosition={{ bottom: Math.max(0, bottomInset) + 4, left: 92 }}
         onPress={onMapPress}
-        onMapIdle={(state) => setReportedZoom(state.properties.zoom)}
+        onMapIdle={(state) => {
+          setReportedZoom(state.properties.zoom);
+          setCamera(state.properties);
+        }}
         testID="explore.map.view"
       >
         <Camera ref={cameraRef} defaultSettings={cameraDefaults} />
-        <SightsLayer visible={showSights} zoom={zoom} onSelectSight={onSelectSight} />
+        <SightsLayer visible={showSights} zoom={zoom} onSelectSight={onSelectSight} content={sights.layer} />
         <VenueNamesLayer venues={located} pinnedId={pinnedId} />
         {/* In the list's order, always: a reordered marker is a native view
             torn down and added again. The pinned one is `isSelected`, which

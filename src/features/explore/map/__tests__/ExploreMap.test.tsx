@@ -547,6 +547,8 @@ describe('the legend', () => {
   });
 
   it('draws nothing with no venue on the map and no sights', async () => {
+    // The sights layer off (ATTR-2's seam answers nothing for the legend).
+    mockSightsControls.impl = () => ({ toggle: null, belowLegend: null, legendShowsSights: false, legendShowsTrails: false });
     await renderMap({ venues: [] });
     expect(screen.queryByTestId('explore.legend')).toBeNull();
   });
@@ -670,10 +672,11 @@ describe('a sight opened from search (iOS openSearchedSight)', () => {
 });
 
 describe('the sights’ controls (ATTR-2’s seam, ../sightsControls)', () => {
-  it('by default puts nothing over the map and keeps the legend’s sight entries off', async () => {
+  it('by default (ATTR-2’s controls) shows the toggle on and lists the sights, not trails it is not drawing', async () => {
     setWindowWidth(800);
     await renderMap();
-    expect(screen.queryByTestId('explore.legend.sights')).toBeNull();
+    expect(screen.getByTestId('explore.map.sightsToggle')).toBeSelected();
+    expect(screen.getByTestId('explore.legend.sights')).toBeTruthy();
     expect(screen.queryByTestId('explore.legend.trails')).toBeNull();
   });
 
