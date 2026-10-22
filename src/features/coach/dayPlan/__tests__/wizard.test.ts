@@ -310,6 +310,22 @@ describe('starting', () => {
     expect(messages()).toHaveLength(before);
     busy.end();
   });
+
+  it('a quick second tap on "Plan something else" starts nothing more while the fresh goal question is open', async () => {
+    restartDayPlan();
+    restartDayPlan();
+    expect(messages().filter((message) => message.role === 'user')).toHaveLength(1);
+    const goals = messages().filter((message) => message.flow === 'dayPlan' && message.text === en('coach.plan.q.goal'));
+    expect(goals).toHaveLength(1);
+    expect(openQuestion().id).toBe(goals[0]!.id);
+
+    // Once the wizard has an answer, the chip starts afresh again.
+    await tap('relax');
+    restartDayPlan();
+    expect(messages().at(-2)).toMatchObject({ role: 'user', text: en('coach.plan.new') });
+    expect(openQuestion().text).toBe(en('coach.plan.q.goal'));
+    expect(dayPlanStateForTests()?.answers.goal).toBeNull();
+  });
 });
 
 describe('the questions', () => {

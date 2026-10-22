@@ -168,10 +168,15 @@ export function enterDayPlan(userText: string): void {
  * never over a reply in flight, and every open question abandoned first.
  * "Plan something else" under a plan (`coach.plan.new`) and the programme
  * gate's "Plan my day" (`coach.chip.plan_day`, COACH-4) start here.
+ *
+ * Nothing happens while a fresh wizard already has its first question open:
+ * a quick second tap (nothing sets typing on this path) would otherwise leave
+ * two of the member's bubbles and a dead goal question between them.
  */
 export function startDayPlanFromChip(labelKey: string): void {
   const host = coachHost();
   if (host.isTyping()) return;
+  if (wizard !== null && wizard.answers === EMPTY_PLAN_ANSWERS && isCurrentQuestion(wizard.questionId)) return;
   host.abandonOpenQuestions();
   start(host.t(labelKey), EMPTY_PLAN_ANSWERS);
 }
