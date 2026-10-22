@@ -23,6 +23,8 @@ import type { MealRecord } from '../types/models';
 export interface MealToastOptions {
   readonly action?: ToastAction;
   readonly bottomOffset?: number;
+  /** Longer than the meal kind's 4 s (Photo's "Your photo estimate is ready to check" stays 6 s). */
+  readonly durationMs?: number;
   /**
    * The meal page this toast belongs to (its model): an in-page toast
    * ("Added" with Undo, "Your unsaved items are back."), which iOS draws in
@@ -37,7 +39,7 @@ let pageToastOwner: object | null = null;
 
 /** A meal toast (iOS `MealToastCenter.show`): with an action, or the plain one. */
 export function showMealToast(message: string, options: MealToastOptions = {}): void {
-  showToast(message, { kind: 'meal', action: options.action, bottomOffset: options.bottomOffset });
+  showToast(message, { kind: 'meal', action: options.action, bottomOffset: options.bottomOffset, durationMs: options.durationMs });
   pageToastOwner = options.page ?? null;
 }
 

@@ -26,7 +26,6 @@ import { useStore } from 'zustand';
 
 import { ApiError } from '../../../api';
 import { registerSignOutCleaner } from '../../../app/signOut';
-import { showToast } from '../../../components/ui/Toast';
 import { useHealthStore } from '../../../health/store';
 import { registerHealthWipeHook } from '../../../health/wipe';
 import { currentLanguage, translate } from '../../../i18n';
@@ -176,8 +175,8 @@ function finish(outcome: MealScanOutcome, key: string): MealScanOutcome {
   switch (outcome.kind) {
     case 'draft': {
       const mealId = outcome.meal.id;
-      showToast(translate('meal.photo.ready', language), {
-        kind: 'meal',
+      // App-wide (no page): the page it came from has gone.
+      showMealToast(translate('meal.photo.ready', language), {
         durationMs: SCAN_READY_TOAST_MS,
         action: {
           label: translate('meal.photo.check', language),
