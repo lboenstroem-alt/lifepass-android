@@ -41,9 +41,9 @@ import type { CoachProgramEntry } from '../../../stores/intentStore';
 import type { QuestionOption } from '../../../types/coach';
 import type { BodyDetails, BodyIntakeResult } from '../../body/sheets';
 import type { ProposalOutcome } from '../../plan/proposal/ProgramProposalCard';
-import { dayPlanFlow } from '../flows/dayPlan';
 import type { CoachStartContext } from '../flows/types';
 import { programIntentMatches } from '../routing/intents';
+import type * as CoachStoreModule from '../store/coachStore';
 import { coachHost, type CoachBusyToken } from '../store/host';
 
 import { canRevise, programAdjustHandoff } from './adjustHandoff';
@@ -126,6 +126,17 @@ let flow: ProgramFlowState | null = null;
  * must not land its numbers in whatever comes next.
  */
 let run = 0;
+/**
+ * Bumped by `resetProgram` alone: a sign-out, a new chat, and the member's
+ * health data wiped (`healthWiped`). A build or a next block's read still out
+ * when the health data is wiped must land nowhere. The wipe keeps the chat
+ * (only its health turns go), so its generation does not change and
+ * `busy.isCurrent()` alone would let the plan, its card or an error bubble
+ * back into the chat the member just cleared. Not `run`: a proposal card's
+ * outcome ends the flow too, and a plan the server really built must not be
+ * dropped because the member settled an older card while it was being made.
+ */
+let resets = 0;
 /** The "You can pick up to 3." timers, by message. */
 const hintTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -319,16 +330,19 @@ export function programStoreChanged(): void {
 async function beginNextBlock(previousProgramId: string, context: ProgramContext): Promise<void> {
   const host = coachHost();
   const busy = host.busy();
+  // A wipe while the block is read: no wizard prefilled with it afterwards.
+  const opened = resets;
+  const stillHere = () => busy.isCurrent() && opened === resets;
   try {
     let answers = EMPTY_ANSWERS;
     try {
       const detail = await fetchProgram(previousProgramId, host.language());
-      if (!busy.isCurrent()) return;
+      if (!stillHere()) return;
       answers = prefillFrom(detail);
     } catch {
       // The block cannot be read: the wizard asks everything.
     }
-    if (!busy.isCurrent()) return;
+    if (!stillHere()) return;
     // Safety answers are never stored, so question 5 is always asked again,
     // and the body sheet is offered again with the profile's own latest
     // values.
@@ -512,12 +526,18 @@ export function repeatOpenQuestion(): void {
 // ---------------------------------------------------------------------------
 // Answering
 
-/** The Plan my day chip on a gate or a refusal (iOS `startPlan(labelKey: "coach.chip.plan_day")`). */
+/**
+ * The Plan my day chip on a gate, a refusal or the typed offer (iOS
+ * `startPlan(labelKey: "coach.chip.plan_day")`): the store's own door, the
+ * one the empty state's chip uses, so it waits out the same work in flight
+ * and abandons every open question the same way before the day plan starts.
+ * Required at call time: the store loads this file (through the flows), and
+ * it has long loaded by the time a chip can be tapped.
+ */
 function startDayPlan(): void {
-  const host = coachHost();
-  if (host.isTyping()) return;
-  host.abandonOpenQuestions();
-  void dayPlanFlow.enter?.({ kind: 'chip', userText: t('coach.chip.plan_day') });
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- see above
+  const { useCoachStore } = require('../store/coachStore') as typeof CoachStoreModule;
+  void useCoachStore.getState().startPlan('coach.chip.plan_day');
 }
 
 /** Question 6, or the refused target again: the body sheet in intake mode. */
@@ -929,16 +949,17 @@ export async function submitProgram(): Promise<void> {
 
   appendProgramBubble('program.building');
   const busy = host.busy();
+  const opened = resets;
   try {
     const response = await postProgramBuild(body, host.language(), minted.key);
-    if (!busy.isCurrent()) return;
+    if (!busy.isCurrent() || opened !== resets) return;
     applyBuiltProgram(response);
   } catch (error) {
     if (!busy.isCurrent()) return;
     if (isApiError(error)) {
       if (error.isCancellation) return;
-      await handleBuildFailure(error, true, busy);
-    } else {
+      await handleBuildFailure(error, true, busy, opened);
+    } else if (opened === resets) {
       appendBuildError(NETWORK_FAILURE);
     }
   } finally {
@@ -959,8 +980,21 @@ function applyBuiltProgram(response: ProgramBuildResponse): void {
   programStoreChanged();
 }
 
-async function handleBuildFailure(error: ApiError, allowSilentRetry: boolean, busy: CoachBusyToken): Promise<void> {
+async function handleBuildFailure(
+  error: ApiError,
+  allowSilentRetry: boolean,
+  busy: CoachBusyToken,
+  opened: number,
+): Promise<void> {
   const host = coachHost();
+  const plan = buildFailurePlan(error);
+  if (opened !== resets) {
+    // The health data was wiped while the call was out (see `resets`):
+    // nothing lands in the chat the member cleared and nothing is resent. A
+    // spent daily allowance is still the member's, so the lock is kept.
+    if (plan.appliesCoachLimit) host.applyCoachLimit(error, busy);
+    return;
+  }
   // Two failures are resent once without telling the member, because there
   // is nothing for them to decide (5.5).
   const retry = allowSilentRetry && flow ? silentRetry(error, flow) : null;
@@ -980,21 +1014,20 @@ async function handleBuildFailure(error: ApiError, allowSilentRetry: boolean, bu
     setFlow(minted.flow);
     try {
       const response = await postProgramBuild(retryBody, host.language(), minted.key);
-      if (!busy.isCurrent()) return;
+      if (!busy.isCurrent() || opened !== resets) return;
       applyBuiltProgram(response);
     } catch (retryError) {
       if (!busy.isCurrent()) return;
       if (isApiError(retryError)) {
         if (retryError.isCancellation) return;
-        await handleBuildFailure(retryError, false, busy);
-      } else {
+        await handleBuildFailure(retryError, false, busy, opened);
+      } else if (opened === resets) {
         appendBuildError(NETWORK_FAILURE);
       }
     }
     return;
   }
 
-  const plan = buildFailurePlan(error);
   if (plan.outcome) track('program_created', { outcome: plan.outcome });
   if (plan.targetRefused) track('target_weight_saved', { outcome: 'refused', surface: 'coach' });
   if (plan.appliesCoachLimit) host.applyCoachLimit(error, busy);
@@ -1057,6 +1090,7 @@ export function abandonProgram(): void {
 
 /** Forget everything (sign-out, a new chat, a wipe). */
 export function resetProgram(): void {
+  resets += 1;
   endFlow();
   for (const timer of hintTimers.values()) clearTimeout(timer);
   hintTimers.clear();

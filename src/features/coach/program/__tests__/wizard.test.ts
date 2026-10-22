@@ -964,6 +964,74 @@ describe('the proposal card and the wipe', () => {
     expect(messages().map((message) => message.text)).toContain('hello there');
   });
 
+  /** Lets the event loop turn until `condition` holds (a stubbed request has arrived, say). */
+  async function until(condition: () => boolean): Promise<void> {
+    for (let turn = 0; turn < 50 && !condition(); turn += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    if (!condition()) throw new Error('the condition never held');
+  }
+
+  /** Holds every `POST /coach` until `release` is called with its reply. */
+  function holdBuild(): { readonly arrived: () => boolean; release(reply: StubReply): void } {
+    let resolveReply: ((reply: StubReply) => void) | null = null;
+    api.on('POST', '/coach', () => new Promise<StubReply>((resolve) => (resolveReply = resolve)));
+    return {
+      arrived: () => resolveReply !== null,
+      release: (reply) => resolveReply?.(reply),
+    };
+  }
+
+  it('lands no plan from a build that answers after the health data was wiped', async () => {
+    const build = holdBuild();
+    await answerEverything();
+    const pending = submitProgram();
+    await until(build.arrived);
+    coach().dropHealthMessages();
+    build.release(built());
+    await pending;
+    expect(messages().some((message) => message.isHealth)).toBe(false);
+    expect(messages().some((message) => proposalOf(message) !== null)).toBe(false);
+    expect(events.map((entry) => entry.event)).not.toContain('program_created');
+    expect(programFlowForTests()).toBeNull();
+  });
+
+  it('lands no error from a build that fails after the health data was wiped, and resends nothing', async () => {
+    const build = holdBuild();
+    await answerEverything();
+    const pending = submitProgram();
+    await until(build.arrived);
+    coach().dropHealthMessages();
+    build.release(Reply.problem(409, 'idempotency_key_reused'));
+    await pending;
+    expect(messages().some((message) => message.isHealth)).toBe(false);
+    expect(api.sentAll('/coach')).toHaveLength(1);
+  });
+
+  it('keeps the daily lock from a build refused after the health data was wiped', async () => {
+    const build = holdBuild();
+    await answerEverything();
+    const pending = submitProgram();
+    await until(build.arrived);
+    coach().dropHealthMessages();
+    build.release(Reply.problem(429, 'coach-daily-limit'));
+    await pending;
+    expect(coach().limitReached).toBe(true);
+    expect(messages().some((message) => message.isHealth)).toBe(false);
+  });
+
+  it('starts no wizard from a finished block read after the health data was wiped', async () => {
+    let resolveRead: ((reply: StubReply) => void) | null = null;
+    api.on('GET', `/health/programs/${PREVIOUS_ID}`, () => new Promise<StubReply>((resolve) => (resolveRead = resolve)));
+    useIntentStore.getState().parkCoachProgram({ kind: 'nextBlock', programId: PREVIOUS_ID });
+    const pending = coach().consumeParkedEntries();
+    await until(() => resolveRead !== null);
+    coach().dropHealthMessages();
+    resolveRead!(Reply.ok({ program: programJson({ id: PREVIOUS_ID, status: 'completed' }) }));
+    await pending;
+    expect(programFlowForTests()).toBeNull();
+    expect(messages().some((message) => message.isHealth)).toBe(false);
+    expect(assistantTexts()).not.toContain(en('program.next.title'));
+  });
+
   it('ends on a new chat and on the store abandoning open questions', async () => {
     await coach().startProgram();
     coach().abandonOpenQuestions();
