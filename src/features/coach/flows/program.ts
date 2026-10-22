@@ -13,11 +13,18 @@
  *   Home and the end of a block park.
  * - `selectOption`: every chip on a programme bubble, gate and error bubbles
  *   included (they outlive the wizard).
- * - its own bubbles: the multi-select, the summary and the proposal card.
+ * - its own bubbles: the multi-select, the summary and the proposal card,
+ *   each loaded the first time one is drawn. The store loads every flow as
+ *   the Coach's sign-in and sign-out hooks load, long before any screen, so
+ *   a flow loads no UI of its own at import (../program/platform.ts says the
+ *   same of the sheets the wizard opens).
  */
-import ProgramMultiChoiceBubble from '../program/ProgramMultiChoiceBubble';
-import ProgramProposalMessage from '../program/ProgramProposalMessage';
-import ProgramSummaryBubble from '../program/ProgramSummaryBubble';
+/* eslint-disable @typescript-eslint/no-require-imports -- the bubbles load when first drawn (see above) */
+import { createElement, type ComponentType } from 'react';
+
+import type * as MultiChoiceModule from '../program/ProgramMultiChoiceBubble';
+import type * as ProposalModule from '../program/ProgramProposalMessage';
+import type * as SummaryModule from '../program/ProgramSummaryBubble';
 import { ProgramMessageKind } from '../program/messages';
 import {
   abandonProgram,
@@ -30,7 +37,20 @@ import {
   startParkedProgram,
   startProgram,
 } from '../program/wizard';
-import type { CoachFlow, CoachFlowEntry, CoachSendOptions, CoachStartContext } from './types';
+import type { CoachFlow, CoachFlowEntry, CoachMessageRendererProps, CoachSendOptions, CoachStartContext } from './types';
+
+type Renderer = ComponentType<CoachMessageRendererProps>;
+
+/** A renderer whose component is required when it first draws. */
+function loadedOnFirstDraw(load: () => Renderer, name: string): Renderer {
+  let component: Renderer | null = null;
+  const Bubble = (props: CoachMessageRendererProps) => {
+    component ??= load();
+    return createElement(component, props);
+  };
+  Bubble.displayName = name;
+  return Bubble;
+}
 
 export const programFlow: CoachFlow = {
   id: 'program',
@@ -55,9 +75,18 @@ export const programFlow: CoachFlow = {
   reset: resetProgram,
 
   renderers: {
-    [ProgramMessageKind.multiSelect]: ProgramMultiChoiceBubble,
-    [ProgramMessageKind.summary]: ProgramSummaryBubble,
-    [ProgramMessageKind.proposal]: ProgramProposalMessage,
+    [ProgramMessageKind.multiSelect]: loadedOnFirstDraw(
+      () => (require('../program/ProgramMultiChoiceBubble') as typeof MultiChoiceModule).default,
+      'ProgramMultiChoiceBubble',
+    ),
+    [ProgramMessageKind.summary]: loadedOnFirstDraw(
+      () => (require('../program/ProgramSummaryBubble') as typeof SummaryModule).default,
+      'ProgramSummaryBubble',
+    ),
+    [ProgramMessageKind.proposal]: loadedOnFirstDraw(
+      () => (require('../program/ProgramProposalMessage') as typeof ProposalModule).default,
+      'ProgramProposalMessage',
+    ),
   },
 
   enter(entry: CoachFlowEntry) {

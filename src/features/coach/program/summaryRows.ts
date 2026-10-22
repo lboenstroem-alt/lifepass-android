@@ -9,13 +9,12 @@
  */
 import type { Lang, Params } from '../../../i18n';
 import { weekdayAbbreviation } from '../../../i18n/format';
-import { givesTarget } from '../../body/sheets';
-
 import {
   bodyPartLabelKey,
   defaultTrainingDays,
   experienceLabelKey,
   focusLabelKey,
+  givesTarget,
   goalLabelKey,
   kindLabelKey,
   PROGRAM_KINDS,

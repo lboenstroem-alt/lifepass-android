@@ -24,9 +24,8 @@ import {
   selectSupportsTargetWeight,
   useAppStore,
 } from '../../../stores/appStore';
-import { turnsOffFeedbackFoodOnRefusal } from '../../feedback';
-
 import { PROGRAM_KINDS, type ProgramKind } from './model';
+import { feedbackFoodOffOnRefusal } from './platform';
 
 export interface ProgramContext {
   readonly access: HealthAccess;
@@ -112,7 +111,7 @@ export function programContextFromStores(): ProgramContext {
     liveProgram: dayProgram && isLiveStatus(dayProgram.status) ? dayProgram : null,
     liveProgramId: profileLive ? (profileProgram?.id ?? null) : null,
     standingTarget: health.today?.targetWeight ?? null,
-    turnsOffFeedbackFoodOnRefusal: turnsOffFeedbackFoodOnRefusal(),
+    turnsOffFeedbackFoodOnRefusal: feedbackFoodOffOnRefusal(),
   };
 }
 

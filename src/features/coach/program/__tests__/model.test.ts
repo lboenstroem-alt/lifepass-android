@@ -11,13 +11,14 @@
  * minting a new one after no edit would spend a second question on a retry.
  * The rule is exactly: any answer that CHANGED clears the key.
  */
-import type { BodyDetails } from '../../../body/sheets';
+import { givesTarget as bodyGivesTarget, TargetWeightRules, type BodyDetails } from '../../../body/sheets';
 import { lookup } from '../../../../i18n';
 import { kindsForUsage } from '../context';
 import {
   changeFlow,
   defaultTrainingDays,
   EMPTY_ANSWERS,
+  givesTarget,
   keyForBuild,
   newFlow,
   nextQuestion,
@@ -32,6 +33,7 @@ import {
   recordTrainingDays,
   requestBody,
   safetyFrom,
+  targetDirection,
   type ProgramAnswers,
   type SafetyOption,
 } from '../model';
@@ -376,6 +378,28 @@ describe('the target weight (SPEC 2.5, 6.2)', () => {
     expect(answers.body?.targetWeightKg).toBe(72);
     answers = must(recordAnswer(answers, 'gain_weight', 'goal'));
     expect(answers.body?.targetWeightKg).toBeNull();
+  });
+});
+
+describe('the rules the wizard shares with the body sheet', () => {
+  it('points a target the same way for every goal', () => {
+    for (const goal of ['lose_weight', 'gain_weight', 'build_muscle', 'get_fitter', 'something_new', null, undefined]) {
+      expect(targetDirection(goal)).toBe(TargetWeightRules.directionForProgramGoal(goal));
+    }
+  });
+
+  it('mentions a target only for a touched value, as the sheet says', () => {
+    for (const [targetWeightKg, targetWeightTouched] of [
+      [72, true],
+      [72, false],
+      [null, true],
+      [null, false],
+    ] as const) {
+      expect(givesTarget({ targetWeightKg, targetWeightTouched })).toBe(bodyGivesTarget({ targetWeightKg, targetWeightTouched }));
+    }
+    expect(givesTarget(body({ targetWeightKg: 72, targetWeightTouched: true }))).toBe(true);
+    expect(givesTarget(body({ targetWeightKg: 72, targetWeightTouched: false }))).toBe(false);
+    expect(givesTarget(body({ targetWeightKg: null, targetWeightTouched: true }))).toBe(false);
   });
 });
 

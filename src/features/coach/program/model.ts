@@ -23,7 +23,8 @@
  * Idempotency-Key.
  */
 import { newIdempotencyKey } from '../../../api';
-import { TargetWeightRules, type BodyDetails } from '../../body/sheets';
+import { roundTargetKg } from '../../../api/targetWeight';
+import type { BodyDetails } from '../../body/sheets';
 
 // ---------------------------------------------------------------------------
 // The chip values (contract.ts PROGRAM_* enums), in iOS's order
@@ -143,6 +144,30 @@ export const localRefusalCopyKey = (refusal: LocalRefusal): string =>
 
 /** The most injured parts question 5b accepts. A fourth tap says so and selects nothing. */
 export const MAX_INJURIES = 3;
+
+// ---------------------------------------------------------------------------
+// The body and its target
+
+/**
+ * Which way a target goes for a programme goal (iOS
+ * `TargetWeightRules.Direction(programGoal:)`): lose or gain weight take one,
+ * every other goal (and no goal) none. The same rule as BODY-2's
+ * `TargetWeightRules.directionForProgramGoal` (a test holds them together),
+ * kept here so the wizard's answers load without the body sheet's screens.
+ */
+export function targetDirection(goal: string | null | undefined): 'lose' | 'gain' | null {
+  if (goal === 'lose_weight') return 'lose';
+  if (goal === 'gain_weight') return 'gain';
+  return null;
+}
+
+/**
+ * A target the wizard may mention in its bubble: "with a target weight",
+ * never the number (iOS `BodyDetails.givesTarget`).
+ */
+export function givesTarget(details: Pick<BodyDetails, 'targetWeightTouched' | 'targetWeightKg'>): boolean {
+  return details.targetWeightTouched && details.targetWeightKg !== null;
+}
 
 // ---------------------------------------------------------------------------
 // The questions
@@ -317,10 +342,7 @@ export function recordAnswer(answers: ProgramAnswers, value: string, question: P
       // target the server would refuse, and the summary stops saying "with a
       // target weight".
       let body = answers.body;
-      if (
-        body &&
-        TargetWeightRules.directionForProgramGoal(parsed) !== TargetWeightRules.directionForProgramGoal(answers.goal)
-      ) {
+      if (body && targetDirection(parsed) !== targetDirection(answers.goal)) {
         body = { ...body, targetWeightKg: null, targetWeightTouched: false };
       }
       return { ...answers, goal: parsed, body };
@@ -518,8 +540,8 @@ export function requestBody(
   }
   if (previousProgramId !== null) result.previousProgramId = previousProgramId;
   // Only a TOUCHED target travels, and only with a goal that takes one.
-  if (includeTarget && body && body.targetWeightTouched && TargetWeightRules.directionForProgramGoal(goal) !== null) {
-    result.targetWeightKg = body.targetWeightKg === null ? null : TargetWeightRules.rounded(body.targetWeightKg);
+  if (includeTarget && body && body.targetWeightTouched && targetDirection(goal) !== null) {
+    result.targetWeightKg = body.targetWeightKg === null ? null : roundTargetKg(body.targetWeightKg);
   }
   return result;
 }

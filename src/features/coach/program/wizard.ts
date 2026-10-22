@@ -39,9 +39,7 @@ import { track } from '../../../lib/analytics';
 import { useAppStore } from '../../../stores/appStore';
 import type { CoachProgramEntry } from '../../../stores/intentStore';
 import type { QuestionOption } from '../../../types/coach';
-import { givesTarget, openBodySheet, type BodyDetails, type BodyIntakeResult } from '../../body/sheets';
-import { turnOffFoodForSafety } from '../../feedback';
-import { openChangeDays } from '../../plan/days';
+import type { BodyDetails, BodyIntakeResult } from '../../body/sheets';
 import type { ProposalOutcome } from '../../plan/proposal/ProgramProposalCard';
 import { dayPlanFlow } from '../flows/dayPlan';
 import type { CoachStartContext } from '../flows/types';
@@ -76,6 +74,7 @@ import {
   EMPTY_ANSWERS,
   experienceLabelKey,
   focusLabelKey,
+  givesTarget,
   goalLabelKey,
   keyForBuild,
   kindLabelKey,
@@ -113,6 +112,7 @@ import {
   type SafetyOption,
 } from './model';
 import { canConfirm, MAX_HINT_MS, toggleSelection, type ProgramMultiSelect } from './multiSelect';
+import { presentBodySheet, presentDaysSheet, turnFeedbackFoodOff } from './platform';
 import { weekdayListIn } from './summaryRows';
 
 // ---------------------------------------------------------------------------
@@ -295,7 +295,7 @@ export function offerFromTyped(text: string, context: CoachStartContext): boolea
  */
 export function applyFeedbackSafetyHook(): void {
   if (!readProgramContext().turnsOffFeedbackFoodOnRefusal) return;
-  void turnOffFoodForSafety().catch(() => undefined);
+  void turnFeedbackFoodOff().catch(() => undefined);
   appendProgramBubble('program.refused.feedback_food_off');
 }
 
@@ -526,7 +526,7 @@ function openBodyIntake(): void {
   const context = readProgramContext();
   const previous = flow.answers.body;
   const opener = run;
-  openBodySheet({
+  presentBodySheet({
     kind: 'intake',
     prefill: {
       weightKg: previous?.weightKg ?? context.latestWeightKg,
@@ -559,7 +559,7 @@ function openDaysPicker(): void {
   const count = flow.answers.daysPerWeek ?? 3;
   const selected = flow.answers.trainingDays.length > 0 ? flow.answers.trainingDays : defaultTrainingDays(count);
   const opener = run;
-  openChangeDays({
+  presentDaysSheet({
     kind: 'select',
     daysPerWeek: count,
     selected,
