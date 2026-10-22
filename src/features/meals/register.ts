@@ -23,20 +23,39 @@
 // Plan's load and pull flush meals as the member's own action after the
 // workout outbox, and a meal the server refuses shows in Plan's failed-item
 // banner with Discard (../__tests__/register.test.ts).
+//
+// PLAN'S FOOD CARD: the meals still waiting in the outbox are installed into
+// Plan's food card the same way (iOS PlanNutritionCard reads
+// `MealOutbox.shared.pending(on:)`), so a meal saved offline shows there with
+// "Waiting to sync" until the flush sends it
+// (../../plan/nutrition/__tests__/queuedMealsMergeGate.test.tsx).
 import { registerActivationHook, registerSignOutCleaner } from '../../app/signOut';
 import * as localStore from '../../health/localStore';
 import { registerHealthWipeHook } from '../../health/wipe';
 import { installPlanOutbox } from '../plan';
+import { installPlanQueuedMeals } from '../plan/nutrition';
 
 import { foodsCacheProfileId, resetFoodsCacheMemory } from './foodsCache/foodsCache';
 import {
   activateMealOutbox,
   mealOutboxPlanSource,
   mealOutboxProfileId,
+  pendingMealsOn,
   resetMealOutboxMemory,
+  useMealOutbox,
 } from './outbox/mealOutbox';
 
 installPlanOutbox('meal', mealOutboxPlanSource);
+
+installPlanQueuedMeals({
+  pendingOn: (date) =>
+    pendingMealsOn(date).map((item) => ({
+      id: item.id,
+      slot: item.body.slot,
+      labels: item.body.items.map((i) => i.label),
+    })),
+  subscribe: (listener) => useMealOutbox.subscribe(() => listener()),
+});
 
 /** The meal files a member's folder can hold. */
 export const MEAL_LOCAL_FILES = ['mealOutbox', 'tray', 'foods'] as const;
