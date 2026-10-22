@@ -53,6 +53,7 @@ jest.mock('../map/ExploreMap', () => {
       onOpenSight: (slug: string) => void;
       showSightsOnOpen?: boolean;
       active?: boolean;
+      openedSight?: { slug: string; coordinate: { latitude: number; longitude: number } | null; key: number } | null;
     }) {
       const [mount] = mockUseState(() => (mockMapMounts += 1));
       return (
@@ -61,6 +62,11 @@ jest.mock('../map/ExploreMap', () => {
           <MockText testID="map.sights">{props.showSightsOnOpen ? 'sights on open' : 'plain'}</MockText>
           <MockText testID="map.mount">{`map ${mount}`}</MockText>
           <MockText testID="map.active">{props.active ? 'active' : 'covered'}</MockText>
+          <MockText testID="map.openedSight">
+            {props.openedSight
+              ? `${props.openedSight.slug} at ${props.openedSight.coordinate?.latitude},${props.openedSight.coordinate?.longitude} #${props.openedSight.key}`
+              : 'none'}
+          </MockText>
           <MockPressable onPress={() => props.onOpenVenue(props.venues[0])}>
             <MockText>Second tap on the first pin</MockText>
           </MockPressable>
@@ -86,8 +92,8 @@ jest.mock('../../attractions/SightsSearchGroup', () => {
   const { Pressable: MockPressable, Text: MockText } = require('react-native');
   return {
     __esModule: true,
-    default: (props: { query: string; onOpenSight: (slug: string) => void }) => (
-      <MockPressable onPress={() => props.onOpenSight('thingvellir')}>
+    default: (props: { query: string; onOpenSight: (slug: string, at?: { latitude: number; longitude: number }) => void }) => (
+      <MockPressable onPress={() => props.onOpenSight('thingvellir', { latitude: 64.2559, longitude: -21.1299 })}>
         <MockText>{`Sights for ${props.query}`}</MockText>
       </MockPressable>
     ),
@@ -267,6 +273,8 @@ describe('the search', () => {
 
     // Back from the sight: the map, not the results already used.
     await act(async () => navigationRef.goBack());
+    // The map heard of it, with where the sight is (iOS openSearchedSight).
+    expect(screen.getByTestId('map.openedSight')).toHaveTextContent('thingvellir at 64.2559,-21.1299 #1');
     expect(navigationRef.getCurrentRoute()?.name).toBe('ExploreMain');
     expect(screen.queryByText('Sights for thing')).toBeNull();
     expect(screen.getByTestId('explore.search').props.value).toBe('thing');
@@ -279,6 +287,8 @@ describe('the search', () => {
     await fireEvent.press(screen.getByText('Sights for thing'));
     await act(async () => undefined);
     await act(async () => navigationRef.goBack());
+    // Each opening is a new one, the same sight included.
+    expect(screen.getByTestId('map.openedSight')).toHaveTextContent('thingvellir at 64.2559,-21.1299 #2');
     expect(screen.queryByText('Sights for thing')).toBeNull();
     await fireEvent.changeText(screen.getByTestId('explore.search'), 'thingv');
     expect(screen.getByText('Sights for thingv')).toBeTruthy();
