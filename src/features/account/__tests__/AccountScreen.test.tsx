@@ -501,6 +501,51 @@ describe('the other rows', () => {
   });
 });
 
+describe('the WhatsApp row (API 0.39.0)', () => {
+  const CHAT = { whatsapp: { number: '3545550000', url: 'https://wa.me/3545550000' } };
+
+  it('is not there while the server sends no chat, or an older server sends no block', async () => {
+    signedInAs(profileJSON({ support: { whatsapp: null } }));
+    await renderAccount();
+    expect(screen.queryByTestId('account.row.whatsapp')).toBeNull();
+    expect(screen.queryByText('Chat on WhatsApp')).toBeNull();
+  });
+
+  it('sits under Help & support and opens the chat with the greeting, in English', async () => {
+    signedInAs(profileJSON({ support: CHAT }));
+    await renderAccount();
+    // (No referral row: the referral route answers 404 here.)
+    expect(rowsOf('account.account')).toEqual([
+      '[BodyGoalsRow]',
+      '[IdentityRow]',
+      'Language, English',
+      'Notifications',
+      'Help & support, support@lifepass.is',
+      'Chat on WhatsApp',
+      'Log out',
+      '[DeletionRow]',
+    ]);
+    const row = screen.getByTestId('account.row.whatsapp');
+    expect(row.props.accessibilityHint).toBe('Opens a chat with LifePass support in WhatsApp');
+    await fireEvent.press(row);
+    expect(openURL).toHaveBeenCalledWith(
+      'https://wa.me/3545550000?text=Hi%20LifePass%2C%20I%20have%20a%20question%20about%20',
+    );
+  });
+
+  it('in Icelandic', async () => {
+    signedInAs(profileJSON({ locale: 'is', support: CHAT }));
+    await renderAccount();
+    const row = screen.getByTestId('account.row.whatsapp');
+    expect(within(row).getByText('Spjalla á WhatsApp')).toBeOnTheScreen();
+    expect(row.props.accessibilityHint).toBe('Opnar spjall við þjónustuver LifePass í WhatsApp');
+    await fireEvent.press(row);
+    expect(openURL).toHaveBeenCalledWith(
+      'https://wa.me/3545550000?text=H%C3%A6%20LifePass%2C%20%C3%A9g%20er%20me%C3%B0%20spurningu%20um%20',
+    );
+  });
+});
+
 describe('the footer', () => {
   beforeEach(() => signedInAs(profileJSON()));
 
