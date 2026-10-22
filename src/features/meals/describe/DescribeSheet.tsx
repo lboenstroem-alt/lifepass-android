@@ -20,9 +20,19 @@
  * the POST body, and are never written to disk, a URL, a log or analytics.
  * What comes back is the list of foods, which is what the diary keeps.
  *
- * Android: the sheet cannot be closed by hand while an estimate or the
- * consent is in flight (iOS `interactiveDismissDisabled(model.isBusy)`);
- * hardware back closes it otherwise.
+ * Android: the sheet cannot be pulled down or closed with back while an
+ * estimate or the consent is in flight (iOS
+ * `interactiveDismissDisabled(model.isBusy)`); hardware back closes it
+ * otherwise.
+ *
+ * CANCEL WHILE ESTIMATING. Cancel stays on during "One moment" (off only
+ * while the consent is granted), as on iOS, and the estimate runs on: iOS
+ * runs it in a Task the sheet does not own. So its answer is handled the
+ * same whether or not the sheet is still up: it is counted, and a draft the
+ * server saved still goes to the meal page, never orphaned in the diary's
+ * "Waiting for review". Only what draws on this sheet needs it up. A close
+ * names its own opening (`closeDescribe(id)`), so a late answer can never
+ * close a newer sheet.
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from 'react';
@@ -49,7 +59,7 @@ import {
   type MealDescribeModelOptions,
 } from './describeModel';
 import { DESCRIBE_MAX_LENGTH, describeCounter } from './describeText';
-import { closeDescribe, type DescribeRequest } from './presenter';
+import { closeDescribe, isDescribeHostAttached, useDescribePresenter, type DescribeRequest } from './presenter';
 
 export interface DescribeSheetProps {
   readonly request: DescribeRequest;
@@ -103,8 +113,8 @@ export default function DescribeSheet({ request, visible, onClosed, modelOptions
   const counter = describeCounter(model.text);
 
   const close = useCallback(() => {
-    closeDescribe();
-  }, []);
+    closeDescribe(request.id);
+  }, [request.id]);
 
   const searchInstead = useCallback(() => {
     const words = model.cleanedText;
@@ -116,10 +126,14 @@ export default function DescribeSheet({ request, visible, onClosed, modelOptions
   const estimateRef = useRef<() => Promise<void>>(async () => undefined);
 
   const showFullConsent = useCallback(() => {
+    // iOS presents it from this sheet: once the member has closed the sheet,
+    // nothing comes up in its place.
+    const { request: shown, visible: up } = useDescribePresenter.getState();
+    if (!mounted.current || !up || shown?.id !== request.id) return;
     const opened = openHealthConsent({ entry: 'scan', onGranted: () => estimateRef.current() });
     // No app-wide host to draw it (or one already up): this sheet draws its own.
     if (!opened) setLocalConsent(true);
-  }, []);
+  }, [request.id]);
 
   /** The refusals every health screen answers the same way. */
   const answer = useCallback(
@@ -142,13 +156,13 @@ export default function DescribeSheet({ request, visible, onClosed, modelOptions
           request.onClosePage?.();
           return;
         case 'pendingDeletion':
-          setRefusalKey('health.err.pending_deletion');
+          if (mounted.current) setRefusalKey('health.err.pending_deletion');
           return;
         case 'rateLimited':
-          setRefusalKey('health.err.rate_limited');
+          if (mounted.current) setRefusalKey('health.err.rate_limited');
           return;
         default:
-          setRefusalKey('common.error_body');
+          if (mounted.current) setRefusalKey('common.error_body');
       }
     },
     [close, request, showFullConsent],
@@ -160,13 +174,19 @@ export default function DescribeSheet({ request, visible, onClosed, modelOptions
     setRefusalKey(null);
     track('meal_describe_submitted');
     const outcome = await model.estimate(slot, date, language);
-    if (!mounted.current) return;
+    // Signed out meanwhile (the host went, and the request with it): nothing
+    // is handed to a page that is no longer there.
+    if (!mounted.current && !isDescribeHostAttached()) return;
+    // From here on the sheet may have been cancelled (see CANCEL WHILE
+    // ESTIMATING above): the answer is handled all the same.
     switch (outcome.kind) {
       case 'draft':
         track('meal_describe_result', { outcome: 'ok' });
         announce(t('meal.describe.ready'));
-        request.onDraft(outcome.meal.id, outcome.meal);
+        // Close first: a UI kit sheet draws over every page, so the page
+        // that opens the draft must not come up under it.
         close();
+        request.onDraft(outcome.meal.id, outcome.meal);
         return;
       case 'needsConsent':
         track('meal_describe_result', { outcome: 'consent' });
@@ -318,15 +338,15 @@ export default function DescribeSheet({ request, visible, onClosed, modelOptions
           ) : null}
         </View>
       </Sheet>
-      {localConsent ? (
-        <HealthConsentSheet
-          visible={localConsent}
-          entry="scan"
-          onClose={() => setLocalConsent(false)}
-          onGranted={() => estimateRef.current()}
-          testID="meal.describe.fullConsent"
-        />
-      ) : null}
+      {/* Mounted for the sheet's whole life and driven by `visible`: the
+          retry after a grant (and a minor's wipe) runs once it has gone. */}
+      <HealthConsentSheet
+        visible={localConsent}
+        entry="scan"
+        onClose={() => setLocalConsent(false)}
+        onGranted={() => estimateRef.current()}
+        testID="meal.describe.fullConsent"
+      />
     </>
   );
 }

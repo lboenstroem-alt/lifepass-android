@@ -28,7 +28,9 @@ export interface DescribePrefill {
   /**
    * The estimate was saved as a draft: the meal page opens it. Called after
    * the sheet has started to close; the record is the draft as the server
-   * saved it (the page may open it without reading it again).
+   * saved it (the page may open it without reading it again). Also called
+   * when the member pressed Cancel while it was estimating (iOS: the
+   * estimate's Task outlives the sheet), so the draft is never orphaned.
    */
   readonly onDraft: (mealId: string, meal: MealRecord) => void;
   /** "Search instead" (and a route that is gone): back to the search with these words. */
@@ -82,10 +84,21 @@ export function openDescribe(prefill: DescribePrefill): boolean {
   return true;
 }
 
-/** Starts the close (the sheet slides away, then `describeClosed`). */
-export function closeDescribe(): void {
-  if (!useDescribePresenter.getState().visible) return;
+/**
+ * Starts the close (the sheet slides away, then `describeClosed`). With an
+ * `id`, only that opening: an answer that lands after its sheet was
+ * cancelled must not close a newer one.
+ */
+export function closeDescribe(id?: number): void {
+  const { request, visible } = useDescribePresenter.getState();
+  if (!visible) return;
+  if (id !== undefined && request?.id !== id) return;
   useDescribePresenter.setState({ visible: false });
+}
+
+/** True while a host is mounted (signed in): a late answer still has a page to go to. */
+export function isDescribeHostAttached(): boolean {
+  return hostsMounted > 0;
 }
 
 /** The sheet has gone: its request (and the words in it) goes too. */

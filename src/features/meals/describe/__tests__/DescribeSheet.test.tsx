@@ -116,6 +116,11 @@ async function open(prefill: Partial<DescribePrefill> = {}) {
 
 const estimateButton = () => screen.getByTestId('meal.describe.submit');
 const isOpen = () => useDescribePresenter.getState().visible;
+// The full consent sheet (F7's HealthConsentSheet), drawn by this sheet when no app-wide host can.
+const consentBox = () => screen.getByRole('checkbox', { name: en('healthconsent.check.consent') });
+const ageBox = () => screen.queryByRole('checkbox', { name: en('healthconsent.check.age') });
+const turnOn = () => screen.getByRole('button', { name: en('healthconsent.cta') });
+const v3Granted = { optedIn: true, version: '2026-09-v3', consentedAt: '2026-10-16T10:00:00Z', ageSource: 'kennitala' };
 
 beforeEach(() => {
   bottomSheetMock.reset();
@@ -224,6 +229,77 @@ it('the one-tap consent: the describe text, v3 granted, then the same words with
   expect(grant.headers['idempotency-key']).not.toBe(sent[0]!.key);
   expect(useAppStore.getState().profile?.health?.consent?.version).toBe('2026-09-v3');
   expect(events.find(([event]) => event === 'health_consent_granted')?.[1]).toEqual({ entry: 'describe', source: 'kennitala' });
+});
+
+it('a one-tap consent that needs the age opens the full sheet; its grant estimates the same words with the same key', async () => {
+  signIn();
+  const sent = useDescribeAnswers([problem(409, 'meal_describe_consent_required'), ok(9)]);
+  api.on('POST', '/profile/health-consent', Reply.ok(v3Granted));
+  api.once('POST', '/profile/health-consent', Reply.problem(409, 'health_age_attestation_required'));
+  const { onDraft } = await open();
+  await fireEvent.press(estimateButton());
+  await waitFor(() => screen.getByTestId('meal.describe.consent'));
+  await fireEvent.press(screen.getByTestId('meal.describe.consent'));
+  // No app-wide host in this test: the describe sheet draws the full sheet itself.
+  await waitFor(() => expect(consentBox()).toBeOnTheScreen());
+  await fireEvent.press(consentBox());
+  const age = ageBox();
+  if (age) await fireEvent.press(age);
+  await fireEvent.press(turnOn());
+  // The retry runs once the full sheet has gone (it stays mounted to report it).
+  await waitFor(() => expect(onDraft).toHaveBeenCalledWith('meal-text-1', draft));
+  expect(sent).toHaveLength(2);
+  expect(sent[1]!.key).toBe(sent[0]!.key);
+  expect(sent[1]!.body.text).toBe('Focaccia sandwich with mozzarella and pesto');
+  expect(api.sentAll('/profile/health-consent', 'POST')).toHaveLength(2);
+});
+
+it('a consent the server says is missing opens the full sheet, and a grant estimates again with the same key', async () => {
+  signIn();
+  const sent = useDescribeAnswers([problem(409, 'health_consent_required'), ok(9)]);
+  api.on('POST', '/profile/health-consent', Reply.ok(v3Granted));
+  const { onDraft } = await open();
+  await fireEvent.press(estimateButton());
+  await waitFor(() => expect(consentBox()).toBeOnTheScreen());
+  expect(isOpen()).toBe(true);
+  await fireEvent.press(consentBox());
+  await fireEvent.press(turnOn());
+  await waitFor(() => expect(onDraft).toHaveBeenCalledTimes(1));
+  expect(sent).toHaveLength(2);
+  expect(sent[1]!.key).toBe(sent[0]!.key);
+});
+
+it('Cancel while estimating: the draft still goes to the page and is counted, and never closes a newer sheet', async () => {
+  signIn();
+  let release: (value: MealDescribeResult) => void = () => undefined;
+  setMealApi(
+    fakeMealApi({
+      describe: () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    }),
+  );
+  const { onDraft } = await open();
+  await fireEvent.press(estimateButton());
+  expect(screen.getByText(en('meal.describe.estimating'))).toBeOnTheScreen();
+  // As on iOS, Cancel is off only while the consent is being granted.
+  expect(screen.getByTestId('meal.describe.cancel')).toBeEnabled();
+  await fireEvent.press(screen.getByTestId('meal.describe.cancel'));
+  expect(isOpen()).toBe(false);
+  // The member opens it again before the first answer lands.
+  const second = jest.fn();
+  await act(async () => {
+    openDescribe({ text: 'second words', onDraft: second });
+  });
+  expect(isOpen()).toBe(true);
+
+  await act(async () => release(ok(3)));
+  await waitFor(() => expect(onDraft).toHaveBeenCalledWith('meal-text-1', draft));
+  expect(events).toContainEqual(['meal_describe_result', { outcome: 'ok' }]);
+  expect(second).not.toHaveBeenCalled();
+  expect(isOpen()).toBe(true);
+  expect(screen.getByTestId('meal.describe.field').props.value).toBe('second words');
 });
 
 it('an attested consent is granted again with its attestation', async () => {
