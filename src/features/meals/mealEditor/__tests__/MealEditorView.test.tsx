@@ -7,7 +7,7 @@
 import { createNavigationContainerRef, NavigationContainer, StackActions, type InitialState } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { Text, View } from 'react-native';
 import { createStore } from 'zustand/vanilla';
 
 import { ProblemError, TransportError } from '../../../../api';
@@ -458,8 +458,16 @@ describe('a draft', () => {
   it('the amount pill doubles a photo item in one tap and checks it', async () => {
     await renderEditor({ kind: 'draft', meal: draft(), capture: fakeCapture() });
     expect(screen.getByText(en('meal.item.about_grams', { grams: '300' }))).toBeOnTheScreen();
+    // The card is placed (and pressable) once the pill's place and its own height are known.
+    jest
+      .spyOn(View.prototype as unknown as { measureInWindow: (callback: (x: number, y: number, w: number, h: number) => void) => void }, 'measureInWindow')
+      .mockImplementation((callback) => callback(280, 300, 64, 44));
     await act(async () => fireEvent.press(screen.getByTestId('mealEditor.item.0.pill')));
+    await act(async () => {
+      fireEvent(screen.getByTestId('mealEditor.item.0.pill.popover', { includeHiddenElements: true }), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 328, height: 122 } } });
+    });
     await act(async () => fireEvent.press(screen.getByTestId('mealEditor.item.0.pill.multiplier.2')));
+    jest.restoreAllMocks();
     // The row's amount and the pill both read the new grams.
     expect(screen.getAllByText('600 g')).toHaveLength(2);
     expect(screen.queryByText(en('meal.item.check_amount'))).toBeNull();

@@ -7,9 +7,15 @@
  * iOS draws a popover anchored to the pill. Android has none, so this is a
  * transparent modal with the card placed under the pill (or above it when
  * there is no room). A tap outside or back closes it without a change.
+ *
+ * The card is placed by its MEASURED height: at a larger font scale (or
+ * with a wider "1,25x") the chips wrap onto a second row, and a card placed
+ * by a fixed height would run off the screen or cover the pill. Until both
+ * the pill's position and the card's height are known, the card is
+ * invisible and takes no touch.
  */
 import { useRef, useState } from 'react';
-import { Modal, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Modal, Pressable, StyleSheet, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 
 import { LPText } from '../../../components/ui';
 import { HealthFormat, useT } from '../../../i18n';
@@ -30,14 +36,35 @@ export interface AmountPillProps {
 
 type Anchor = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
 
+/** Room for the six chips on one row at the default text size; they wrap past that. */
 const CARD_WIDTH = 6 * minTouch + 5 * 8 + 24;
-const CARD_HEIGHT = 2 * minTouch + 10 + 24;
 const EDGE = 12;
+const GAP = 4;
+
+/**
+ * Where the card goes for a pill at `anchor`: under it when the card fits
+ * there, else above it, else as low as the screen allows. Exported for tests.
+ */
+export function cardPlacement(
+  anchor: Anchor,
+  card: { readonly width: number; readonly height: number },
+  window: { readonly width: number; readonly height: number },
+): { readonly top: number; readonly left: number } {
+  const below = anchor.y + anchor.height + GAP;
+  const above = anchor.y - GAP - card.height;
+  let top: number;
+  if (below + card.height <= window.height - EDGE) top = below;
+  else if (above >= EDGE) top = above;
+  else top = Math.max(EDGE, window.height - EDGE - card.height);
+  const left = Math.min(Math.max(EDGE, anchor.x + anchor.width - card.width), window.width - EDGE - card.width);
+  return { top, left };
+}
 
 export default function AmountPill({ item, onMultiply, onExact, testID = 'amountPill' }: AmountPillProps) {
   const { t, language } = useT();
   const pill = useRef<View>(null);
   const [anchor, setAnchor] = useState<Anchor | null>(null);
+  const [cardHeight, setCardHeight] = useState<number | null>(null);
   const [open, setOpen] = useState(false);
   const window = useWindowDimensions();
   const grams = gramsFor(item.serving, item.amount) ?? item.amount;
@@ -49,13 +76,16 @@ export default function AmountPill({ item, onMultiply, onExact, testID = 'amount
   const close = (): void => {
     setOpen(false);
     setAnchor(null);
+    setCardHeight(null);
+  };
+  const onCardLayout = (event: LayoutChangeEvent): void => {
+    const height = event.nativeEvent.layout.height;
+    setCardHeight((previous) => (previous === height ? previous : height));
   };
 
   const width = Math.min(CARD_WIDTH, window.width - 2 * EDGE);
-  const below = anchor ? anchor.y + anchor.height + 4 : 0;
-  const fitsBelow = below + CARD_HEIGHT <= window.height - EDGE;
-  const top = anchor ? (fitsBelow ? below : Math.max(EDGE, anchor.y - 4 - CARD_HEIGHT)) : 0;
-  const left = anchor ? Math.min(Math.max(EDGE, anchor.x + anchor.width - width), window.width - EDGE - width) : 0;
+  const placed = anchor !== null && cardHeight !== null;
+  const { top, left } = placed ? cardPlacement(anchor, { width, height: cardHeight }, window) : { top: 0, left: EDGE };
 
   return (
     <>
@@ -76,7 +106,10 @@ export default function AmountPill({ item, onMultiply, onExact, testID = 'amount
       <Modal visible={open} transparent animationType="none" onRequestClose={close} statusBarTranslucent>
         <Pressable style={StyleSheet.absoluteFill} onPress={close} accessible={false} testID={`${testID}.outside`} />
         <View
-          style={[styles.card, { top, left, width, opacity: anchor ? 1 : 0 }]}
+          style={[styles.card, { top, left, width, opacity: placed ? 1 : 0 }]}
+          onLayout={onCardLayout}
+          pointerEvents={placed ? 'auto' : 'none'}
+          importantForAccessibility={placed ? 'auto' : 'no-hide-descendants'}
           accessibilityViewIsModal
           testID={`${testID}.popover`}
         >
