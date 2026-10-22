@@ -7,13 +7,15 @@
 import { ProblemError, TransportError, type ApiError } from '../../../../api';
 import { runSignOutCleaners } from '../../../../app/signOut';
 import { resetHealthStoreForTests, useHealthStore } from '../../../../health/store';
+import { runHealthWipeHooks } from '../../../../health/wipe';
 import { setAnalyticsObserver } from '../../../../lib/analytics';
 import { resetIntentStoreForTests, useIntentStore } from '../../../../stores/intentStore';
 import { setMealApi, type MealApi } from '../../api/mealApi';
 import { fakeMealApi } from '../../api/testing';
 import { showMealToast } from '../../capture/saveFeedback';
 import { base64FromBytes, bytesFromBase64 } from '../../imageEncoder/base64';
-import { jpegDataUri, type EncodedMealImage } from '../../imageEncoder/encoder';
+import { jpegDataUri, type EncodedMealImage, type LoadedMealImage } from '../../imageEncoder/encoder';
+import type { Rect, Size } from '../../imageEncoder/cropMath';
 import { cameraJpeg, FakePipeline, frameSize } from '../../imageEncoder/__tests__/fakePipeline';
 import { mealRecord, photoItemJson } from '../../itemEditor/__tests__/fixtures';
 import { draftThumbnail, forgetAllDraftThumbnails } from '../../mealEditor/draftThumbnails';
@@ -51,6 +53,41 @@ function answer(overrides: Partial<MealScanResult> = {}): MealScanResult {
 
 function problem(slug: string, status: number): ApiError {
   return new ProblemError({ type: `https://lifepass.is/problems/${slug}`, status }, status);
+}
+
+/** A scan that answers when the test says so. */
+function heldScan() {
+  let release: (value: MealScanResult) => void = () => undefined;
+  const scan = jest.fn(
+    () =>
+      new Promise<MealScanResult>((resolve) => {
+        release = resolve;
+      }),
+  );
+  return { scan, answerWith: (value: MealScanResult) => release(value) };
+}
+
+/** A pipeline whose drawing of the draft's picture waits for the test (a native round trip on the phone). */
+class HeldThumbnailPipeline extends FakePipeline {
+  rendering = false;
+  private finish: () => void = () => undefined;
+
+  override async render(image: LoadedMealImage, crop: Rect | null, size: Size, quality: number): Promise<string> {
+    this.rendering = true;
+    await new Promise<void>((resolve) => {
+      this.finish = resolve;
+    });
+    return super.render(image, crop, size, quality);
+  }
+
+  done(): void {
+    this.finish();
+  }
+}
+
+/** Lets pending promise callbacks run. */
+async function settle(): Promise<void> {
+  for (let index = 0; index < 5; index += 1) await Promise.resolve();
 }
 
 let events: [string, Record<string, unknown>][] = [];
@@ -199,6 +236,38 @@ describe('cancel', () => {
     expect(await scanMealPhoto(photo(), 'lunch', DATE, 'key-f')).toEqual({ kind: 'cancelled' });
   });
 
+  it('still wins when tapped while the draft picture is being made', async () => {
+    const pipeline = new HeldThumbnailPipeline();
+    setScanPipelineForTests(pipeline);
+    const deleteMeal = jest.fn(async () => undefined);
+    install({ scan: async () => answer(), deleteMeal });
+    const pending = scanMealPhoto(photo(), 'lunch', DATE, 'key-t');
+    await settle();
+    // The answer is in and the picture is being drawn: the member taps Cancel now.
+    expect(pipeline.rendering).toBe(true);
+    cancelMealScan('key-t');
+    pipeline.done();
+    expect(await pending).toEqual({ kind: 'cancelled' });
+    expect(deleteMeal).toHaveBeenCalledWith('draft-1');
+    expect(draftThumbnail('draft-1')).toBeNull();
+  });
+
+  it('turns a no food answer that arrives after it into nothing', async () => {
+    const { scan, answerWith } = heldScan();
+    const deleteMeal = jest.fn(async () => undefined);
+    install({ scan, deleteMeal });
+    const pending = scanMealPhoto(photo(), 'lunch', DATE, 'key-n');
+    cancelMealScan('key-n');
+    answerWith(answer({ meal: null, noFood: true, scansLeftToday: 1 }));
+    expect(await pending).toEqual({ kind: 'cancelled' });
+    // There is no draft to delete; the scan was spent, so the count is still the newest.
+    expect(deleteMeal).not.toHaveBeenCalled();
+    expect(scansLeftToday()).toBe(1);
+    // And the cancel is used up: the same key answering again is not dropped.
+    install({ scan: async () => answer({ meal: null, noFood: true }) });
+    expect(await scanMealPhoto(photo(), 'lunch', DATE, 'key-n')).toEqual({ kind: 'failed', failure: 'noFood' });
+  });
+
   it('lasts a minute', async () => {
     jest.useFakeTimers();
     const deleteMeal = jest.fn(async () => undefined);
@@ -264,6 +333,51 @@ describe('the count and the session', () => {
     noteScansLeft(null);
     noteScansLeft(undefined);
     expect(scansLeftToday()).toBe(3);
+  });
+
+  it('drops an answer that arrives after a sign-out: no count, no picture, nothing sent', async () => {
+    const { scan, answerWith } = heldScan();
+    const deleteMeal = jest.fn(async () => undefined);
+    install({ scan, deleteMeal });
+    keepGoingWithScan('key-out');
+    const pending = scanMealPhoto(photo(), 'lunch', DATE, 'key-out');
+    await runSignOutCleaners({ memberId: 'member-1' });
+    answerWith(answer({ scansLeftToday: 2 }));
+    expect(await pending).toEqual({ kind: 'cancelled' });
+    expect(scansLeftToday()).toBeNull();
+    expect(draftThumbnail('draft-1')).toBeNull();
+    expect(deleteMeal).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it('drops the draft picture when the health data is wiped while it is drawn', async () => {
+    const pipeline = new HeldThumbnailPipeline();
+    setScanPipelineForTests(pipeline);
+    install({ scan: async () => answer() });
+    const pending = scanMealPhoto(photo(), 'lunch', DATE, 'key-w');
+    await settle();
+    expect(pipeline.rendering).toBe(true);
+    await runHealthWipeHooks({ profileId: 'member-1', reason: 'withdrawn' });
+    pipeline.done();
+    expect(await pending).toEqual({ kind: 'cancelled' });
+    expect(draftThumbnail('draft-1')).toBeNull();
+    expect(scansLeftToday()).toBeNull();
+  });
+
+  it('drops a failure that arrives after a sign-out, too', async () => {
+    let fail: (error: unknown) => void = () => undefined;
+    install({
+      scan: () =>
+        new Promise<MealScanResult>((_resolve, reject) => {
+          fail = reject;
+        }),
+    });
+    keepGoingWithScan('key-fail');
+    const pending = scanMealPhoto(photo(), 'lunch', DATE, 'key-fail');
+    await runSignOutCleaners({ memberId: 'member-1' });
+    fail(problem('meal_scan_paused', 503));
+    expect(await pending).toEqual({ kind: 'cancelled' });
+    expect(toast).not.toHaveBeenCalled();
   });
 
   it('forgets everything at sign-out, so no toast reaches the next member', async () => {

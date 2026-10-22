@@ -19,7 +19,13 @@
  *   `meal_image_too_large`;
  * - Cancel turns the photo back at once; a draft that still arrives within
  *   60 s is deleted quietly (and a later retry of that key answers 409
- *   `health_meal_deleted`).
+ *   `health_meal_deleted`). The check runs AFTER the draft's picture is
+ *   made: that takes a native round trip here (iOS draws it synchronously),
+ *   and a Cancel tapped during it must still win.
+ *
+ * A SESSION ENDS a scan: a sign-out or a health wipe while a request is out
+ * turns its answer into nothing (no count, no picture, no toast), so nothing
+ * of the member who left reaches the next one.
  */
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
@@ -66,6 +72,8 @@ const keptGoingKeys = new Set<string>();
 const cancelTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 let pipeline: MealImagePipeline = nativeMealImagePipeline;
+/** Moves on at every sign-out and health wipe: an answer from an earlier session is dropped. */
+let session = 0;
 
 /** Scans left today, redrawn when it changes. */
 export function useScansLeftToday(): number | null {
@@ -87,31 +95,38 @@ export function noteScansLeft(value: number | null | undefined): void {
  * again for the same photo.
  */
 export async function scanMealPhoto(photo: EncodedMealImage, slot: MealSlot, date: string, key: string): Promise<MealScanOutcome> {
+  const started = session;
+  const ended = () => session !== started;
   let dataBase64 = photo.base64;
   const loggedAt = loggedAtFor(date, new Date());
   let retriedSmaller = false;
   for (;;) {
     try {
       const result = await mealApi().scan({ image: { mediaType: 'image/jpeg', dataBase64 }, slot, logDate: date, loggedAt }, key);
+      // The member signed out (or wiped their health data) meanwhile:
+      // nothing of theirs is noted, and their token is gone, so nothing is sent.
+      if (ended()) return { kind: 'cancelled' };
       noteScansLeft(result.scansLeftToday);
       const meal = result.meal;
+      // Cancelled while the answer was on its way: a draft is deleted
+      // quietly, and even "no food" turns into nothing (the page has gone
+      // back to the frozen photo, or on to a newer request).
+      if (forgetCancel(key)) return await dropCancelled(meal);
       if (!meal || result.noFood) return finish({ kind: 'failed', failure: 'noFood' }, key);
-      if (cancelledKeys.has(key)) {
-        // Cancelled while the answer was on its way: the draft is deleted quietly.
-        forgetCancel(key);
-        await mealApi()
-          .deleteMeal(meal.id)
-          .catch(() => undefined);
-        return { kind: 'cancelled' };
-      }
       // Only a small picture for the draft's banner stays, in memory (512 px,
       // as iOS); the sent JPEG itself if the phone cannot redraw it.
-      rememberDraftThumbnail(meal.id, (await mealThumbnail(dataBase64, pipeline)) ?? jpegDataUri(dataBase64));
+      const thumbnail = (await mealThumbnail(dataBase64, pipeline)) ?? jpegDataUri(dataBase64);
+      if (ended()) return { kind: 'cancelled' };
+      // A Cancel tapped while the picture was being made still wins.
+      if (forgetCancel(key)) return await dropCancelled(meal);
+      rememberDraftThumbnail(meal.id, thumbnail);
       return finish({ kind: 'draft', meal }, key);
     } catch (error) {
+      if (ended()) return { kind: 'cancelled' };
       if (error instanceof ApiError) {
         if (error.isProblem('meal_image_too_large') && !retriedSmaller) {
           const smaller = await encodeSmaller(dataBase64);
+          if (ended()) return { kind: 'cancelled' };
           if (smaller) {
             // Once, at 768 px, with the same key.
             retriedSmaller = true;
@@ -128,6 +143,16 @@ export async function scanMealPhoto(photo: EncodedMealImage, slot: MealSlot, dat
       return finish({ kind: 'failed', failure: 'other' }, key);
     }
   }
+}
+
+/** A cancelled request's draft, if it made one, is deleted quietly. */
+async function dropCancelled(meal: MealRecord | null | undefined): Promise<MealScanOutcome> {
+  if (meal) {
+    await mealApi()
+      .deleteMeal(meal.id)
+      .catch(() => undefined);
+  }
+  return { kind: 'cancelled' };
 }
 
 async function encodeSmaller(base64: string): Promise<EncodedMealImage | null> {
@@ -206,6 +231,7 @@ function finish(outcome: MealScanOutcome, key: string): MealScanOutcome {
 
 /** Sign-out and the health wipe: no count, no pending job of the member who left reports to the next. */
 export function resetMealScanCoordinator(): void {
+  session += 1;
   store.setState({ scansLeftToday: null });
   for (const timer of cancelTimers.values()) clearTimeout(timer);
   cancelTimers.clear();
