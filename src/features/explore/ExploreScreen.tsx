@@ -51,7 +51,7 @@ import { EmptyState, hiddenFromAccessibility, TopBar, useSheetOpen } from '../..
 import { useReduceMotion } from '../../hooks/useReduceMotion';
 import { useT } from '../../i18n';
 import { interleaveByBrand } from '../../lib/browseOrder';
-import { coordinateOf } from '../../lib/geo';
+import { coordinateOf, type Coordinate } from '../../lib/geo';
 import { useAppNavigation } from '../../navigation/hooks';
 import { openProfile } from '../../navigation/profile';
 import type { MainTab } from '../../navigation/types';
@@ -69,7 +69,7 @@ import type { ExploreMode } from './ExploreModeToggle';
 import { exploreVenues as defaultExploreVenues, type ExploreVenues } from './exploreVenues';
 import FilterPanel from './FilterPanel';
 import { activeFilterCount, applyFilters, clearFilters, NO_FILTERS, type ExploreFilters } from './filters';
-import ExploreMap, { type ExploreMapProps } from './map/ExploreMap';
+import ExploreMap, { type ExploreMapProps, type OpenedSight } from './map/ExploreMap';
 import { useMapToggleHint } from './mapToggleHint';
 import SearchRow, { type Presentation } from './SearchRow';
 import { useAppActive } from './useAppActive';
@@ -118,6 +118,10 @@ export default function ExploreScreen({ venues: explore = defaultExploreVenues }
   // coming back from the sight shows the map or the list, not results already
   // used. Typing again, or focusing the box, brings the group back.
   const [openedSightQuery, setOpenedSightQuery] = useState<string | null>(null);
+  // The last sight opened from the search group, for the map: it closes a
+  // pinned venue card and, on the map, brings the sight into view with the
+  // sights on (iOS `openSearchedSight`). A new key per opening.
+  const [openedSight, setOpenedSight] = useState<OpenedSight | null>(null);
   const [mapOpening, setMapOpening] = useState<MapOpening>({ key: 0, sights: false });
 
   const searchRef = useRef(searchText);
@@ -244,9 +248,10 @@ export default function ExploreScreen({ venues: explore = defaultExploreVenues }
   };
 
   const sightQuery = searchText.trim();
-  const openSearchedSight = (slug: string) => {
+  const openSearchedSight = (slug: string, at?: Coordinate) => {
     searchInput.current?.blur();
     setOpenedSightQuery(sightQuery);
+    setOpenedSight((last) => ({ slug, coordinate: at ?? null, key: (last?.key ?? 0) + 1 }));
     openSight(slug);
   };
 
@@ -270,6 +275,7 @@ export default function ExploreScreen({ venues: explore = defaultExploreVenues }
     showSightsOnOpen: mapOpening.sights,
     bottomInset: tabBarHeight,
     active: mapOnScreen,
+    openedSight,
   };
 
   // One tree for both modes, every part in a fixed place (a part that is not

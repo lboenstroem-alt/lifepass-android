@@ -16,6 +16,7 @@ import { createBrowseSession } from '../../../../stores/browseSession';
 import { createLocationStore, type LocationStore, type PermissionSnapshot } from '../../../../stores/locationStore';
 import type { Venue } from '../../../../types/venue';
 import ExploreMap, {
+  CAMERA_SETTLE_MS,
   CARD_GAP_ABOVE_BAR,
   LOCATE_ZOOM,
   openedSightRegion,
@@ -495,6 +496,29 @@ describe('the camera and the layers', () => {
     expect(mockSightsProps.at(-1)?.zoom).toBe(9.5);
   });
 
+  it('hands the sights the camera once it has stood still a moment, without waiting for the tiles (iOS .onEnd)', async () => {
+    jest.useFakeTimers();
+    const seen: SightsMapControlsInput[] = [];
+    mockSightsControls.impl = (input) => {
+      seen.push(input);
+      return { toggle: null, belowLegend: null, legendShowsSights: false, legendShowsTrails: false };
+    };
+    await renderMap();
+    const changed = mapboxStandIn.mapProps?.onCameraChanged as (state: object) => void;
+    const camera = (zoom: number) => ({
+      properties: { zoom, bounds: { ne: [-21.8, 64.2], sw: [-22, 64.1] }, heading: 0, pitch: 0, center: [-21.9, 64.15] },
+      gestures: { isGestureActive: false },
+    });
+    await act(async () => changed(camera(12)));
+    await act(async () => jest.advanceTimersByTime(CAMERA_SETTLE_MS - 10));
+    // Still moving: the wait starts over.
+    await act(async () => changed(camera(12.5)));
+    await act(async () => jest.advanceTimersByTime(CAMERA_SETTLE_MS - 10));
+    expect(seen.at(-1)?.camera ?? null).toBeNull();
+    await act(async () => jest.advanceTimersByTime(10));
+    expect(seen.at(-1)?.camera).toMatchObject({ zoom: 12.5 });
+  });
+
   it('keeps Mapbox’s logo and credit above the tab bar', async () => {
     await renderMap({ bottomInset: 100 });
     expect(mapboxStandIn.mapProps?.logoPosition).toEqual({ bottom: 104, left: 8 });
@@ -547,6 +571,8 @@ describe('the legend', () => {
   });
 
   it('draws nothing with no venue on the map and no sights', async () => {
+    // The sights layer off (ATTR-2's seam answers nothing for the legend).
+    mockSightsControls.impl = () => ({ toggle: null, belowLegend: null, legendShowsSights: false, legendShowsTrails: false });
     await renderMap({ venues: [] });
     expect(screen.queryByTestId('explore.legend')).toBeNull();
   });
@@ -670,10 +696,11 @@ describe('a sight opened from search (iOS openSearchedSight)', () => {
 });
 
 describe('the sights’ controls (ATTR-2’s seam, ../sightsControls)', () => {
-  it('by default puts nothing over the map and keeps the legend’s sight entries off', async () => {
+  it('by default (ATTR-2’s controls) shows the toggle on and lists the sights, not trails it is not drawing', async () => {
     setWindowWidth(800);
     await renderMap();
-    expect(screen.queryByTestId('explore.legend.sights')).toBeNull();
+    expect(screen.getByTestId('explore.map.sightsToggle')).toBeSelected();
+    expect(screen.getByTestId('explore.legend.sights')).toBeTruthy();
     expect(screen.queryByTestId('explore.legend.trails')).toBeNull();
   });
 
