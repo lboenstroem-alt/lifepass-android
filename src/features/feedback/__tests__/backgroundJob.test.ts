@@ -19,7 +19,7 @@ import { AppState } from 'react-native';
 
 import { decodeFeedbackSummary } from '../../../api/feedback';
 import { installStubApiClient, stubApiClientPerTest } from '../../../api/testing';
-import { runActivationHooks } from '../../../app/signOut';
+import { loadRegistrations, runActivationHooks } from '../../../app/signOut';
 import { setBackgroundModulesForTests, type BackgroundTaskModule, type TaskManagerModule } from '../../../background/native';
 import {
   BACKGROUND_TASK_NAME,
@@ -37,6 +37,8 @@ import { scheduleAt } from '../../../notifications/scheduler';
 import { useAppStore } from '../../../stores/appStore';
 import {
   FEEDBACK_CHECK_INTERVAL_MS,
+  FEEDBACK_JOB_BUDGET_MS,
+  FEEDBACK_READ_DEADLINE_MS,
   FEEDBACK_REFRESH_JOB_ID,
   FEEDBACK_SYNC_COALESCE_MS,
   canGetFeedbackInBackground,
@@ -46,12 +48,13 @@ import {
   resetFeedbackNotificationsForTests,
   runFeedbackBackgroundCheck,
   runFeedbackRefreshJob,
+  syncAfterActivationRead,
   syncFeedbackNotificationsForApp,
 } from '../backgroundJob';
 import { notifyFeedbackChanged } from '../changes';
 import { useFeedbackStore } from '../feedbackStore';
 
-import { MEMBER, freshApp, memberProfile, signIn, summaryJSON } from './feedbackFixtures';
+import { MEMBER, freshApp, memberProfile, settingsAnswer, signIn, summaryJSON } from './feedbackFixtures';
 
 // Activation runs every feature's register file; @expo/vector-icons loads expo-font, which needs expo-asset.
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
@@ -60,6 +63,10 @@ stubApiClientPerTest();
 
 const ICELAND = fixedOffsetCalendar(0);
 const MONTHLY = 'health.feedback.monthly.2026-09';
+// Generous, so a loaded machine does not flake (scripts/ci.sh runs the whole
+// suite three times): an activation runs every feature's hooks, and the
+// tests here wait on real timers, storage and the stub server.
+jest.setTimeout(30_000);
 
 /** Only the clock is faked: promises, storage, msw and timers run for real. */
 function clockAt(iso: string): void {
@@ -249,6 +256,52 @@ describe('the background read (FeedbackBackgroundCheckTests)', () => {
     expect(await AsyncStorage.getItem(FeedbackKeys.lastCheck('p-1'))).toBeNull();
     expect(await AsyncStorage.getItem(FeedbackKeys.notified('p-1'))).toBeNull();
     expect(scheduledIds()).toEqual([]);
+  });
+
+  it('a read past the deadline is given up and writes nothing; the run counts as failed', async () => {
+    // The run ends inside the job's budget, so nothing goes on after the worker is done.
+    expect(FEEDBACK_READ_DEADLINE_MS).toBeLessThan(FEEDBACK_JOB_BUDGET_MS);
+    clockAt('2026-10-01T10:00:00Z');
+    await recordMember();
+    api.on('GET', '/health/feedback', Reply.hang());
+    expect(await runFeedbackRefreshJob(50, { calendar: ICELAND })).toBe('failed');
+    // The request itself was cancelled, not left running.
+    expect(api.sent('/health/feedback').signal.aborted).toBe(true);
+    expect(await AsyncStorage.getItem(FeedbackKeys.lastCheck('p-1'))).toBeNull();
+    expect(await AsyncStorage.getItem(FeedbackKeys.notified('p-1'))).toBeNull();
+    expect(scheduledIds()).toEqual([]);
+  });
+
+  it('an answer that comes after the deadline writes nothing (iOS guard !Task.isCancelled)', async () => {
+    clockAt('2026-10-01T10:00:00Z');
+    await recordMember();
+    const deadline = new AbortController();
+    const outcome = await runFeedbackBackgroundCheck({
+      calendar: ICELAND,
+      signal: deadline.signal,
+      fetchSummary: async () => {
+        deadline.abort();
+        return decodeFeedbackSummary(summaryJSON({ note: null, nextReport: null }), 'feedback');
+      },
+    });
+    expect(outcome).toBe('failed');
+    expect(await AsyncStorage.getItem(FeedbackKeys.lastCheck('p-1'))).toBeNull();
+    expect(await AsyncStorage.getItem(FeedbackKeys.notified('p-1'))).toBeNull();
+    expect(scheduledIds()).toEqual([]);
+  });
+
+  it('the time of the read is written only once the notifications are in place', async () => {
+    clockAt('2026-10-01T10:00:00Z');
+    await recordMember();
+    api.on('GET', '/health/feedback', Reply.ok(summaryJSON({ note: null, nextReport: null })));
+    const setItem = jest.mocked(AsyncStorage.setItem);
+    setItem.mockClear();
+    expect(await runFeedbackBackgroundCheck({ calendar: ICELAND })).toBe('read');
+    // A run cut short before its marks were written reads again at the next slot.
+    const keys = setItem.mock.calls.map(([key]) => key);
+    expect(keys).toContain(FeedbackKeys.notified('p-1'));
+    expect(keys.indexOf(FeedbackKeys.lastCheck('p-1'))).toBeGreaterThan(keys.indexOf(FeedbackKeys.notified('p-1')));
+    expect(scheduledIds()).toEqual([MONTHLY]);
   });
 
   it('a server that no longer advertises the feedback removes every feedback notification', async () => {
@@ -467,6 +520,12 @@ describe('the foreground', () => {
     await afterCoalescing();
     expect(scheduledIds()).toEqual([]);
   });
+});
+
+describe('activation', () => {
+  // An activation runs every feature's register file: loaded once here, so
+  // loading them is not one test's time.
+  beforeAll(() => loadRegistrations(), 30_000);
 
   it('every activation syncs, even when the read is inside its ten minutes', async () => {
     clockAt('2026-10-15T12:00:00Z');
@@ -484,5 +543,103 @@ describe('the foreground', () => {
     await afterCoalescing();
     expect(scheduledIds()).toEqual(['health.feedback.monthly.2026-10']);
     expect(api.requests.filter((request) => request.path === '/health/feedback')).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: 'a note',
+      learned: 'health.feedback.note.2026-10',
+      at: '2026-10-15T10:00:00Z',
+      // Read yesterday, before the note was written.
+      earlier: { json: summaryJSON({ latest: null, note: null }), at: '2026-10-14T10:00:00Z', day: '2026-10-14' },
+      server: summaryJSON({ latest: null }),
+    },
+    {
+      name: 'a report the server did not expect',
+      learned: MONTHLY,
+      at: '2026-10-01T12:00:00Z',
+      // Read on the last day of September, when no September report was expected.
+      earlier: {
+        json: summaryJSON({ latest: null, note: null, nextReport: { periodMonth: '2026-09', readyOn: '2026-10-01', expected: false } }),
+        at: '2026-09-30T12:00:00Z',
+        day: '2026-09-30',
+      },
+      server: summaryJSON({ note: null }),
+    },
+  ])(
+    'the sync waits for the read: $name learned in the background stays pending when FB-1 is slow',
+    async ({ learned, at, earlier, server }) => {
+      clockAt(at);
+      signIn();
+      // A live process: an earlier read is still in memory.
+      useFeedbackStore.setState({
+        summary: decodeFeedbackSummary(earlier.json, 'feedback'),
+        lastFetchedAt: new Date(earlier.at),
+        lastFetchedDay: earlier.day,
+      });
+      installFeedbackNotifications();
+      // The background run learned it while the app was away.
+      await AsyncStorage.multiSet([
+        [FeedbackKeys.lastProfileId, MEMBER],
+        [NOTIFICATION_LANGUAGE_KEY, 'en'],
+      ]);
+      api.on('GET', '/health/feedback', Reply.ok(server));
+      expect(await runFeedbackBackgroundCheck({ calendar: ICELAND })).toBe('read');
+      expect(scheduledIds()).toContain(learned);
+
+      // Back on screen: FB-1 answers well after the 300 ms coalescing.
+      api.on('GET', '/health/feedback', Reply.delayed(900, Reply.ok(server)));
+      await runActivationHooks({ memberId: MEMBER, trigger: 'foreground' });
+      await afterCoalescing();
+      expect(api.requests.filter((request) => request.path === '/health/feedback')).toHaveLength(2);
+      expect(scheduledIds()).toContain(learned);
+      expect(readMarks(await AsyncStorage.getItem(FeedbackKeys.notified(MEMBER))).has(learned)).toBe(true);
+    },
+  );
+
+  /** Yesterday's read in memory, with October's report expected on the 1st. */
+  function yesterdaysSummary(): void {
+    useFeedbackStore.setState({
+      summary: decodeFeedbackSummary(summaryJSON({ latest: null, note: null }), 'feedback'),
+      lastFetchedAt: new Date('2026-10-14T10:00:00Z'),
+      lastFetchedDay: '2026-10-14',
+    });
+  }
+
+  it('a read that fails still syncs, on the summary held, as on iOS', async () => {
+    clockAt('2026-10-15T10:00:00Z');
+    signIn();
+    yesterdaysSummary();
+    installFeedbackNotifications();
+    api.on('GET', '/health/feedback', Reply.delayed(400, Reply.fail()));
+    await runActivationHooks({ memberId: MEMBER, trigger: 'foreground' });
+    await afterCoalescing();
+    expect(useFeedbackStore.getState().loadState.kind).toBe('failed');
+    expect(scheduledIds().filter((id) => id.startsWith('health.feedback.'))).toEqual(['health.feedback.monthly.2026-10']);
+  });
+
+  it('a waiting safety food-off still goes once: the sync waits for the read, it does not read again', async () => {
+    clockAt('2026-10-15T10:00:00Z');
+    signIn();
+    yesterdaysSummary();
+    installFeedbackNotifications();
+    await AsyncStorage.setItem(FeedbackKeys.foodOffPending(MEMBER), 'true');
+    api.on('PUT', '/health/feedback/settings', Reply.delayed(200, Reply.ok(settingsAnswer())));
+    api.on('GET', '/health/feedback', Reply.delayed(400, Reply.ok(summaryJSON({ latest: null, note: null }))));
+    await runActivationHooks({ memberId: MEMBER, trigger: 'foreground' });
+    await afterCoalescing();
+    expect(api.requests.filter((r) => r.path.startsWith('/health/feedback')).map((r) => r.method)).toEqual(['PUT', 'GET']);
+    expect(scheduledIds().filter((id) => id.startsWith('health.feedback.'))).toEqual(['health.feedback.monthly.2026-10']);
+  });
+
+  it('the wait is bounded: with no read answering, the sync runs after the limit', async () => {
+    clockAt('2026-10-15T10:00:00Z');
+    signIn();
+    yesterdaysSummary();
+    // No activation read at all (FEED-1's hook is not run here).
+    await syncAfterActivationRead(50);
+    await afterCoalescing();
+    expect(api.requests).toEqual([]);
+    expect(scheduledIds()).toEqual(['health.feedback.monthly.2026-10']);
   });
 });
