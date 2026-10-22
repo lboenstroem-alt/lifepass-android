@@ -9,8 +9,11 @@
  *
  * A part only ever grows here (the widest it has been): a countdown whose
  * text narrows from "1:05 left" to "9 s left" would otherwise flip a row
- * between its two layouts as it counts. A row of the next exercise is a new
- * component and measures afresh.
+ * between its two layouts as it counts. A row of the next exercise (or of
+ * a swapped one) is a new component and measures afresh: RunnerExerciseCard
+ * keys its rows by exercise. The rest bar keeps its measures across rests
+ * (RunnerBottomBar holds them), so a later rest is drawn in its layout at
+ * once.
  */
 import { useCallback, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';

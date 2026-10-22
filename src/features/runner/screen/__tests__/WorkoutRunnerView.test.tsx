@@ -1,17 +1,21 @@
 /**
  * The runner page in the iOS fixture states (`-LPRunnerScreen`: rest,
- * progress, perside, timed, intervals, switchsides, side2, skipped, leave),
- * driven through the same calls a tap makes, in English and Icelandic and at
- * a font scale of 2: what the member reads, what TalkBack says, and that back
- * opens Leave instead of closing.
+ * progress, perside, timed, intervals, switchsides, side2, skipped, swapped,
+ * crossunit, leave), driven through the same calls a tap makes, in English
+ * and Icelandic and at a font scale of 2: what the member reads, what
+ * TalkBack says, and that back opens Leave instead of closing.
  */
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { DeviceEventEmitter, StyleSheet } from 'react-native';
+import { AppState, DeviceEventEmitter, StyleSheet } from 'react-native';
 
 import { TransportError } from '../../../../api/errors';
 import { restoreTestFontScale, setTestFontScale } from '../../../../hooks/testing';
 import { resetHealthStoreForTests, useHealthStore } from '../../../../health/store';
 import { setCurrentLanguage } from '../../../../i18n';
+import { UiKitProvider } from '../../../../components/ui';
+import type { SessionView } from '../../../../health/models';
+import { swap } from '../../model/state';
+import { raiseRunnerWipeFence, runnerWipeEpoch } from '../../persistence/fence';
 import { RunnerProgressIndex } from '../../persistence/progressIndex';
 import { blocksJSON, intervalsJSON, perSideHoldJSON, session, t0 } from '../../model/__tests__/fixtures';
 import type { RunnerRestAlerting } from '../../restNotification';
@@ -34,9 +38,12 @@ function plus(seconds: number): Date {
   return new Date(t0.getTime() + seconds * 1000);
 }
 
-function runner(blocks: string = blocksJSON, options: { canSkip?: boolean } = {}): RunnerController {
+function runner(
+  blocks: string = blocksJSON,
+  options: { canSkip?: boolean; session?: SessionView; wipeEpoch?: number } = {},
+): RunnerController {
   const controller = new RunnerController({
-    session: session({ blocks, canSkip: options.canSkip }),
+    session: options.session ?? session({ blocks, canSkip: options.canSkip }),
     restored: null,
     profileId: MEMBER,
     language: 'en',
@@ -46,6 +53,7 @@ function runner(blocks: string = blocksJSON, options: { canSkip?: boolean } = {}
     keepAwake: () => undefined,
     clock: () => clockNow,
     today: '2026-09-16',
+    wipeEpoch: options.wipeEpoch,
   });
   controller.onClose = (result) => closes.push(result);
   return controller;
@@ -395,9 +403,19 @@ describe('large text (font scale 2)', () => {
     await show(runner());
     const field = StyleSheet.flatten(screen.getByTestId('runner.set.0.0.kg').props.style);
     expect(field.minWidth).toBe(96);
-    // Label and check share the top line; the steppers are under them.
+    // Label and check share the top line; the steppers are under them, one under the other.
     expect(screen.getByTestId('runner.set.0.0.label')).toBeTruthy();
     expect(screen.getByTestId('runner.set.0.0.check')).toBeTruthy();
+    expect(screen.getByTestId('runner.set.0.0.stacked')).toBeTruthy();
+    expect(screen.getByTestId('runner.set.0.0.controlsStacked')).toBeTruthy();
+    // Even where a measure says they would fit on one 360 dp line.
+    const layout = (testID: string, width: number) =>
+      fireEvent(screen.getByTestId(testID), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width, height: 64 } } });
+    await layout('runner.set.0.0.doseControl', 100);
+    await layout('runner.set.0.0.kgControl', 100);
+    await layout('runner.set.0.0', 314);
+    expect(screen.getByTestId('runner.set.0.0.controlsStacked')).toBeTruthy();
+    expect(StyleSheet.flatten(screen.getByTestId('runner.set.0.0.doseControl').props.style).alignSelf).toBe('stretch');
   });
 });
 
@@ -421,15 +439,20 @@ describe('narrow phones (360 dp): what fits on one line', () => {
     await show(runner());
     // Before anything is measured: the stacked row, controls side by side.
     expect(screen.getByTestId('runner.set.0.0.stacked')).toBeTruthy();
-    await layout('runner.set.0.0.doseControl', 140);
-    await layout('runner.set.0.0.kgControl', 140);
     // 360 dp less the page's 20 + 20, the row's 3 + 3 margin and 12 + 12 padding: 290 inside.
+    // Side by side: dose, kg and the trailing spacer, two gaps of 10 (iOS HStack(spacing: 10)).
+    await layout('runner.set.0.0.doseControl', 140);
+    await layout('runner.set.0.0.kgControl', 130);
     await layout('runner.set.0.0', 314);
     expect(screen.getByTestId('runner.set.0.0.controlsSideBySide')).toBeTruthy();
+    // 140 + 140 + 20 = 300: one under the other.
     await layout('runner.set.0.1.doseControl', 140);
-    await layout('runner.set.0.1.kgControl', 152);
+    await layout('runner.set.0.1.kgControl', 140);
     await layout('runner.set.0.1', 314);
     expect(screen.getByTestId('runner.set.0.1.controlsStacked')).toBeTruthy();
+    // In the column each keeps its natural width; side by side they are centred on the line.
+    expect(StyleSheet.flatten(screen.getByTestId('runner.set.0.1.doseControl').props.style)?.alignSelf).toBe('flex-start');
+    expect(StyleSheet.flatten(screen.getByTestId('runner.set.0.0.doseControl').props.style)?.alignSelf).toBeUndefined();
     // A wide tablet: everything on one line.
     await layout('runner.set.0.2.doseControl', 140);
     await layout('runner.set.0.2.kgControl', 140);
@@ -442,6 +465,26 @@ describe('narrow phones (360 dp): what fits on one line', () => {
     controller.advance();
     await show(controller);
     expect(screen.getByTestId('runner.set.1.0.oneLine')).toBeTruthy();
+    await layout('runner.set.1.0.doseControl', 140);
+    await layout('runner.set.1.0', 314);
+    expect(screen.getByTestId('runner.set.1.0.oneLine')).toBeTruthy();
+    // Centred on the line with the label and the check (iOS HStack).
+    expect(StyleSheet.flatten(screen.getByTestId('runner.set.1.0.doseControl').props.style)?.alignSelf).toBeUndefined();
+  });
+
+  it("the next exercise's rows measure afresh: a wide hold does not keep a narrow row stacked", async () => {
+    const controller = runner();
+    controller.advance();
+    controller.advance();
+    await show(controller);
+    // The plank's counting capsule makes its row too wide for one line.
+    await layout('runner.set.2.0.doseControl', 230);
+    await layout('runner.set.2.0', 314);
+    expect(screen.getByTestId('runner.set.2.0.stacked')).toBeTruthy();
+    // Back to the bodyweight lunge: the same numbers as the row above, on one line.
+    await act(async () => {
+      controller.apply((state) => ({ ...state, index: 1 }));
+    });
     await layout('runner.set.1.0.doseControl', 140);
     await layout('runner.set.1.0', 314);
     expect(screen.getByTestId('runner.set.1.0.oneLine')).toBeTruthy();
@@ -460,5 +503,124 @@ describe('narrow phones (360 dp): what fits on one line', () => {
     // 140 + 4 + 218 and two gaps of 10, inside 16 + 16 padding: 414.
     await layout('runner.restBar', 414);
     expect(direction()).toBe('row');
+    // On the line the countdown is centred like the buttons.
+    expect(StyleSheet.flatten(screen.getByTestId('runner.restBar.countdownPart').props.style).alignSelf).toBeUndefined();
+
+    // The next rest is drawn on one line at once: the measures are kept.
+    await fireEvent.press(screen.getByTestId('runner.rest.skip'));
+    await fireEvent.press(screen.getByTestId('runner.primary'));
+    expect(direction()).toBe('row');
+  });
+});
+
+describe('a swap (fixtures "swapped" and "crossunit")', () => {
+  it('the first option: the Swapped chip, no cues, no load word, the new dose', async () => {
+    const controller = runner();
+    await show(controller);
+    const first = controller.swapOptions()[0]!;
+    expect(first.exerciseId).toBe('box_squat');
+    await act(async () => {
+      controller.apply((state) => swap(state, 0, first.exerciseId).state);
+    });
+    expect(text('runner.exerciseName')).toBe('Box squat');
+    expect(screen.getByText('Swapped')).toBeTruthy();
+    expect(screen.queryByText('a')).toBeNull();
+    expect(text('runner.targetLine')).toBe('3 × 10 · Rest 90 s');
+    // Bodyweight: no kg column.
+    expect(screen.queryByTestId('runner.set.0.0.kg')).toBeNull();
+    expect(label('runner.set.0.0.label')).toBe('Set 1, 10 reps, not done');
+  });
+
+  it("one that tracks load starts empty: the planned exercise's last load is not carried over", async () => {
+    const controller = runner();
+    await show(controller);
+    await act(async () => {
+      controller.apply((state) => swap(state, 0, 'leg_press').state);
+    });
+    expect(text('runner.targetLine')).toBe('3 × 12 · Rest 90 s');
+    expect(screen.getByTestId('runner.set.0.0.kg').props.value).toBe('');
+    expect(label('runner.set.0.0.label')).toBe('Set 1, 12 reps, no weight entered, not done');
+  });
+
+  it('across units: lengths in the pool become a timed set with its capsule', async () => {
+    const controller = runner();
+    for (let block = 0; block < 4; block += 1) controller.advance();
+    await show(controller);
+    expect(text('runner.targetLine')).toBe('4 × 100 m · Rest 30 s');
+    const crossUnit = controller.swapOptions().find((option) => option.unit !== controller.current?.unit)!;
+    await act(async () => {
+      controller.apply((state) => swap(state, 4, crossUnit.exerciseId).state);
+    });
+    expect(text('runner.exerciseName')).toBe('Pool walking');
+    expect(screen.getByText('Swapped')).toBeTruthy();
+    expect(text('runner.targetLine')).toBe('4 × 2 min · Rest 30 s');
+    expect(label('runner.timer.4.0')).toBe('Start 2 minutes, Set 1');
+    expect(screen.queryByTestId('runner.set.4.0.value')).toBeNull();
+    expect(label('runner.primary')).toBe('Start set 1');
+  });
+
+  it('a lighter session says so', async () => {
+    await show(runner(blocksJSON, { session: { ...session(), lighter: true } }));
+    expect(screen.getByText('Lighter version')).toBeTruthy();
+  });
+});
+
+describe('what reaches the runner from outside', () => {
+  it('a health toast raised while the runner is up shows over it', async () => {
+    await render(
+      <UiKitProvider>
+        <WorkoutRunnerView controller={runner()} />
+      </UiKitProvider>,
+    );
+    await act(async () => {
+      useHealthStore.getState().setToast('health.err.changed');
+    });
+    expect(screen.getByText('This was changed on another device. Refreshing.')).toBeTruthy();
+    expect(useHealthStore.getState().toastKey).toBeNull();
+  });
+
+  it('an open that finished after the member left counts as a departure', async () => {
+    const appState = AppState as unknown as { currentState: unknown };
+    const before = appState.currentState;
+    appState.currentState = 'background';
+    try {
+      const controller = runner();
+      await show(controller);
+      // The clock stopped as the member left: time away is not credited past its limit.
+      expect(controller.state.clockRunningSince).toBeNull();
+      expect(controller.state.clockAwaySince).toEqual(t0);
+    } finally {
+      appState.currentState = before;
+    }
+  });
+
+  it('a wipe that landed before the page listened closes it as discarded', async () => {
+    const beforeRead = runnerWipeEpoch();
+    raiseRunnerWipeFence();
+    await show(runner(blocksJSON, { wipeEpoch: beforeRead }));
+    expect(closes).toEqual([{ kind: 'discarded' }]);
+  });
+
+  it('the skipped toast is announced once, by the page, not also as a live region', async () => {
+    const controller = runner();
+    await show(controller);
+    await fireEvent.press(screen.getByTestId('runner.skipExercise'));
+    expect(screen.getByTestId('runner.undoToast').props.accessibilityLiveRegion).toBeUndefined();
+  });
+});
+
+describe("RUN-3's sheets, until they land", () => {
+  it('a development build says the sheet is not in this build, and its Close lets the page open it again', async () => {
+    await render(
+      <UiKitProvider>
+        <WorkoutRunnerView controller={runner()} />
+      </UiKitProvider>,
+    );
+    await fireEvent.press(screen.getByTestId('runner.finishSecondary'));
+    expect(screen.getByText('Not in this build yet')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('runner.sheetStub.close'));
+    expect(screen.queryByText('Not in this build yet')).toBeNull();
+    await fireEvent.press(screen.getByTestId('runner.finishSecondary'));
+    expect(screen.getByText('Not in this build yet')).toBeTruthy();
   });
 });

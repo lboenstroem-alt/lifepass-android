@@ -29,7 +29,7 @@ import { REST_STEP_SECONDS, type RunnerPrimaryAction, type RunnerState } from '.
 import RestRing, { REST_RING_SIZE } from '../timer/RestRing';
 
 import type { RunnerController } from './controller';
-import { fitsInRow, useFit } from './fit';
+import { fitsInRow, useFit, type Fit } from './fit';
 
 export interface RunnerBottomBarProps {
   readonly controller: RunnerController;
@@ -79,6 +79,10 @@ export default function RunnerBottomBar({ controller, state, isResting, bottomIn
   const countdown = useRef<View>(null);
   const primary = useRef<View>(null);
   const wasResting = useRef(isResting);
+  // Measured once and kept across rests: the rest bar comes and goes with
+  // every rest, and a fresh measure would draw each one stacked for a frame
+  // before it jumps to one line (iOS ViewThatFits picks before drawing).
+  const restFit = useFit();
 
   useEffect(() => {
     if (wasResting.current === isResting) return;
@@ -95,7 +99,7 @@ export default function RunnerBottomBar({ controller, state, isResting, bottomIn
     <View style={[styles.bar, { paddingBottom: 10 + bottomInset }]} testID="runner.bottomBar">
       <View style={styles.rule} />
       {isResting ? (
-        <RestBar controller={controller} countdownRef={countdown} />
+        <RestBar controller={controller} countdownRef={countdown} fit={restFit} />
       ) : (
         <View style={styles.idle}>
           {action.kind !== 'finish' ? (
@@ -141,16 +145,28 @@ export default function RunnerBottomBar({ controller, state, isResting, bottomIn
 }
 
 /** The rest bar: one line where it fits, the countdown over the buttons where it does not. */
-function RestBar({ controller, countdownRef }: { controller: RunnerController; countdownRef: { current: View | null } }) {
+function RestBar({
+  controller,
+  countdownRef,
+  fit,
+}: {
+  controller: RunnerController;
+  countdownRef: { current: View | null };
+  fit: Fit;
+}) {
   const { t } = useT();
-  const fit = useFit();
   const inner = Math.max(0, fit.width - 32);
   // Until measured, the narrow layout: it never cuts "Skip rest" short.
   // The countdown, a spacer of at least 4 and the buttons, 10 apart (iOS HStack(spacing: 10)).
   const oneLine = fitsInRow(fit, inner, ['countdown', 'buttons'], { gap: 10, fixed: 4, fixedCount: 1, fallback: false });
 
   const countdown = (
-    <View onLayout={fit.onPartLayout('countdown')} style={styles.countdown} testID="runner.restBar.countdownPart">
+    <View
+      onLayout={fit.onPartLayout('countdown')}
+      // Centred on the line like the buttons; in the stack it keeps its natural width.
+      style={[styles.countdown, !oneLine && styles.countdownStacked]}
+      testID="runner.restBar.countdownPart"
+    >
       <RestRing fraction={controller.restFraction} />
       <View
         ref={countdownRef}
@@ -280,9 +296,11 @@ const styles = StyleSheet.create({
   countdown: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
     gap: 10,
     minHeight: REST_RING_SIZE,
+  },
+  countdownStacked: {
+    alignSelf: 'flex-start',
   },
   spacer: {
     flex: 1,

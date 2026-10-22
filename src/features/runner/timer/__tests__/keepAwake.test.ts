@@ -34,3 +34,18 @@ it('a failing native call is silent', () => {
   });
   expect(() => keepRunnerAwake(false)).not.toThrow();
 });
+
+it('a call that fails is tried again on the next ask, not taken as done', async () => {
+  (activateKeepAwakeAsync as jest.Mock).mockClear();
+  (activateKeepAwakeAsync as jest.Mock).mockRejectedValueOnce(new Error('current activity is no longer available'));
+  keepRunnerAwake(true);
+  // Let the rejection land.
+  await Promise.resolve();
+  await Promise.resolve();
+  keepRunnerAwake(true);
+  expect(activateKeepAwakeAsync).toHaveBeenCalledTimes(2);
+  // Once it went through, the next ask is a no-op again.
+  await Promise.resolve();
+  keepRunnerAwake(true);
+  expect(activateKeepAwakeAsync).toHaveBeenCalledTimes(2);
+});

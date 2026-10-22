@@ -120,7 +120,10 @@ export default function RunnerExerciseCard({ controller, state, accessibilityLay
 
       <Card testID="runner.sets">
         {exercise.sets.map((set, setIndex) => (
-          <View key={setIndex}>
+          // Keyed by the exercise (and what it is now, after a swap) as well as
+          // the set: each exercise's rows measure afresh (./fit.ts), as iOS's
+          // ViewThatFits decides anew, instead of keeping a wider row's widths.
+          <View key={`${index}.${exercise.exerciseId}.${setIndex}`}>
             {setIndex > 0 ? <View style={styles.divider} /> : null}
             <RunnerSetRow
               controller={controller}

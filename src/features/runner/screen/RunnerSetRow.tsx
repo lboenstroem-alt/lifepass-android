@@ -297,25 +297,23 @@ export default function RunnerSetRow({
     </Pressable>
   );
 
-  // The controls, each measured where it is drawn.
-  const dose = (
-    <View
-      onLayout={fit.onPartLayout('dose')}
-      style={accessibilityLayout ? styles.partStretched : styles.part}
-      testID={`${testID}.doseControl`}
-    >
+  // The controls, each measured where it is drawn. In a row they are centred
+  // like the rest of the line (iOS HStack); in a column they keep their
+  // natural width (a column would stretch them), or take the row's width at
+  // an accessibility text size.
+  const partStyle = (inColumn: boolean) =>
+    accessibilityLayout ? styles.partStretched : inColumn ? styles.partInColumn : undefined;
+  const dose = (inColumn: boolean) => (
+    <View onLayout={fit.onPartLayout('dose')} style={partStyle(inColumn)} testID={`${testID}.doseControl`}>
       {doseControl()}
     </View>
   );
-  const kg = loads ? (
-    <View
-      onLayout={fit.onPartLayout('kg')}
-      style={accessibilityLayout ? styles.partStretched : styles.part}
-      testID={`${testID}.kgControl`}
-    >
-      {kgControl()}
-    </View>
-  ) : null;
+  const kg = (inColumn: boolean) =>
+    loads ? (
+      <View onLayout={fit.onPartLayout('kg')} style={partStyle(inColumn)} testID={`${testID}.kgControl`}>
+        {kgControl()}
+      </View>
+    ) : null;
 
   const inner = Math.max(0, fit.width - ROW_PADDING * 2);
   const controlKeys = loads ? ['dose', 'kg'] : ['dose'];
@@ -330,8 +328,11 @@ export default function RunnerSetRow({
       fixedCount: 3,
       fallback: !loads,
     });
+  // iOS `HStack(spacing: 10) { dose; kg; Spacer(minLength: 0) }`: the
+  // trailing spacer has no width but a gap before it, so it counts.
   const sideBySide =
-    !accessibilityLayout && fitsInRow(fit, inner, controlKeys, { gap: STACKED_GAP, fallback: true });
+    !accessibilityLayout &&
+    fitsInRow(fit, inner, controlKeys, { gap: STACKED_GAP, fixed: 0, fixedCount: 1, fallback: true });
 
   return (
     <View
@@ -345,8 +346,8 @@ export default function RunnerSetRow({
             {setLabel}
           </View>
           <View style={styles.spacer} />
-          {dose}
-          {kg}
+          {dose(false)}
+          {kg(false)}
           {checkButton}
         </View>
       ) : (
@@ -360,8 +361,8 @@ export default function RunnerSetRow({
             style={sideBySide ? styles.controlsRow : styles.controlsColumn}
             testID={`${testID}.${sideBySide ? 'controlsSideBySide' : 'controlsStacked'}`}
           >
-            {dose}
-            {kg}
+            {dose(!sideBySide)}
+            {kg(!sideBySide)}
           </View>
         </View>
       )}
@@ -412,7 +413,7 @@ const styles = StyleSheet.create({
   controlsColumn: {
     gap: 8,
   },
-  part: {
+  partInColumn: {
     alignSelf: 'flex-start',
   },
   partStretched: {
