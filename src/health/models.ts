@@ -244,6 +244,53 @@ export interface ProgramSummary {
   readonly revisionOf: string | null;
   /** This plan was ended because the member switched to a revision of it. */
   readonly revised: boolean | null;
+  // CUSTOM PLANS AND CHAT EDITS (API 0.40.0 and 0.41.0): read fail soft, so
+  // one odd value costs that value, never the member's plan.
+  /**
+   * The member wrote this plan (OP-57) or a chat edit made it repeat as a
+   * cycle: its doses stay as written, and Change days, Adjust my plan and a
+   * swap for the rest of the plan are refused (409 `custom_plan_locked`), so
+   * the app hides those three. Null from an older server.
+   */
+  readonly custom: boolean | null;
+  /** How many days a custom plan's cycle repeats over; null otherwise. */
+  readonly cycleDays: number | null;
+  /** Equipment the member said they do not have, remembered for this plan (`dumbbell`, `cable`...). */
+  readonly excludedEquipment: readonly string[] | null;
+  /** Library exercises the member said they cannot do here, with the name the plan shows. */
+  readonly excludedExercises: readonly ExcludedExercise[] | null;
+  /** The newest chat edit applied to this plan, while the server keeps it. */
+  readonly lastEdit: ProgramLastEdit | null;
+}
+
+export interface ExcludedExercise {
+  readonly exerciseId: string;
+  readonly name: string | null;
+}
+
+export interface ProgramLastEdit {
+  readonly editId: string;
+  readonly undoUntil: Date | null;
+  readonly undoable: boolean | null;
+}
+
+const decodeExcludedExercise: Reader<ExcludedExercise> = (value, path) => {
+  const json = object(value, path);
+  return { exerciseId: req(json, 'exerciseId', path, string), name: opt(json, 'name', path, string) };
+};
+
+const decodeProgramLastEdit: Reader<ProgramLastEdit> = (value, path) => {
+  const json = object(value, path);
+  return {
+    editId: req(json, 'editId', path, string),
+    undoUntil: soft(json, 'undoUntil', path, instant),
+    undoable: soft(json, 'undoable', path, boolean),
+  };
+};
+
+/** A plan the member wrote, or one a chat edit made repeat as a cycle (see `ProgramSummary.custom`). */
+export function isCustomProgram(program: Pick<ProgramSummary, 'custom'> | null | undefined): boolean {
+  return program?.custom === true;
 }
 
 /** A proposal made by Adjust my plan rather than by the wizard. */
@@ -289,6 +336,11 @@ export const decodeProgramSummary: Reader<ProgramSummary> = (value, path) => {
     createdAt: opt(json, 'createdAt', path, instant),
     revisionOf: opt(json, 'revisionOf', path, string),
     revised: opt(json, 'revised', path, boolean),
+    custom: soft(json, 'custom', path, boolean),
+    cycleDays: soft(json, 'cycleDays', path, integer),
+    excludedEquipment: soft(json, 'excludedEquipment', path, arrayOf(string)),
+    excludedExercises: soft(json, 'excludedExercises', path, arrayOf(decodeExcludedExercise)),
+    lastEdit: soft(json, 'lastEdit', path, decodeProgramLastEdit),
   };
 };
 
@@ -496,6 +548,18 @@ export interface ExerciseBlockView {
   /** Pool blocks dosed in metres. */
   readonly meters: number | null;
   readonly progression: ProgressionChange | null;
+  /**
+   * The member's own exercise, not one from the LifePass library (API
+   * 0.41.0): its name and notes are theirs, it carries no LifePass cues and
+   * no alternatives, and the app tags it "Your exercise". Null from an older
+   * server.
+   */
+  readonly own: boolean | null;
+}
+
+/** The member's own exercise (`ExerciseBlockView.own`). */
+export function isOwnExercise(block: Pick<ExerciseBlockView, 'own'> | null | undefined): boolean {
+  return block?.own === true;
 }
 
 /** The rest the server asked for, whichever key carried it. */
@@ -526,6 +590,7 @@ export const decodeExerciseBlock: Reader<ExerciseBlockView> = (value, path) => {
     minutes: opt(json, 'minutes', path, integer),
     meters: opt(json, 'meters', path, integer),
     progression: opt(json, 'progression', path, decodeProgressionChange),
+    own: soft(json, 'own', path, boolean),
   };
 };
 
@@ -1349,6 +1414,8 @@ export const HealthServerFeature = {
   planRevision: 'plan_revision',
   feedback: 'health_feedback',
   mealDescribe: 'meal_describe',
+  /** Changing the workout plan by talking to the Coach (OP-58 to OP-62). */
+  planEdit: 'plan_edit',
 } as const;
 
 /**

@@ -13,7 +13,7 @@
  */
 import type { Feeling, ProgramSummary, SessionBrief, SessionStatusView } from '../../../health';
 import { duration, integer, decimal, longDay, weekdayAbbreviation } from '../../../i18n/format';
-import type { Lang, Params } from '../../../i18n';
+import { pluralKey, type Lang, type Params } from '../../../i18n';
 import { statusWord } from '../week/weekRules';
 
 export type Translate = (key: string, params?: Params) => string;
@@ -40,6 +40,21 @@ export function weekdayList(trainingDays: readonly number[] | null | undefined, 
     .sort((a, b) => a - b)
     .map((day) => weekdayAbbreviation(day, lang))
     .join(', ');
+}
+
+/**
+ * A custom plan's days (COACH-6): "Repeats every 4 days", from the cycle the
+ * member wrote, never the padded weekdays the server keeps for its own
+ * rules. A plan with no cycle length falls back to its weekdays.
+ */
+export function cycleDaysLine(
+  program: Pick<ProgramSummary, 'cycleDays' | 'trainingDays'>,
+  t: Translate,
+  lang: Lang,
+): string {
+  const days = program.cycleDays;
+  if (days === null || days < 1) return t('plan.overview.days', { days: weekdayList(program.trainingDays, lang) });
+  return t(pluralKey('plan.overview.cycle_days', days, lang), { count: integer(days, lang) });
 }
 
 /**

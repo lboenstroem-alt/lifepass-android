@@ -32,6 +32,8 @@ export interface SwapExerciseSheetProps {
   readonly canUseForRestOfPlan: boolean;
   /** A row was chosen; `forRestOfPlan` is already false for the way back and offline. */
   readonly onSelect: (option: RunnerSwapOption, forRestOfPlan: boolean) => void;
+  /** "I don't have this" (COACH-6): the Coach, about this exercise. Absent: not offered. */
+  readonly onNotHaveThis?: () => void;
 }
 
 export default function SwapExerciseSheet({
@@ -43,6 +45,7 @@ export default function SwapExerciseSheet({
   options,
   canUseForRestOfPlan,
   onSelect,
+  onNotHaveThis,
 }: SwapExerciseSheetProps) {
   const { t } = useT();
   const titleRef = useRef<Text>(null);
@@ -113,6 +116,27 @@ export default function SwapExerciseSheet({
             );
           })}
         </Card>
+
+        {onNotHaveThis ? (
+          <Card>
+            <Pressable
+              testID="swap.notHaveThis"
+              onPress={onNotHaveThis}
+              accessibilityRole="button"
+              accessibilityLabel={t('coach.planEdit.notHaveThis')}
+              style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+            >
+              <View style={styles.rowTexts}>
+                <LPText size={15} weight="semibold" color={colors.paper}>
+                  {t('coach.planEdit.notHaveThis')}
+                </LPText>
+              </View>
+              <View {...hiddenFromAccessibility}>
+                <Ionicons name="chatbubble-ellipses-outline" size={15} color={colors.paper3} />
+              </View>
+            </Pressable>
+          </Card>
+        ) : null}
 
         {showsToggle ? (
           <View style={styles.toggle}>

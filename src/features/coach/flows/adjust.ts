@@ -5,7 +5,9 @@
  *
  * - `adjust.open` (the pipeline's second step): while the flow is open,
  *   typed words are DROPPED, never kept: the hint once, then the open
- *   question again. It is tap to choose.
+ *   question again. It is tap to choose. EXCEPT while the server changes
+ *   plans by chat (`handsTypedOn`): then the words close the flow and go to
+ *   the plan change, whatever they say.
  * - It never starts from typed words: only a tap opens it (`enter`): the
  *   empty state's "Adjust my plan", and a monthly feedback line's Adjust,
  *   which another tab parks. A programme gate bubble's "Adjust my plan" comes
@@ -29,6 +31,7 @@ import {
   startAdjust,
 } from '../adjust/flow';
 import { AdjustOptionValue } from '../adjust/model';
+import { supportsPlanEdit } from '../planEdit/availability';
 import { coachHost } from '../store/host';
 import { programFlow } from './program';
 import type { CoachFlow, CoachFlowEntry } from './types';
@@ -49,6 +52,8 @@ export const adjustFlow: CoachFlow = {
   startFrom() {
     return false;
   },
+
+  handsTypedOn: supportsPlanEdit,
 
   abandon: abandonAdjust,
 

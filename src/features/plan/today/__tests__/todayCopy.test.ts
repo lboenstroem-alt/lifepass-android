@@ -70,7 +70,10 @@ describe('the header', () => {
     expect(metaLine(session({ kind: 'strength', minutes: 0 }), en)).toBeNull();
     expect(metaLine(session({ minutes: 30 }), en)).toBeNull();
     expect(metaLine(null, en)).toBeNull();
-    expect(previewMetaLine(session({}), en)).toBe('0 min · Moderate');
+    // Never "0 min": a session with no length says only how hard it is.
+    expect(previewMetaLine(session({}), en)).toBe('Moderate');
+    expect(previewMetaLine(session({ minutes: 0, intensity: 'hard' }), en)).toBe('Hard');
+    expect(previewMetaLine(session({ minutes: 45 }), en)).toBe('45 min · Moderate');
   });
 
   it('shows the recovery chip today, for a band it knows', () => {

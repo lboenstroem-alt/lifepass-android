@@ -59,7 +59,7 @@ function askQuestion(flow: FakeFlow, userText: string, isHealth: boolean): void 
 }
 
 export function fakeFlow(id: CoachFlowId): FakeFlow {
-  const isHealth = id === 'program' || id === 'adjust';
+  const isHealth = id === 'program' || id === 'adjust' || id === 'planEdit';
   const flow: FakeFlow = {
     id,
     calls: [],
@@ -111,7 +111,9 @@ export function fakeFlow(id: CoachFlowId): FakeFlow {
     enter(entry: CoachFlowEntry) {
       flow.calls.push('enter');
       flow.entries.push(entry);
-      askQuestion(flow, entry.kind === 'parked' ? `parked ${entry.entry.kind}` : entry.userText, isHealth);
+      const userText =
+        entry.kind === 'parked' ? `parked ${entry.entry.kind}` : entry.kind === 'planEdit' ? 'parked planEdit' : entry.userText;
+      askQuestion(flow, userText, isHealth);
     },
     selectOption(messageId: string, value: string, label: string) {
       flow.calls.push(`selectOption:${messageId}:${value}`);

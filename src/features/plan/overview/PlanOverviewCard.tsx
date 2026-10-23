@@ -19,6 +19,11 @@
  * block; See all weeks never is. The host asks before pause and end;
  * resume undoes a pause and needs no ceremony.
  *
+ * A plan the member wrote, or one a chat edit made repeat as a cycle
+ * (`program.custom`), says how often it repeats ("Repeats every 4 days")
+ * instead of its padded weekdays, and offers "Change with Coach" where
+ * Change days would be: the server refuses Change days on such a plan.
+ *
  * Pure presentation: the section (../sections/Overview.tsx) wires the taps.
  */
 import { Ionicons } from '@expo/vector-icons';
@@ -26,11 +31,11 @@ import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Card, EstimateChip, hiddenFromAccessibility, Kicker, LPText } from '../../../components/ui';
-import type { ProgramSummary } from '../../../health';
+import { isCustomProgram, type ProgramSummary } from '../../../health';
 import { useT } from '../../../i18n';
 import { colors, hairline } from '../../../theme';
 
-import { dateRange, targetsLine, targetsText, weekdayList } from './planCopy';
+import { cycleDaysLine, dateRange, targetsLine, targetsText, weekdayList } from './planCopy';
 
 export type PlanOverviewCardProps = {
   program: ProgramSummary;
@@ -43,6 +48,8 @@ export type PlanOverviewCardProps = {
   onPause: () => void;
   onResume: () => void;
   onEnd: () => void;
+  /** "Change with Coach" (COACH-6): shown on a custom plan in place of Change. Absent: not offered. */
+  onChangeWithCoach?: () => void;
   testID?: string;
 };
 
@@ -56,6 +63,7 @@ export default function PlanOverviewCard({
   onPause,
   onResume,
   onEnd,
+  onChangeWithCoach,
   testID = 'plan.overview',
 }: PlanOverviewCardProps) {
   const { t, language } = useT();
@@ -72,17 +80,29 @@ export default function PlanOverviewCard({
       </LPText>,
     );
   }
+  const custom = isCustomProgram(program);
   rows.push(
     <View key="days" style={styles.inline}>
       <LPText size={14} color={colors.paper} style={styles.grow} testID={`${testID}.days`}>
-        {t('plan.overview.days', { days: weekdayList(program.trainingDays, language) })}
+        {custom
+          ? cycleDaysLine(program, t, language)
+          : t('plan.overview.days', { days: weekdayList(program.trainingDays, language) })}
       </LPText>
-      <TextButton
-        title={t('plan.overview.change_days')}
-        onPress={onChangeDays}
-        disabled={actionsDisabled}
-        testID={`${testID}.changeDays`}
-      />
+      {!custom ? (
+        <TextButton
+          title={t('plan.overview.change_days')}
+          onPress={onChangeDays}
+          disabled={actionsDisabled}
+          testID={`${testID}.changeDays`}
+        />
+      ) : onChangeWithCoach ? (
+        <TextButton
+          title={t('coach.planEdit.changeWithCoach')}
+          onPress={onChangeWithCoach}
+          disabled={actionsDisabled}
+          testID={`${testID}.changeWithCoach`}
+        />
+      ) : null}
     </View>,
   );
   rows.push(

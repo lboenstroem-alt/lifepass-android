@@ -56,6 +56,7 @@ import {
   selectRecentChats,
   useCoachStore,
 } from '../../features/coach/store/coachStore';
+import { usePlanEditOffered } from '../../features/coach/planEdit';
 import { coachPalette, LOCKED_INPUT_OPACITY } from '../../features/coach/theme/palette';
 import { selectHasLiveProgram, useHealthStore } from '../../health';
 import { useT } from '../../i18n';
@@ -130,6 +131,9 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
   const supportsPlanRevision = useAppStore(selectSupportsPlanRevision);
   const profileProgramLive = useAppStore((s) => isLiveProgramStatus(s.profile?.health?.program?.status));
   const todayProgramLive = useHealthStore(selectHasLiveProgram);
+  // A custom plan refuses a revision: its chip is never "Adjust my plan".
+  const todayProgramCustom = useHealthStore((s) => s.today?.program?.custom === true);
+  const planEditOffered = usePlanEditOffered();
 
   const coach = useCoachStore.getState;
   const started = hasStartedChat(messages);
@@ -170,7 +174,9 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
         const promptArrived = intents.pendingCoachPrompt !== null && intents.pendingCoachPrompt !== previous.pendingCoachPrompt;
         const programArrived =
           intents.pendingCoachProgram !== null && intents.pendingCoachProgram !== previous.pendingCoachProgram;
-        if (promptArrived || programArrived) void coach().consumeParkedEntries();
+        const planEditArrived =
+          intents.pendingCoachPlanEdit !== null && intents.pendingCoachPlanEdit !== previous.pendingCoachPlanEdit;
+        if (promptArrived || programArrived || planEditArrived) void coach().consumeParkedEntries();
       });
       return () => {
         unsubscribe();
@@ -190,7 +196,9 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
       const promptArrived = intents.pendingCoachPrompt !== null && intents.pendingCoachPrompt !== previous.pendingCoachPrompt;
       const programArrived =
         intents.pendingCoachProgram !== null && intents.pendingCoachProgram !== previous.pendingCoachProgram;
-      if (!promptArrived && !programArrived) return;
+      const planEditArrived =
+        intents.pendingCoachPlanEdit !== null && intents.pendingCoachPlanEdit !== previous.pendingCoachPlanEdit;
+      if (!promptArrived && !programArrived && !planEditArrived) return;
       const stack = navigation.getState();
       if (stack && stack.index > 0) navigation.popToTop();
     });
@@ -274,6 +282,9 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
         return;
       case 'adjust':
         void coach().startAdjust();
+        return;
+      case 'planEdit':
+        void coach().startPlanEdit();
         return;
     }
   };
@@ -395,7 +406,8 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
               <View style={styles.flex} />
               <SuggestionChips
                 isMinor={healthAccess === 'minor'}
-                programChipAdjusts={(todayProgramLive || profileProgramLive) && supportsPlanRevision}
+                programChipAdjusts={(todayProgramLive || profileProgramLive) && supportsPlanRevision && !todayProgramCustom}
+                programChipEdits={planEditOffered}
                 onAction={onChip}
               />
             </ScrollView>

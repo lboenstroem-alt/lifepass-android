@@ -199,7 +199,15 @@ export async function startAdjust(userText: string): Promise<void> {
   const context = readProgramContext();
   // Anything short of "entitled, tracking on, a plan running, a server that
   // revises" is the wizard's own gate to answer, in its own words.
-  if (context.access !== 'entitled' || !context.hasConsent || !context.hasLiveProgram || !context.supportsPlanRevision) {
+  // A custom plan refuses a revision (409 `custom_plan_locked`): the wizard's
+  // own gate answers it too (Open Plan, Make a new plan).
+  if (
+    context.access !== 'entitled' ||
+    !context.hasConsent ||
+    !context.hasLiveProgram ||
+    !context.supportsPlanRevision ||
+    context.liveProgram?.custom === true
+  ) {
     await startProgram({ entry: 'chip', showUserBubble: false });
     return;
   }
@@ -732,7 +740,7 @@ export async function submitRevision(): Promise<void> {
       try {
         const response = await reviseProgram(programId, input, minted.key, host.language());
         if (!stillHere()) return;
-        applyRevision(response.program, kinds);
+        applyRevision(response.program, kinds, response.chatEdits ?? 0);
         return;
       } catch (error) {
         if (!stillHere()) return;
@@ -759,9 +767,13 @@ export async function submitRevision(): Promise<void> {
   }
 }
 
-function applyRevision(program: ProgramDetail, kinds: readonly AdjustChangeKind[]): void {
+function applyRevision(program: ProgramDetail, kinds: readonly AdjustChangeKind[], chatEdits: number): void {
   for (const kind of kinds) track('program_adjust_submitted', { change: kind });
   endAdjustFlow();
+  // The running plan carries changes made in chat (COACH-6): switching to
+  // this rebuild replaces them, apart from the equipment the member does
+  // not have. Said before the card, so it is read before the switch.
+  if (chatEdits > 0) appendProgramBubble('coach.planEdit.adjustWarning');
   const intro = program.program.intro?.trim() ?? '';
   if (intro) appendProgramBubble(null, intro);
   // The same card a build lands as, in revision mode (`SPEC` 6.8).

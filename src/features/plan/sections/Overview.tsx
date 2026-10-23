@@ -13,6 +13,8 @@
  *                      pause stops sessions and the workout day notes, and
  *                      "End plan" alone would not say that the history stays
  *   Resume             at once, no confirmation
+ *   Change with Coach  a custom plan's Change (COACH-6): the Coach, while the
+ *                      server changes plans by chat
  *
  * A finished block cannot be paused, resumed or ended: its rows offer what
  * they always did, greyed, rather than posting a change the server refuses.
@@ -23,16 +25,26 @@ import { useState } from 'react';
 import { ConfirmSheet } from '../../../components/ui';
 import { useHealthStore } from '../../../health';
 import { useT } from '../../../i18n';
+import { useIntentStore } from '../../../stores/intentStore';
 import { openBodySheet } from '../../body/sheets';
+import { usePlanEditOffered } from '../../coach/planEdit';
 import { openChangeDays } from '../days';
 import PlanOverviewCard from '../overview/PlanOverviewCard';
 import { pushPlanRoute, reloadPlan, setProgramStatus, usePlanView } from '../shell';
 
 type Confirming = { readonly kind: 'pause' | 'end'; readonly programId: string };
 
+/** "Change with Coach" for the plan as a whole: the Coach asks what to change. */
+function changeWithCoachForPlan(): void {
+  const intents = useIntentStore.getState();
+  intents.parkCoachPlanEdit({});
+  intents.requestTab('Coach');
+}
+
 export default function OverviewSection() {
   const { t } = useT();
   const view = usePlanView();
+  const planEditOffered = usePlanEditOffered();
   const program = view.shownDay?.program ?? null;
   const [confirming, setConfirming] = useState<Confirming | null>(null);
   // Kept while the sheet slides away, so its words do not vanish mid-slide.
@@ -72,6 +84,7 @@ export default function OverviewSection() {
         onPause={() => ask('pause')}
         onResume={() => void setProgramStatus('active', program.id)}
         onEnd={() => ask('end')}
+        onChangeWithCoach={planEditOffered ? () => changeWithCoachForPlan() : undefined}
       />
       {shown ? (
         <ConfirmSheet
