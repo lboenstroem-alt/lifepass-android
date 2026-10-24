@@ -55,6 +55,31 @@ const fullHealth = {
   appleHealth: { connected: true, lastSyncedAt: '2026-09-15T06:00:00Z' },
 };
 
+describe('the support block (API 0.39.0, iOS WhatsAppSupportDecodeTests)', () => {
+  it('no block (a server older than 0.39.0) means no chat', () => {
+    expect(decode().whatsAppSupport).toBeNull();
+  });
+
+  it('whatsapp: null (switched off) means no chat', () => {
+    const profile = decode({ support: { whatsapp: null } });
+    expect(profile.whatsAppSupport).toBeNull();
+    expect(profile.fullName).toBe('Anna Jonsdottir');
+  });
+
+  it('a garbage block leaves the profile intact', () => {
+    const profile = decode({ support: { whatsapp: { number: 42 } } });
+    expect(profile.whatsAppSupport).toBeNull();
+    expect(profile.locale).toBe('is');
+    expect(decode({ support: 'yes' }).whatsAppSupport).toBeNull();
+  });
+
+  it('a chat decodes', () => {
+    expect(
+      decode({ support: { whatsapp: { number: '3545550000', url: 'https://wa.me/3545550000' } } }).whatsAppSupport,
+    ).toEqual({ number: '3545550000', url: 'https://wa.me/3545550000' });
+  });
+});
+
 describe('the health block (iOS ProfileHealthBlockDecodeTests)', () => {
   it('a garbage health block leaves the profile intact', () => {
     const profile = decode({ health: { access: 42, consent: 'yesterday' } });

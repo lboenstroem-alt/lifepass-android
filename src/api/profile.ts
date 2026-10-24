@@ -12,7 +12,7 @@
  *   `usage` block are read strictly: a wrong type there fails the whole read,
  *   and `loadProfile` keeps the profile it had (iOS `AppState.loadProfile`).
  *   A missing or null optional member is simply absent.
- * - `recentCheckIn`, `health` and `coach` are FAIL-SOFT. The app carries scar
+ * - `recentCheckIn`, `health`, `coach` and `support` are FAIL-SOFT. The app carries scar
  *   tissue here: one required key that changed shape once failed the whole
  *   profile decode and blanked the member's name, language and caps
  *   app-wide. These three are the newest and least important blocks on the
@@ -269,6 +269,21 @@ export interface Profile {
   readonly recentCheckIn: RecentCheckIn | null;
   readonly health: ProfileHealthBlock | null;
   readonly coach: ProfileCoachBlock | null;
+  /**
+   * `support.whatsapp` (API 0.39.0): the WhatsApp support chat, or null while
+   * WhatsApp support is switched off, on a server older than 0.39.0, or when
+   * the block cannot be read (iOS `Profile.whatsAppSupport`). The Account
+   * screen shows its row only while this is set.
+   */
+  readonly whatsAppSupport: WhatsAppSupport | null;
+}
+
+/** The WhatsApp support chat, answered by LifePass in the WhatsApp Business app (iOS `WhatsAppSupport`). */
+export interface WhatsAppSupport {
+  /** The full international number in digits, no "+" (`3545551234`). */
+  readonly number: string;
+  /** `https://wa.me/<number>`, with no message. */
+  readonly url: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -530,8 +545,23 @@ export function decodeProfileCoachBlock(value: unknown): ProfileCoachBlock {
 }
 
 /**
+ * The `support` block (API 0.39.0): its WhatsApp chat, or null when the
+ * server sends `whatsapp: null` (switched off). Read strictly inside; the
+ * profile reads the block fail-soft, so anything unreadable is "no chat".
+ */
+export function decodeProfileSupport(value: unknown): WhatsAppSupport | null {
+  const support = object(value, 'support');
+  if (absent(support.whatsapp)) return null;
+  const chat = object(support.whatsapp, 'support.whatsapp');
+  return {
+    number: string(chat.number, 'support.whatsapp.number'),
+    url: string(chat.url, 'support.whatsapp.url'),
+  };
+}
+
+/**
  * `GET /profile`'s `data`. Throws `ProfileShapeError` when the identity or the
- * usage block cannot be read; the three newest blocks never fail it.
+ * usage block cannot be read; the newer blocks never fail it.
  */
 export function decodeProfile(data: unknown): Profile {
   const profile = object(data, 'profile');
@@ -548,6 +578,7 @@ export function decodeProfile(data: unknown): Profile {
     recentCheckIn: failSoft(profile.recentCheckIn, decodeRecentCheckIn),
     health: failSoft(profile.health, decodeProfileHealthBlock),
     coach: failSoft(profile.coach, decodeProfileCoachBlock),
+    whatsAppSupport: failSoft(profile.support, decodeProfileSupport),
   };
 }
 

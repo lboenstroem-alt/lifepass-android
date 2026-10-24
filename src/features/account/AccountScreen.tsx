@@ -15,7 +15,8 @@
  *                Receipts & invoices and Plan & usage (ACCT-2's screens)
  *   Account      BODY-1's slots/BodyGoalsRow, Refer a friend (once a link has
  *                loaded), AUTH-3's slots/IdentityRow, Language, Notifications
- *                (Android only, decision D4), Help & support, Log out, and
+ *                (Android only, decision D4), Help & support, Chat on
+ *                WhatsApp (only while GET /profile carries the chat), Log out, and
  *                ACCT-4's slots/DeletionRow
  *   footer       Terms · Privacy · Contact, and the legal name
  *
@@ -71,6 +72,7 @@ import {
   SUPPORT_EMAIL,
   SUPPORT_MAILTO,
   TERMS_URL,
+  whatsAppChatUrl,
 } from './links';
 import MemberCard from './MemberCard';
 import { shareReferral, useReferral } from './referral';
@@ -125,6 +127,10 @@ export default function AccountScreen({ navigation }: SharedRouteProps<'Account'
   );
 
   const facts: MembershipFacts = useMemo(() => ({ subscription, usage, passes }), [subscription, usage, passes]);
+  // WhatsApp support (API 0.39.0): a row only while GET /profile carries a
+  // chat, so the number can change, or support be switched off, without an
+  // app release.
+  const whatsAppChat = whatsAppChatUrl(profile?.whatsAppSupport, language);
   const plan = planRow(facts, language);
 
   const openPlans = useCallback(() => navigation.navigate('Plans'), [navigation]);
@@ -209,6 +215,14 @@ export default function AccountScreen({ navigation }: SharedRouteProps<'Account'
             onPress={() => void openExternal(SUPPORT_MAILTO)}
             testID="account.row.help"
           />
+          {whatsAppChat ? (
+            <AccountRowButton
+              title={t('account.whatsapp')}
+              accessibilityHint={t('account.android.whatsapp_hint')}
+              onPress={() => void openExternal(whatsAppChat)}
+              testID="account.row.whatsapp"
+            />
+          ) : null}
           <AccountRowButton
             title={t('account.logout')}
             dim
