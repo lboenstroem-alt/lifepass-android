@@ -146,13 +146,21 @@ export function programRevisionBody(input: ProgramRevisionInput): Record<string,
 export interface ProgramRevisionResponse {
   readonly program: ProgramDetail;
   readonly replayed: boolean | null;
+  /**
+   * How many changes made in chat the running plan carries (applied, not
+   * undone; API 0.41.0): switching to this revision replaces them, so the
+   * Coach says so first. Null from an older server.
+   */
+  readonly chatEdits: number | null;
 }
 
 export const decodeProgramRevisionResponse: Reader<ProgramRevisionResponse> = (value, path) => {
   const json = object(value, path);
+  const chatEdits = json.chatEdits;
   return {
     program: decodeProgramDetail(json.program, `${path}.program`),
     replayed: typeof json.replayed === 'boolean' ? json.replayed : null,
+    chatEdits: typeof chatEdits === 'number' && Number.isInteger(chatEdits) && chatEdits >= 0 ? chatEdits : null,
   };
 };
 

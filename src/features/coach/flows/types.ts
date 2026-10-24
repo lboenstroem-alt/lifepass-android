@@ -11,7 +11,21 @@
 //                        nothing typed (ruling 2), says so once and repeats
 //                        its question. The words stop here, always: they never
 //                        go on to another flow or to the model;
-//   2. adjust.open       Adjust my plan is in progress: the same (tap to choose);
+//   2. adjust.open       Adjust my plan is in progress: the same (tap to choose),
+//                        UNLESS the server changes plans by chat
+//                        (`handsTypedOn`): then the words close Adjust and go
+//                        on to the plan change (step 4 sends them whatever
+//                        they say);
+//   2a. planEdit.open    a plan change the Coach suggested is still open (a
+//                        preview card waiting, a clarifying question, or
+//                        "Change my plan" tapped): the words refine it
+//                        (OP-58 with `replacesEditId`);
+//   2b. planEdit.start   words that ask to change the running plan ("swap
+//                        bench for push-ups", "I don't have a cable machine")
+//                        go to OP-58. Only with `detectPlanRequest`;
+//                        either plan-edit step may answer "not a plan edit":
+//                        then its bubble goes and the words go on from
+//                        step 3 as if it never ran (`'passed'`);
 //   3. program.start     a typed request for WEEKS ("a 4 week plan") OFFERS
 //                        the programme wizard. Only with `detectPlanRequest`.
 //                        It comes BEFORE the venue and day-plan wizards' open
@@ -66,14 +80,16 @@
 // entry point does first.
 import type { ComponentType } from 'react';
 
-import type { CoachProgramEntry } from '../../../stores/intentStore';
+import type { CoachPlanEditEntry, CoachProgramEntry } from '../../../stores/intentStore';
 
-export type CoachFlowId = 'venueWizard' | 'dayPlan' | 'program' | 'adjust';
+export type CoachFlowId = 'venueWizard' | 'dayPlan' | 'program' | 'adjust' | 'planEdit';
 
 /** One step of the send pipeline: a flow, and whether it takes words for an open question or starts from them. */
 export type CoachSendStep =
   | 'program.open'
   | 'adjust.open'
+  | 'planEdit.open'
+  | 'planEdit.start'
   | 'program.start'
   | 'venueWizard.open'
   | 'dayPlan.open'
@@ -84,12 +100,26 @@ export type CoachSendStep =
 export const SEND_PIPELINE: readonly CoachSendStep[] = [
   'program.open',
   'adjust.open',
+  'planEdit.open',
+  'planEdit.start',
   'program.start',
   'venueWizard.open',
   'dayPlan.open',
   'dayPlan.start',
   'venueWizard.start',
 ];
+
+/**
+ * What a step that looked at the words answers: `true` it took them,
+ * `false` it did not (the next step looks), `'passed'` it sent them to the
+ * server, which said they are not a plan change: the words go on from
+ * `PASSED_RESUMES_AT`, skipping the rest of the plan-edit steps, so they are
+ * never sent twice.
+ */
+export type CoachStepResult = boolean | 'passed';
+
+/** Where words a plan-edit step passed on go next. */
+export const PASSED_RESUMES_AT: CoachSendStep = 'program.start';
 
 /**
  * The steps gated on the flow being IN PROGRESS rather than on an open
@@ -101,7 +131,7 @@ export const SEND_PIPELINE: readonly CoachSendStep[] = [
 export const ACTIVE_FLOW_STEPS: readonly CoachSendStep[] = ['program.open', 'adjust.open'];
 
 /** The steps that run only when the words may start a wizard (`detectPlanRequest`). */
-export const PLAN_REQUEST_STEPS: readonly CoachSendStep[] = ['program.start', 'dayPlan.start'];
+export const PLAN_REQUEST_STEPS: readonly CoachSendStep[] = ['planEdit.start', 'program.start', 'dayPlan.start'];
 
 /** A step's flow and kind. */
 export function sendStepParts(step: CoachSendStep): { readonly flow: CoachFlowId; readonly phase: 'open' | 'start' } {
@@ -125,6 +155,12 @@ export interface CoachStartContext {
    * anything; the venue wizard does not (no question can be open by then).
    */
   abandonOpenQuestions(): void;
+  /**
+   * The in-progress step that closed itself and handed the words on (Adjust
+   * my plan when the server changes plans by chat), else null. The plan
+   * change takes such words whatever they say: they were typed AT a plan.
+   */
+  readonly handedOnFrom?: CoachSendStep | null;
 }
 
 /**
@@ -173,7 +209,14 @@ export type CoachWizardCategory = 'swimming' | 'gym' | 'spa' | 'yoga' | 'golf' |
 export type CoachFlowEntry =
   | { readonly kind: 'category'; readonly category: CoachWizardCategory; readonly userText: string }
   | { readonly kind: 'chip'; readonly userText: string }
-  | { readonly kind: 'parked'; readonly entry: CoachProgramEntry };
+  | { readonly kind: 'parked'; readonly entry: CoachProgramEntry }
+  /**
+   * A plan change asked for from another tab (Plan's "Change with Coach",
+   * the runner's "I don't have this"): the day or exercise it is about, and
+   * the words to put in the input for the member to send (never sent for
+   * them).
+   */
+  | { readonly kind: 'planEdit'; readonly entry: CoachPlanEditEntry };
 
 export interface CoachFlow {
   readonly id: CoachFlowId;
@@ -195,9 +238,15 @@ export interface CoachFlow {
    * ignored: the words are theirs whatever they return (they show the typed
    * hint and repeat the open question; they never keep the words).
    */
-  takeTyped(text: string): boolean | Promise<boolean>;
+  takeTyped(text: string): CoachStepResult | Promise<CoachStepResult>;
   /** A `.start` step: start from the words. True when it started (or offered). */
-  startFrom(text: string, options: CoachSendOptions, context: CoachStartContext): boolean | Promise<boolean>;
+  startFrom(text: string, options: CoachSendOptions, context: CoachStartContext): CoachStepResult | Promise<CoachStepResult>;
+  /**
+   * While this flow is in progress, typed words close it and go on down the
+   * pipeline instead of being swallowed (Adjust my plan, when the server
+   * changes plans by chat). Absent: false.
+   */
+  handsTypedOn?(): boolean;
   /** Drop this flow's open question and state (part of `abandonOpenQuestions`). */
   abandon(): void;
   /** Forget everything (sign-out, a new chat). */
@@ -241,24 +290,42 @@ export async function runSendPipeline(
   text: string,
   options: CoachSendOptions,
   context: CoachStartContext,
+  from: CoachSendStep = SEND_PIPELINE[0]!,
 ): Promise<CoachSendStep | null> {
-  for (const step of SEND_PIPELINE) {
+  let handedOnFrom: CoachSendStep | null = context.handedOnFrom ?? null;
+  for (let index = Math.max(0, SEND_PIPELINE.indexOf(from)); index < SEND_PIPELINE.length; index += 1) {
+    const step = SEND_PIPELINE[index]!;
     const { flow, phase } = sendStepParts(step);
     const target = flows[flow];
     if (ACTIVE_FLOW_STEPS.includes(step)) {
-      // In progress: the words end here whatever the flow answers.
       if (target.isActive()) {
+        if (target.handsTypedOn?.()) {
+          // The flow closes (its open question with it) and the words go on.
+          context.abandonOpenQuestions();
+          handedOnFrom = step;
+          continue;
+        }
+        // In progress: the words end here whatever the flow answers.
         await target.takeTyped(text);
         return step;
       }
       continue;
     }
+    let result: CoachStepResult = false;
     if (phase === 'open') {
-      if (target.hasOpenQuestion() && (await target.takeTyped(text))) return step;
-      continue;
+      if (!target.hasOpenQuestion()) continue;
+      result = await target.takeTyped(text);
+    } else {
+      if (PLAN_REQUEST_STEPS.includes(step) && !options.detectPlanRequest && handedOnFrom === null) continue;
+      result = await target.startFrom(text, options, { ...context, handedOnFrom });
     }
-    if (PLAN_REQUEST_STEPS.includes(step) && !options.detectPlanRequest) continue;
-    if (await target.startFrom(text, options, context)) return step;
+    if (result === true) return step;
+    if (result === 'passed') {
+      // Not a plan change: on from the programme offer, never past it twice.
+      const resume = SEND_PIPELINE.indexOf(PASSED_RESUMES_AT);
+      if (resume > index) index = resume - 1;
+      handedOnFrom = null;
+    }
   }
   return null;
 }

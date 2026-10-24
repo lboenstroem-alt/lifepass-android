@@ -44,13 +44,18 @@ import { modelMessages as buildModelMessages } from '../chat/modelMessages';
 import { parseVenuePayload, resolveVenueCards, venuesReplyAsText } from '../chat/venueReply';
 import { adjustFlow } from '../flows/adjust';
 import { dayPlanFlow } from '../flows/dayPlan';
+import { planEditFlow } from '../flows/planEdit';
+import { offersPlanEdit } from '../planEdit/availability';
 import { programFlow } from '../flows/program';
 import {
+  PASSED_RESUMES_AT,
   runSendPipeline,
+  SEND_PIPELINE,
   type CoachFlow,
   type CoachFlowEntry,
   type CoachFlowId,
   type CoachSendOptions,
+  type CoachSendStep,
   type CoachWizardCategory,
 } from '../flows/types';
 import { venueWizardFlow } from '../flows/venueWizard';
@@ -87,10 +92,11 @@ import {
 // ---------------------------------------------------------------------------
 // The flows
 
-/** The four flows the pipeline runs, by id (filled by COACH-2 to COACH-5). */
+/** The flows the pipeline runs, by id (COACH-2 to COACH-5, and COACH-6's plan change). */
 export const COACH_FLOWS: Readonly<Record<CoachFlowId, CoachFlow>> = {
   program: programFlow,
   adjust: adjustFlow,
+  planEdit: planEditFlow,
   venueWizard: venueWizardFlow,
   dayPlan: dayPlanFlow,
 };
@@ -173,6 +179,13 @@ export interface CoachActions {
   startProgram(): Promise<void>;
   /** "Adjust my plan" (iOS `startAdjust`). */
   startAdjust(): Promise<void>;
+  /** "Change my plan": the Coach asks what to change (iOS `startPlanEdit`). */
+  startPlanEdit(): Promise<void>;
+  /**
+   * Words a plan-edit chip sent that are not a plan change: through the
+   * pipeline from the programme offer, then the model (see `CoachHost.resumeSend`).
+   */
+  resumeSend(text: string): Promise<void>;
   /** A chip on a question bubble: back to the flow that asked it. */
   selectOption(messageId: string, value: string, label: string): Promise<void>;
   /** iOS `abandonOpenQuestions`. */
@@ -495,6 +508,49 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
     return !isBusy() && account === accountEpoch;
   };
 
+  /**
+   * The send pipeline from `from`, then the model (iOS `send`). `clearsInput`:
+   * typed words empty the input; words a chip sent leave it alone.
+   */
+  const sendFrom = async (text: string, options: CoachSendOptions, from: CoachSendStep, clearsInput: boolean) => {
+    const trimmed = text.trim();
+    if (!trimmed || isBusy()) return;
+    const mine = {};
+    activeSend = mine;
+    const account = accountEpoch;
+    const generation = get().generation;
+    try {
+      if (clearsInput) set({ inputText: '' });
+
+      const took = await runSendPipeline(COACH_FLOWS, trimmed, options, { abandonOpenQuestions }, from);
+      if (took !== null) return;
+      // Signed out, or a new chat, while the flows looked at the words:
+      // they belong to a chat that is gone.
+      if (account !== accountEpoch || generation !== get().generation) return;
+
+      // The daily cap and the free allowance only lock the AI path; the
+      // flows above never call the model on typed words, so they still work.
+      // While the plan can be changed in chat the input stays open (the lock
+      // does not cover that), so words meant for the chat are answered with
+      // the lock rather than dropped (iOS `send`).
+      if (isAILocked(get())) {
+        if (offersPlanEdit()) {
+          const state = get();
+          append(
+            { role: 'user', text: trimmed },
+            { role: 'assistant', text: tr(state.freeLimitReached ? 'coach.input.free_limit' : 'coach.input.limit_reached') },
+          );
+        }
+        return;
+      }
+
+      append({ role: 'user', text: trimmed });
+      await callAI();
+    } finally {
+      if (activeSend === mine) activeSend = null;
+    }
+  };
+
   /** A tap that starts a flow: never over a reply in flight, and every open question abandoned first. */
   const enterFlow = async (flowId: CoachFlowId, entry: CoachFlowEntry) => {
     if (isBusy()) return;
@@ -516,31 +572,12 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
       }
     },
 
-    async send(text, options = TYPED_SEND) {
-      const trimmed = text.trim();
-      if (!trimmed || isBusy()) return;
-      const mine = {};
-      activeSend = mine;
-      const account = accountEpoch;
-      const generation = get().generation;
-      try {
-        set({ inputText: '' });
+    send(text, options = TYPED_SEND) {
+      return sendFrom(text, options, SEND_PIPELINE[0]!, true);
+    },
 
-        const took = await runSendPipeline(COACH_FLOWS, trimmed, options, { abandonOpenQuestions });
-        if (took !== null) return;
-        // Signed out, or a new chat, while the flows looked at the words:
-        // they belong to a chat that is gone.
-        if (account !== accountEpoch || generation !== get().generation) return;
-
-        // The daily cap and the free allowance only lock the AI path; the
-        // flows above never call the model on typed words, so they still work.
-        if (isAILocked(get())) return;
-
-        append({ role: 'user', text: trimmed });
-        await callAI();
-      } finally {
-        if (activeSend === mine) activeSend = null;
-      }
+    resumeSend(text) {
+      return sendFrom(text, TYPED_SEND, PASSED_RESUMES_AT, false);
     },
 
     async sendParkedPrompt(text) {
@@ -564,8 +601,13 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
       const intents = useIntentStore.getState();
       const prompt = intents.takeCoachPrompt();
       const program = intents.takeCoachProgram();
+      const planEdit = intents.takeCoachPlanEdit();
       if (prompt) await get().sendParkedPrompt(prompt);
       if (program) await get().startParkedProgram(program);
+      if (planEdit) {
+        if (!(await waitForIdle())) return;
+        await enterFlow('planEdit', { kind: 'planEdit', entry: planEdit });
+      }
     },
 
     startSearch(categoryKey, labelKey) {
@@ -594,6 +636,10 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
 
     startAdjust() {
       return enterFlow('adjust', { kind: 'chip', userText: tr('coach.chip.adjust_plan') });
+    },
+
+    startPlanEdit() {
+      return enterFlow('planEdit', { kind: 'chip', userText: tr('coach.planEdit.chip') });
     },
 
     async selectOption(messageId, value, label) {
@@ -766,6 +812,8 @@ const host: CoachHost = {
   applyCoachLimit: (error, token) => useCoachStore.getState().applyCoachLimit(error, token),
   recordFreeMessages: (counts, token) => useCoachStore.getState().recordFreeMessages(counts, token),
   abandonOpenQuestions: () => useCoachStore.getState().abandonOpenQuestions(),
+  setInput: (text) => useCoachStore.getState().setInputText(text),
+  resumeSend: (text) => useCoachStore.getState().resumeSend(text),
   modelMessages: (): CoachApiMessage[] => buildModelMessages(useCoachStore.getState().messages),
   route: (route) => useCoachStore.getState().route(route),
 };

@@ -35,7 +35,11 @@ export function programAdjustHandoff(): ProgramAdjustHandoff | null {
   return installed;
 }
 
-/** A plan can be adjusted rather than replaced: the server revises AND the flow that does it is in this build. */
-export function canRevise(context: Pick<ProgramContext, 'supportsPlanRevision'>): boolean {
-  return context.supportsPlanRevision && installed !== null;
+/**
+ * A plan can be adjusted rather than replaced: the server revises AND the
+ * flow that does it is in this build AND the running plan is not one the
+ * member wrote (a custom plan refuses a revision, 409 `custom_plan_locked`).
+ */
+export function canRevise(context: Pick<ProgramContext, 'supportsPlanRevision'> & Partial<Pick<ProgramContext, 'liveProgram'>>): boolean {
+  return context.supportsPlanRevision && installed !== null && context.liveProgram?.custom !== true;
 }

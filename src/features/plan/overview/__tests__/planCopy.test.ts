@@ -6,6 +6,7 @@
 import { decodeProgramSummary } from '../../../../health';
 import { translate, type Lang, type Params } from '../../../../i18n';
 import {
+  cycleDaysLine,
   dateRange,
   dayRowLabel,
   feelingWord,
@@ -109,5 +110,35 @@ describe('the update body never mixes a status with days', () => {
   it('a mixed or empty body is recognised for what the server refuses', () => {
     expect(programUpdateKind({ status: 'paused', trainingDays: [1, 2] })).toBe('mixed');
     expect(programUpdateKind({})).toBe('empty');
+  });
+});
+
+describe("a custom plan's days (COACH-6)", () => {
+  const t = (lang: Lang) => (key: string, params?: Params) => translate(key, lang, params);
+  const program = (json: Record<string, unknown>) => decodeProgramSummary({ id: 'p', ...json }, 'program');
+
+  it('says how often the cycle repeats, in both languages, never the padded weekdays', () => {
+    const custom = program({ custom: true, cycleDays: 4, trainingDays: [1, 2, 3, 5, 6] });
+    expect(cycleDaysLine(custom, t('en'), 'en')).toBe('Repeats every 4 days');
+    expect(cycleDaysLine(custom, t('is'), 'is')).toBe('Endurtekst á 4 daga fresti');
+    expect(cycleDaysLine(program({ custom: true, cycleDays: 14 }), t('en'), 'en')).toBe('Repeats every 14 days');
+  });
+
+  it('a plan with no cycle length falls back to its weekdays', () => {
+    expect(cycleDaysLine(program({ custom: true, cycleDays: null, trainingDays: [3, 1] }), t('en'), 'en')).toBe('Days: Mon, Wed');
+  });
+
+  it('the plan reads custom, its cycle, exclusions and last change fail soft', () => {
+    const read = program({
+      custom: true,
+      cycleDays: 4,
+      excludedEquipment: ['cable'],
+      excludedExercises: [{ exerciseId: 'leg-press', name: 'Leg press' }],
+      lastEdit: { editId: 'e1', undoUntil: '2026-10-30T10:00:00.000Z', undoable: true },
+    });
+    expect(read).toMatchObject({ custom: true, cycleDays: 4, excludedEquipment: ['cable'], lastEdit: { editId: 'e1', undoable: true } });
+    expect(read.excludedExercises).toEqual([{ exerciseId: 'leg-press', name: 'Leg press' }]);
+    const odd = program({ custom: 'yes', cycleDays: 'four', lastEdit: { undoable: true } });
+    expect(odd).toMatchObject({ custom: null, cycleDays: null, lastEdit: null });
   });
 });

@@ -15,7 +15,7 @@
  * closes. The host keys it by session, so each opening starts clean.
  */
 import { useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View, type Text } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View, type Text } from 'react-native';
 
 import { newIdempotencyKey } from '../../../api';
 import { Card, LPText, PrimaryButton, Sheet } from '../../../components/ui';
@@ -29,9 +29,11 @@ import {
   type SessionView,
 } from '../../../health';
 import { useT } from '../../../i18n';
+import { todayServerDay } from '../../../i18n/format';
 import { track } from '../../../lib/analytics';
 import { colors, hairline } from '../../../theme';
 import { previewMetaLine } from '../today/copy';
+import ExerciseName from '../today/ExerciseName';
 
 import { previewAction, pullFailure } from './previewRules';
 
@@ -54,6 +56,8 @@ export type SessionPreviewSheetProps = {
   onStart?: () => void;
   /** A pull succeeded: the host replaces its day, week and upcoming. */
   onPulled?: (response: SessionActionResponse) => void;
+  /** "Change with Coach" (COACH-6): runs once the sheet has gone. Absent: not offered. */
+  onChangeWithCoach?: () => void;
   testID?: string;
 };
 
@@ -66,6 +70,7 @@ export default function SessionPreviewSheet({
   canStart = false,
   onStart,
   onPulled,
+  onChangeWithCoach,
   testID = 'plan.preview',
 }: SessionPreviewSheetProps) {
   const { t } = useT();
@@ -124,9 +129,11 @@ export default function SessionPreviewSheet({
           <LPText ref={titleRef} serif size={24} color={colors.paper} accessibilityRole="header">
             {session.title ?? t('plan.today.rest_title')}
           </LPText>
-          <LPText size={13} color={colors.paper2}>
-            {previewMetaLine(session, t)}
-          </LPText>
+          {previewMetaLine(session, t) ? (
+            <LPText size={13} color={colors.paper2}>
+              {previewMetaLine(session, t)}
+            </LPText>
+          ) : null}
           {session.lighter === true ? (
             <View style={styles.chip}>
               <LPText size={11} weight="semibold" color={colors.signal}>
@@ -177,6 +184,24 @@ export default function SessionPreviewSheet({
           )
         ) : null}
 
+        {onChangeWithCoach && canChangeWithCoach(session) ? (
+          <Pressable
+            onPress={() => {
+              afterClose.current = onChangeWithCoach;
+              onClose();
+            }}
+            disabled={isPulling}
+            accessibilityRole="button"
+            accessibilityLabel={t('coach.planEdit.changeWithCoach')}
+            style={({ pressed }) => [styles.secondary, pressed && styles.pressed]}
+            testID={`${testID}.changeWithCoach`}
+          >
+            <LPText size={14} weight="semibold" color={colors.accentText}>
+              {t('coach.planEdit.changeWithCoach')}
+            </LPText>
+          </Pressable>
+        ) : null}
+
         <LPText size={12} color={colors.paper3}>
           {t('health.disclaimer')}
         </LPText>
@@ -185,15 +210,23 @@ export default function SessionPreviewSheet({
   );
 }
 
+/**
+ * "Change with Coach" on a row still to be done, today or later: the server
+ * changes planned rows only (iOS `canChangeWithCoach`).
+ */
+export function canChangeWithCoach(session: Pick<SessionView, 'status' | 'scheduledFor'>, today: string = todayServerDay()): boolean {
+  const status = session.status ?? 'planned';
+  if (status !== 'planned' && status !== 'rest') return false;
+  return session.scheduledFor !== null && session.scheduledFor >= today;
+}
+
 /** One block: its name, its dose, its equipment and its first cue. */
 function BlockRow({ block }: { block: ExerciseBlockView }) {
   const { t } = useT();
   const cue = block.cues?.[0];
   return (
     <View style={styles.block}>
-      <LPText size={15} weight="semibold" color={colors.paper}>
-        {block.name ?? ''}
-      </LPText>
+      <ExerciseName block={block} size={15} weight="semibold" />
       <LPText size={13} color={colors.paper2}>
         {exerciseLine(block, t)}
       </LPText>
@@ -218,4 +251,6 @@ const styles = StyleSheet.create({
   rule: { height: hairline, backgroundColor: colors.line },
   block: { gap: 5, paddingHorizontal: 14, paddingVertical: 12 },
   spinner: { height: 52, alignItems: 'center', justifyContent: 'center' },
+  secondary: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  pressed: { opacity: 0.7 },
 });

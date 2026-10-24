@@ -36,12 +36,12 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, View, type Text, type TextInput } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View, type Text, type TextInput } from 'react-native';
 
 import type { ApiError } from '../../../api';
 import { announce, hiddenFromAccessibility, LPText, Sheet, SheetTextInput } from '../../../components/ui';
-import { openHealthConsent, presentMealGate, PRIVACY_POLICY_URL, useHealthStore } from '../../../health';
-import { HealthConsentSheet } from '../../../health/ui';
+import { openHealthConsent, presentMealGate, useHealthStore } from '../../../health';
+import { AiConsentBlock, HealthConsentSheet } from '../../../health/ui';
 import { useT } from '../../../i18n';
 import { todayServerDay } from '../../../i18n/format';
 import { track } from '../../../lib/analytics';
@@ -380,48 +380,19 @@ function EstimateButton({ estimating, enabled, onPress }: { estimating: boolean;
 }
 
 /** The text this estimate needs the member to accept, and one button. */
+/** The one-tap consent (the shared block, ../../../health/consent/AiConsentBlock.tsx). */
 function ConsentBlock({ granting, errorKey, onGrant }: { granting: boolean; errorKey: string | null; onGrant: () => void }) {
-  const { t } = useT();
   return (
-    <View style={styles.consent} testID="meal.describe.consentBlock">
-      <View style={styles.consentLine}>
-        <View {...hiddenFromAccessibility} style={styles.consentIcon}>
-          <Ionicons name="chatbubble-ellipses-outline" size={16} color={colors.signal} />
-        </View>
-        <LPText size={14} color={colors.paper} style={styles.grow}>
-          {t('healthconsent.ai.describe')}
-        </LPText>
-      </View>
-      <Pressable
-        accessibilityRole="link"
-        onPress={() => {
-          void Linking.openURL(PRIVACY_POLICY_URL).catch(() => undefined);
-        }}
-        style={styles.link}
-      >
-        <LPText size={13} weight="semibold" color={colors.accentText}>
-          {t('healthconsent.privacy_link')}
-        </LPText>
-      </Pressable>
-      <Pressable
-        onPress={onGrant}
-        disabled={granting}
-        accessibilityRole="button"
-        accessibilityState={{ disabled: granting, busy: granting }}
-        style={({ pressed }) => [styles.button, pressed && !granting && styles.pressed]}
-        testID="meal.describe.consent"
-      >
-        {granting ? <ActivityIndicator size="small" color={colors.onAccent} /> : null}
-        <LPText size={15} weight="semibold" color={colors.onAccent}>
-          {t('meal.describe.consent.cta')}
-        </LPText>
-      </Pressable>
-      {errorKey ? (
-        <LPText size={13} color={colors.destructive} testID="meal.describe.consentError">
-          {t(errorKey)}
-        </LPText>
-      ) : null}
-    </View>
+    <AiConsentBlock
+      lineKey="healthconsent.ai.describe"
+      ctaKey="meal.describe.consent.cta"
+      granting={granting}
+      errorKey={errorKey}
+      onGrant={onGrant}
+      testID="meal.describe.consentBlock"
+      buttonTestID="meal.describe.consent"
+      errorTestID="meal.describe.consentError"
+    />
   );
 }
 
@@ -483,18 +454,6 @@ const styles = StyleSheet.create({
   },
   dimmed: { opacity: 0.45 },
   pressed: { opacity: 0.85 },
-  consent: {
-    gap: 12,
-    padding: 14,
-    borderRadius: radius.card,
-    backgroundColor: colors.ink2,
-    borderWidth: hairline,
-    borderColor: colors.line,
-  },
-  consentLine: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  consentIcon: { width: 18, alignItems: 'center', paddingTop: 1 },
-  grow: { flex: 1 },
-  link: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
   failure: { gap: 6 },
   search: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start' },
   notice: { paddingTop: 4 },

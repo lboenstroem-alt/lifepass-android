@@ -49,9 +49,19 @@ export function metaLine(session: Pick<SessionView, 'kind' | 'minutes' | 'intens
   return t('plan.today.meta', { minutes: `${minutes}`, intensity: intensityWord(session.intensity, t) });
 }
 
-/** The preview's meta line: always printed, a missing figure reads 0 (iOS `SessionPreviewSheet.metaLine`). */
-export function previewMetaLine(session: Pick<SessionView, 'minutes' | 'intensity'>, t: Translate): string {
-  return t('plan.today.meta', { minutes: `${session.minutes ?? 0}`, intensity: intensityWord(session.intensity, t) });
+/**
+ * The preview's meta line (iOS `SessionPreviewSheet.metaLine`): "45 min ·
+ * Moderate". A session with no length (a day the member wrote without one)
+ * says only how hard it is, and a rest day says nothing: never "0 min" (the
+ * fix iOS makes in the same release).
+ */
+export function previewMetaLine(session: Pick<SessionView, 'kind' | 'minutes' | 'intensity'>, t: Translate): string | null {
+  // A rest day (or a kind this build does not know) says nothing.
+  const kind = session.kind ?? 'rest';
+  if (kind === 'rest' || kind === 'unknown') return null;
+  const minutes = session.minutes;
+  if (minutes === null || minutes <= 0) return intensityWord(session.intensity, t);
+  return t('plan.today.meta', { minutes: `${minutes}`, intensity: intensityWord(session.intensity, t) });
 }
 
 /**

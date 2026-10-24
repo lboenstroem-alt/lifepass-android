@@ -16,6 +16,8 @@ import * as bodySheets from '../../../body/sheets';
 import { useChangeDaysPresenter } from '../../days/presenter';
 import { ChangeDaysHost } from '../../days';
 import OverviewSection from '../../sections/Overview';
+import { useAppStore } from '../../../../stores/appStore';
+import { useIntentStore } from '../../../../stores/intentStore';
 import { attachPlanNavigator } from '../../shell/planShell';
 import { dayJSON, freshPlan, memberProfile, signIn, TODAY } from '../../__tests__/planFixtures';
 
@@ -205,5 +207,35 @@ describe('where the rows lead', () => {
     await act(async () => fireEvent.press(button('plan.overview.no_targets')));
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ kind: 'update', programId: PROGRAM }));
     spy.mockRestore();
+  });
+});
+
+describe('a custom plan, and changes in chat (COACH-6)', () => {
+  it('a custom plan says how often it repeats, and offers no Change for its days and no Adjust', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit', 'plan_revision'] });
+    setDay(program({ custom: true, cycleDays: 4, trainingDays: [1, 2, 3, 5, 6] }));
+    await renderSection();
+    expect(screen.getByText('Repeats every 4 days')).toBeOnTheScreen();
+    expect(screen.queryByText('Days: Mon, Tue, Wed, Fri, Sat')).toBeNull();
+    expect(screen.queryByRole('button', { name: en('plan.overview.change_days') })).toBeNull();
+    expect(screen.queryByRole('button', { name: en('coach.chip.adjust_plan') })).toBeNull();
+  });
+
+  it('once the Coach changes plans from words, Adjust my plan is a row here, and opens it in the Coach', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit', 'plan_revision'] });
+    setDay(program());
+    await renderSection();
+    expect(button('plan.overview.change_days')).toBeEnabled();
+    await fireEvent.press(button('coach.chip.adjust_plan'));
+    expect(useIntentStore.getState().pendingCoachProgram).toEqual({ kind: 'adjust' });
+    expect(useIntentStore.getState().pendingTab).toBe('Coach');
+  });
+
+  it('without the plan change (the Coach chip still adjusts), no Adjust row', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_revision'] });
+    setDay(program());
+    await renderSection();
+    expect(screen.queryByRole('button', { name: en('coach.chip.adjust_plan') })).toBeNull();
+    expect(screen.getByText('Days: Mon, Wed, Fri')).toBeOnTheScreen();
   });
 });

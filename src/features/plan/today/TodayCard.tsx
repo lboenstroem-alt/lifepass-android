@@ -35,6 +35,7 @@ import {
   useWorkoutOutbox,
 } from '../../runner';
 import { colors, hairline } from '../../../theme';
+import { usePlanEditReady } from '../../coach/planEdit';
 import LogWorkoutSheet from '../sheets/LogWorkoutSheet';
 import NoEnergySheet from '../sheets/NoEnergySheet';
 import SessionPreviewSheet from '../preview/SessionPreviewSheet';
@@ -64,6 +65,8 @@ export interface TodayCardHandlers {
   readonly onOpenVenue: (slug: string) => void;
   readonly onStartNextBlock: () => void;
   readonly onResumePlan: () => void;
+  /** "Change with Coach" (COACH-6): the Coach, asked about this day. Absent: not offered. */
+  readonly onChangeWithCoach?: (session: SessionView) => void;
 }
 
 export type TodayCardProps = {
@@ -119,6 +122,22 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
   const readOnly = isReadOnly;
 
   const outboxPending = useWorkoutOutbox(selectHasPendingWorkout(session?.id));
+  const planEditReady = usePlanEditReady();
+  // "Change with Coach" (iOS `canChangeWithCoach`): today's or a later day,
+  // nothing done on it yet (the server changes planned rows only), on a
+  // running plan and a server that changes plans by chat.
+  const sessionStatus = session?.status ?? 'planned';
+  const changeWithCoach =
+    planEditReady &&
+    !readOnly &&
+    !isPaused &&
+    (isToday || isFuture) &&
+    session !== null &&
+    !outboxPending &&
+    (sessionStatus === 'planned' || sessionStatus === 'rest') &&
+    handlers.onChangeWithCoach
+      ? handlers.onChangeWithCoach
+      : null;
   const progressSummary = useRunnerProgress((s) => s.summary);
   const progress = todayRunnerProgress(progressSummary, { readOnly, session });
 
@@ -313,6 +332,22 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
             ))}
           </Card>
         ) : null}
+
+        {changeWithCoach && session ? (
+          <Pressable
+            onPress={() => changeWithCoach(session)}
+            disabled={isOffline}
+            accessibilityRole="button"
+            accessibilityLabel={t('coach.planEdit.changeWithCoach')}
+            accessibilityState={{ disabled: isOffline }}
+            style={({ pressed }) => [styles.changeWithCoach, isOffline && styles.dimmed, pressed && styles.pressed]}
+            testID="plan.today.changeWithCoach"
+          >
+            <LPText size={14} weight="semibold" color={colors.accentText}>
+              {t('coach.planEdit.changeWithCoach')}
+            </LPText>
+          </Pressable>
+        ) : null}
       </View>
 
       {/* PLAN-3's two sheets are controlled: the card closes them once they
@@ -353,6 +388,11 @@ export default function TodayCard({ day, isReadOnly, isOffline, isBlockFinished,
           })}
           onStart={() => handlers.onPresentRunner(preview.session)}
           onPulled={handlers.onActionResult}
+          onChangeWithCoach={
+            planEditReady && !readOnly && !isPaused && handlers.onChangeWithCoach
+              ? () => handlers.onChangeWithCoach?.(preview.session)
+              : undefined
+          }
         />
       ) : null}
 
@@ -425,5 +465,7 @@ const styles = StyleSheet.create({
   card: { marginHorizontal: 20 },
   rule: { height: hairline, backgroundColor: colors.line },
   row: { paddingHorizontal: 14, paddingVertical: 13 },
+  changeWithCoach: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 24 },
+  dimmed: { opacity: 0.4 },
   pressed: { opacity: 0.75 },
 });

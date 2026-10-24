@@ -43,6 +43,22 @@ export function weekdayList(trainingDays: readonly number[] | null | undefined, 
 }
 
 /**
+ * A custom plan's days (COACH-6): "Repeats every 4 days", from the cycle the
+ * member wrote, never the padded weekdays the server keeps for its own
+ * rules. A plan with no cycle length falls back to its weekdays.
+ */
+export function cycleDaysLine(
+  program: Pick<ProgramSummary, 'cycleDays' | 'trainingDays'>,
+  t: Translate,
+  lang: Lang,
+): string {
+  const days = program.cycleDays;
+  // A cycle is 2 to 14 days (a CHECK on the server), so one plural form.
+  if (days === null || days < 2) return t('plan.overview.days', { days: weekdayList(program.trainingDays, lang) });
+  return t('plan.overview.cycle', { count: integer(days, lang) });
+}
+
+/**
  * The proposal's meta line, "Mon, Wed, Fri · about 40 min". A plan that
  * names no typical length says 40, as iOS does.
  */

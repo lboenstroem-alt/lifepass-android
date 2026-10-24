@@ -10,3 +10,9 @@ export { default as HealthConsentHost, type HealthConsentHostProps } from './con
 export { default as MealGateSheet, type MealGateSheetProps } from './gate/MealGateSheet';
 export { default as MinorCard, type MinorCardProps } from './minor/MinorCard';
 export { default as HealthHost, type HealthHostProps } from './HealthHost';
+export {
+  default as AiConsentBlock,
+  SHEET_CONSENT_PALETTE,
+  type AiConsentBlockProps,
+  type AiConsentPalette,
+} from './consent/AiConsentBlock';

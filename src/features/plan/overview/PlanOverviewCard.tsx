@@ -19,6 +19,15 @@
  * block; See all weeks never is. The host asks before pause and end;
  * resume undoes a pause and needs no ceremony.
  *
+ * A plan the member wrote, or one a chat edit made repeat as a cycle
+ * (`program.custom`), says how often it repeats ("Repeats every 4 days")
+ * instead of its padded weekdays, and offers no Change days and no Adjust
+ * my plan: the server refuses both on such a plan (COACH-6, as iOS).
+ *
+ * "Adjust my plan" is a row here once the Coach's chip reads "Change my
+ * plan" (the server changes plans from words), so Adjust keeps a way in
+ * (`onAdjust`; absent hides it).
+ *
  * Pure presentation: the section (../sections/Overview.tsx) wires the taps.
  */
 import { Ionicons } from '@expo/vector-icons';
@@ -26,11 +35,11 @@ import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Card, EstimateChip, hiddenFromAccessibility, Kicker, LPText } from '../../../components/ui';
-import type { ProgramSummary } from '../../../health';
+import { isCustomProgram, type ProgramSummary } from '../../../health';
 import { useT } from '../../../i18n';
 import { colors, hairline } from '../../../theme';
 
-import { dateRange, targetsLine, targetsText, weekdayList } from './planCopy';
+import { cycleDaysLine, dateRange, targetsLine, targetsText, weekdayList } from './planCopy';
 
 export type PlanOverviewCardProps = {
   program: ProgramSummary;
@@ -43,6 +52,8 @@ export type PlanOverviewCardProps = {
   onPause: () => void;
   onResume: () => void;
   onEnd: () => void;
+  /** Adjust my plan in the Coach (COACH-6): offered once the Coach's chip is "Change my plan". Absent hides it. */
+  onAdjust?: () => void;
   testID?: string;
 };
 
@@ -56,6 +67,7 @@ export default function PlanOverviewCard({
   onPause,
   onResume,
   onEnd,
+  onAdjust,
   testID = 'plan.overview',
 }: PlanOverviewCardProps) {
   const { t, language } = useT();
@@ -72,17 +84,22 @@ export default function PlanOverviewCard({
       </LPText>,
     );
   }
+  const custom = isCustomProgram(program);
   rows.push(
     <View key="days" style={styles.inline}>
       <LPText size={14} color={colors.paper} style={styles.grow} testID={`${testID}.days`}>
-        {t('plan.overview.days', { days: weekdayList(program.trainingDays, language) })}
+        {custom
+          ? cycleDaysLine(program, t, language)
+          : t('plan.overview.days', { days: weekdayList(program.trainingDays, language) })}
       </LPText>
-      <TextButton
-        title={t('plan.overview.change_days')}
-        onPress={onChangeDays}
-        disabled={actionsDisabled}
-        testID={`${testID}.changeDays`}
-      />
+      {!custom ? (
+        <TextButton
+          title={t('plan.overview.change_days')}
+          onPress={onChangeDays}
+          disabled={actionsDisabled}
+          testID={`${testID}.changeDays`}
+        />
+      ) : null}
     </View>,
   );
   rows.push(
@@ -108,6 +125,19 @@ export default function PlanOverviewCard({
       </LPText>
     ),
   );
+  if (onAdjust && !custom) {
+    rows.push(
+      <ChevronButton
+        key="adjust"
+        title={t('coach.chip.adjust_plan')}
+        weight="semibold"
+        color={colors.paper}
+        onPress={onAdjust}
+        disabled={actionsDisabled}
+        testID={`${testID}.adjust`}
+      />,
+    );
+  }
   rows.push(
     <ChevronButton
       key="seeAll"

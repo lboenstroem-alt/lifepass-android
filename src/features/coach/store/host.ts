@@ -110,6 +110,15 @@ export interface CoachHost {
 
   /** iOS `abandonOpenQuestions`: every flow's open question dropped and every unanswered bubble closed. */
   abandonOpenQuestions(): void;
+  /** Puts words in the input for the member to send (never sends them). */
+  setInput(text: string): void;
+  /**
+   * Words a plan-edit chip sent that the server says are not a plan change
+   * (a clarifying choice, Retry, Ask again): they go on through the Coach
+   * from the programme offer (`PASSED_RESUMES_AT`), as typed words would.
+   * The plan-edit flow has already taken its own bubble for them away.
+   */
+  resumeSend(text: string): Promise<void>;
   /** The history a chat call sends (filtered and capped; see ../chat/modelMessages.ts). */
   modelMessages(): CoachApiMessage[];
   /** Asks the screen to go somewhere (performed once). */

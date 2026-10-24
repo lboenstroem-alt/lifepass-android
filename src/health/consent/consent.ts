@@ -27,8 +27,29 @@ export const HealthConsentVersion = {
    * `meal_describe`, which it does only once this text is published.
    */
   withMealDescribe: '2026-09-v3',
+  /**
+   * The v3 text plus the line that names a plan change going to Anthropic
+   * (`healthconsent.ai.plan_edit`), and the "never" line that says so. Sent
+   * only while the server advertises `plan_edit`, which it does only once
+   * this text is published (it keeps the description line too, so it is
+   * shown with it whatever `meal_describe` says).
+   */
+  withPlanEdit: '2026-09-v4',
+  /** The consent the member gave already names a plan change in the Coach. */
+  coversPlanEdit(version: string | null | undefined): boolean {
+    return version === HealthConsentVersion.withPlanEdit;
+  },
+  /**
+   * The consent the member gave already names describing a meal (v3, and v4,
+   * which is v3 and one line more). A member granting v4 from the plan-change
+   * consent without it is shown that line too, since v4 covers both.
+   */
+  coversMealDescribe(version: string | null | undefined): boolean {
+    return version === HealthConsentVersion.withMealDescribe || version === HealthConsentVersion.withPlanEdit;
+  },
   /** The text the consent sheet shows, by what the server supports. */
-  shown(supportsMealDescribe: boolean): string {
+  shown(supportsMealDescribe: boolean, supportsPlanEdit = false): string {
+    if (supportsPlanEdit) return HealthConsentVersion.withPlanEdit;
     return supportsMealDescribe ? HealthConsentVersion.withMealDescribe : HealthConsentVersion.current;
   },
 } as const;
@@ -53,10 +74,11 @@ export function consentGrantBody(options: {
   entry: HealthConsentEntry;
   ageRowShown: boolean;
   supportsMealDescribe: boolean;
+  supportsPlanEdit?: boolean;
 }): { optedIn: true; version: string; source: 'account' | 'coach_intake'; ageAttested?: true } {
   return {
     optedIn: true,
-    version: HealthConsentVersion.shown(options.supportsMealDescribe),
+    version: HealthConsentVersion.shown(options.supportsMealDescribe, options.supportsPlanEdit ?? false),
     source: consentSource(options.entry),
     ...(options.ageRowShown ? { ageAttested: true as const } : {}),
   };
@@ -85,10 +107,10 @@ export function consentWithdrawalBody(recordedVersion: string | null | undefined
  */
 export function consentToApply(
   recorded: HealthConsent | null,
-  options: { ageRowShown: boolean; supportsMealDescribe: boolean; now?: Date },
+  options: { ageRowShown: boolean; supportsMealDescribe: boolean; supportsPlanEdit?: boolean; now?: Date },
 ): HealthConsent {
   return {
-    version: recorded?.version ?? HealthConsentVersion.shown(options.supportsMealDescribe),
+    version: recorded?.version ?? HealthConsentVersion.shown(options.supportsMealDescribe, options.supportsPlanEdit ?? false),
     consentedAt: recorded?.consentedAt ?? options.now ?? new Date(),
     ageSource: recorded?.ageSource ?? (options.ageRowShown ? 'attestation' : 'kennitala'),
   };

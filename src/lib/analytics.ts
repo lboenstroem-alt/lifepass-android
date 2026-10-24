@@ -97,6 +97,15 @@ export const ANALYTICS_EVENTS = [
   'program_adjust_submitted',
   'target_weight_saved', // H: outcome, surface; never the weight
 
+  // Changing the plan in chat (COACH-6, as iOS): fixed words only, never the
+  // words typed, an exercise or a count (counts travel as band words).
+  'plan_edit_sent', // H
+  'plan_edit_preview', // H: kind, items, count_band
+  'plan_edit_applied', // H: choice (single, ours, own)
+  'plan_edit_undone', // H: entry (card, changes)
+  'plan_edit_cancelled', // H
+  'plan_edit_error', // H: reason (a problem code, or offline)
+
   // Body, runner, check-in
   'body_sheet_opened',
   'nutrition_goal_saved', // H

@@ -251,6 +251,28 @@ it('at the largest text the panel is part of the page, and still works', async (
   expect(turnOn()).toBeDisabled();
 });
 
+it('a server that changes plans by chat (COACH-6): the plan-change line and its never line, and the grant names v4', async () => {
+  signIn(true, ['plan_edit']);
+  api.on('POST', '/profile/health-consent', Reply.ok({ optedIn: true, version: '2026-09-v4', consentedAt: null, ageSource: 'kennitala' }));
+  await render(<Harness />);
+  expect(screen.getByText(en('healthconsent.ai.plan_edit'))).toBeOnTheScreen();
+  expect(screen.getByText(en('healthconsent.ai.never_text_v4'))).toBeOnTheScreen();
+  expect(screen.queryByText(en('healthconsent.ai.never_text'))).toBeNull();
+  // v4 is v3 and one line more: the description line stays.
+  expect(screen.getByText(en('healthconsent.ai.describe'))).toBeOnTheScreen();
+  await fireEvent.press(consentBox());
+  await fireEvent.press(turnOn());
+  await waitFor(() => expect(api.sentAll('/profile/health-consent')).toHaveLength(1));
+  expect(api.sent('/profile/health-consent').body).toMatchObject({ optedIn: true, version: '2026-09-v4' });
+});
+
+it('without plan_edit the sheet is the v3 text it always was', async () => {
+  signIn(true, ['meal_describe']);
+  await render(<Harness />);
+  expect(screen.queryByText(en('healthconsent.ai.plan_edit'))).toBeNull();
+  expect(screen.getByText(en('healthconsent.ai.never_text'))).toBeOnTheScreen();
+});
+
 it('the version follows meal_describe, and source follows the entry', () => {
   expect(consentGrantBody({ entry: 'account', ageRowShown: false, supportsMealDescribe: false })).toEqual({
     optedIn: true,
@@ -263,4 +285,11 @@ it('the version follows meal_describe, and source follows the entry', () => {
     source: 'coach_intake',
     ageAttested: true,
   });
+});
+
+it('plan_edit sends v4, with or without meal_describe', () => {
+  expect(consentGrantBody({ entry: 'coach', ageRowShown: false, supportsMealDescribe: false, supportsPlanEdit: true }).version).toBe('2026-09-v4');
+  expect(consentGrantBody({ entry: 'coach', ageRowShown: false, supportsMealDescribe: true, supportsPlanEdit: true }).version).toBe('2026-09-v4');
+  expect(HealthConsentVersion.shown(true)).toBe('2026-09-v3');
+  expect(HealthConsentVersion.withPlanEdit).toBe('2026-09-v4');
 });

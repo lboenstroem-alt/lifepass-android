@@ -11,7 +11,7 @@
  * after a tap.
  */
 import type { HealthAccess, HealthConsent, ProfileHealthBlock, ProfileProgramSummary } from '../../api/profile';
-import type { NutritionGoalView, TargetWeightView } from '../../health';
+import { HealthConsentVersion, type NutritionGoalView, type TargetWeightView } from '../../health';
 import { HealthFormat, type Lang } from '../../i18n';
 import type { BodyAndGoalsAnchor } from '../../navigation/types';
 
@@ -250,6 +250,19 @@ export const STORE_LINE_KEYS: readonly string[] = [
   'healthconsent.ai.never_location',
   'healthconsent.ai.photo',
 ];
+
+/**
+ * The lines of the consent the member gave (iOS `storeLinesShown`): with the
+ * v4 text (a plan change in the Coach, COACH-6), its "never" line and, after
+ * the photo line, the description and plan-change lines it carries.
+ */
+export function storeLineKeys(consentVersion: string | null | undefined): readonly string[] {
+  if (!HealthConsentVersion.coversPlanEdit(consentVersion)) return STORE_LINE_KEYS;
+  const lines = STORE_LINE_KEYS.map((key) => (key === 'healthconsent.ai.never_text' ? 'healthconsent.ai.never_text_v4' : key));
+  const photo = lines.indexOf('healthconsent.ai.photo');
+  if (photo >= 0) lines.splice(photo + 1, 0, 'healthconsent.ai.describe', 'healthconsent.ai.plan_edit');
+  return lines;
+}
 
 /** How long each kind is kept: iOS `bodygoals.retention`, worded without Apple Health. */
 export const RETENTION_KEY = 'bodygoals.android.retention';

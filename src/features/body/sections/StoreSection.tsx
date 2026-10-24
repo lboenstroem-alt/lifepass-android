@@ -3,7 +3,7 @@
  * that opens to the consent sheet's own lines (a second wording of the same
  * promise is a second promise to keep in step) and how long each kind is
  * kept. Shown with or without consent: it is what the member would be
- * agreeing to.
+ * agreeing to; a member who gave the v4 consent (COACH-6) sees its lines.
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
@@ -14,11 +14,15 @@ import { useT } from '../../../i18n';
 import { colors } from '../../../theme';
 import { AccountRowDivider, AccountSection } from '../../account';
 
-import { RETENTION_KEY, STORE_LINE_KEYS } from '../model';
+import { useAppStore } from '../../../stores/appStore';
+
+import { RETENTION_KEY, storeLineKeys } from '../model';
 
 export default function StoreSection() {
   const { t } = useT();
   const [expanded, setExpanded] = useState(false);
+  // The lines of the consent the member gave (the v4 text adds the plan change's).
+  const consentVersion = useAppStore((s) => s.profile?.health?.consent?.version ?? null);
   const title = t('bodygoals.store_title');
   return (
     <AccountSection kicker={t('healthconsent.store.kicker')} testID="bodygoals.store">
@@ -39,7 +43,7 @@ export default function StoreSection() {
         </Pressable>
         {expanded ? (
           <View style={styles.lines} testID="bodygoals.store.lines">
-            {[...STORE_LINE_KEYS, RETENTION_KEY].map((key) => (
+            {[...storeLineKeys(consentVersion), RETENTION_KEY].map((key) => (
               <LPText key={key} size={13} color={colors.paper2}>
                 {t(key)}
               </LPText>

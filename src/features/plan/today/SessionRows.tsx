@@ -38,6 +38,7 @@ import { futureLines, missedActions, plannedActions, plannedLines, sessionBody, 
 import { offersLogWorkout, restPullCandidate } from './rules';
 import { ActionRow, CapsuleButton, PlainTextButton, TextAction, TodayChip } from './TodayButtons';
 import { useTodayCard } from './TodayCardContext';
+import ExerciseName from './ExerciseName';
 
 /** The session row: one body per status. */
 export function SessionRows({ session, hasRunnerProgress }: { session: SessionView; hasRunnerProgress: boolean }) {
@@ -140,9 +141,7 @@ function ExerciseLines({ session }: { session: SessionView }) {
     <View style={styles.exercises}>
       {blocks.slice(0, 3).map((block, index) => (
         <View key={`${block.exerciseId ?? 'block'}-${index}`} style={styles.exercise}>
-          <LPText size={14} color={colors.paper}>
-            {block.name ?? ''}
-          </LPText>
+          <ExerciseName block={block} size={14} />
           <LPText size={12} color={colors.paper2}>
             {exerciseLine(block, t)}
           </LPText>

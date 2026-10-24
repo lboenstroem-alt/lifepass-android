@@ -39,7 +39,7 @@ import { announce, Card, CheckboxRow, hiddenFromAccessibility, Kicker, LPText, P
 import { useA11ySize } from '../../hooks/useA11ySize';
 import { useT } from '../../i18n';
 import { track } from '../../lib/analytics';
-import { selectIsKennitalaVerified, selectSupportsMealDescribe, useAppStore } from '../../stores/appStore';
+import { selectIsKennitalaVerified, selectSupportsMealDescribe, selectSupportsPlanEdit, useAppStore } from '../../stores/appStore';
 import { colors, hairline, radius } from '../../theme';
 import { grantedConsent, setHealthConsent } from '../api';
 import MinorCard from '../minor/MinorCard';
@@ -99,6 +99,7 @@ function ConsentPresentation({ visible, entry, onClose, onGranted, onOpenAccount
   const { isAccessibilitySize } = useA11ySize();
   const kennitalaVerified = useAppStore(selectIsKennitalaVerified);
   const supportsMealDescribe = useAppStore(selectSupportsMealDescribe);
+  const supportsPlanEdit = useAppStore(selectSupportsPlanEdit);
 
   const [ageTicked, setAgeTicked] = useState(false);
   const [consentTicked, setConsentTicked] = useState(false);
@@ -163,7 +164,7 @@ function ConsentPresentation({ visible, entry, onClose, onGranted, onOpenAccount
     setAgeErrored(false);
     try {
       const result = await setHealthConsent(
-        consentGrantBody({ entry, ageRowShown: needsAge, supportsMealDescribe }),
+        consentGrantBody({ entry, ageRowShown: needsAge, supportsMealDescribe, supportsPlanEdit }),
         idempotencyKey.current,
       );
       granted.current = true;
@@ -173,7 +174,9 @@ function ConsentPresentation({ visible, entry, onClose, onGranted, onOpenAccount
       // that still reads Off.
       useAppStore
         .getState()
-        .applyHealthConsentGranted(consentToApply(grantedConsent(result), { ageRowShown: needsAge, supportsMealDescribe }));
+        .applyHealthConsentGranted(
+          consentToApply(grantedConsent(result), { ageRowShown: needsAge, supportsMealDescribe, supportsPlanEdit }),
+        );
       await useAppStore.getState().loadProfile();
       setPosting(false);
       continuation.current = onGranted ?? null;
@@ -182,7 +185,7 @@ function ConsentPresentation({ visible, entry, onClose, onGranted, onOpenAccount
       setPosting(false);
       fail(caught);
     }
-  }, [canSubmit, entry, fail, isPosting, needsAge, onClose, onGranted, supportsMealDescribe]);
+  }, [canSubmit, entry, fail, isPosting, needsAge, onClose, onGranted, supportsMealDescribe, supportsPlanEdit]);
 
   /** The sheet has gone: what was owed runs now, never while it was on screen. */
   const onClosed = useCallback(() => {
@@ -327,12 +330,20 @@ function ConsentPresentation({ visible, entry, onClose, onGranted, onOpenAccount
             </LPText>
             <IconLine icon="remove-circle-outline" text={t('healthconsent.ai.never_identity')} />
             <IconLine icon="remove-circle-outline" text={t('healthconsent.ai.never_numbers')} />
-            <IconLine icon="remove-circle-outline" text={t('healthconsent.ai.never_text')} />
+            <IconLine
+              icon="remove-circle-outline"
+              text={t(supportsPlanEdit ? 'healthconsent.ai.never_text_v4' : 'healthconsent.ai.never_text')}
+            />
             <IconLine icon="remove-circle-outline" text={t('healthconsent.ai.never_location')} />
             <IconLine icon="camera-outline" text={t('healthconsent.ai.photo')} />
-            {supportsMealDescribe ? (
-              // Shown exactly when the version sent is the one that names it.
+            {supportsMealDescribe || supportsPlanEdit ? (
+              // Shown exactly when the version sent is one that names it (v3,
+              // and v4, which is v3 and one line more).
               <IconLine icon="chatbubble-ellipses-outline" text={t('healthconsent.ai.describe')} />
+            ) : null}
+            {supportsPlanEdit ? (
+              // v4: a plan change asked of the Coach goes to Anthropic with the plan.
+              <IconLine icon="barbell-outline" text={t('healthconsent.ai.plan_edit')} />
             ) : null}
             <LPText size={14} color={colors.paper2}>
               {t('healthconsent.ai.saved_once')}

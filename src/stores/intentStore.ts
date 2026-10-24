@@ -83,6 +83,21 @@ export type CoachProgramEntry =
   /** Adjust my plan, from a feedback line's action. Carries nothing of the report. */
   | { readonly kind: 'adjust' };
 
+/**
+ * A plan change asked for from another tab (iOS `CoachPlanEditEntry`): Plan's
+ * "Change with Coach" (the day it was tapped on) or the runner's "I don't
+ * have this" (the exercise, and the words the Coach's input is filled with;
+ * the member sends them, never the app).
+ */
+export interface CoachPlanEditEntry {
+  readonly sessionId?: string | null;
+  /** The day's title, for "What would you like to change about {title}?". */
+  readonly sessionTitle?: string | null;
+  readonly exerciseId?: string | null;
+  /** Put in the input, unsent. Absent: the Coach asks what to change. */
+  readonly prefill?: string | null;
+}
+
 /** How long a parked Plan action stays worth performing (iOS `PlanView.parkedActionWindow`). */
 export const PLAN_ACTION_WINDOW_MS = 5 * 60 * 1000;
 
@@ -103,6 +118,8 @@ export interface IntentState {
   readonly pendingCoachPrompt: string | null;
   /** The Coach's programme wizard, asked for from Plan, Home or the end of a block. */
   readonly pendingCoachProgram: CoachProgramEntry | null;
+  /** A plan change in chat, asked for from Plan or the runner. */
+  readonly pendingCoachPlanEdit: CoachPlanEditEntry | null;
   /** Home's "See all on the map": Explore opens on the map with sights showing. */
   readonly pendingExploreSights: boolean;
   /** A venue a check-in link parked (lower-case UUID); the Scan tab asks first, then clears it. */
@@ -148,6 +165,9 @@ export interface IntentActions {
   parkCoachProgram(entry: CoachProgramEntry): void;
   /** Take the parked programme-wizard entry (cleared). */
   takeCoachProgram(): CoachProgramEntry | null;
+  parkCoachPlanEdit(entry: CoachPlanEditEntry): void;
+  /** Take the parked plan-change entry (cleared). */
+  takeCoachPlanEdit(): CoachPlanEditEntry | null;
   /** Home's "See all on the map". */
   requestExploreSights(): void;
   /** Explore takes the sights request (cleared); true when there was one. */
@@ -183,6 +203,7 @@ const initialState: IntentState = {
   pendingPlanAction: null,
   pendingCoachPrompt: null,
   pendingCoachProgram: null,
+  pendingCoachPlanEdit: null,
   pendingExploreSights: false,
   pendingScanVenueId: null,
   scanArrivedThisSession: false,
@@ -248,6 +269,16 @@ export const useIntentStore = create<IntentStore>()((set, get) => ({
     return entry;
   },
 
+  parkCoachPlanEdit(entry) {
+    set({ pendingCoachPlanEdit: { ...entry } });
+  },
+
+  takeCoachPlanEdit() {
+    const entry = get().pendingCoachPlanEdit;
+    if (entry !== null) set({ pendingCoachPlanEdit: null });
+    return entry;
+  },
+
   requestExploreSights() {
     set({ pendingExploreSights: true });
   },
@@ -309,6 +340,7 @@ export const useIntentStore = create<IntentStore>()((set, get) => ({
       pendingPlanAction: null,
       pendingCoachPrompt: null,
       pendingCoachProgram: null,
+      pendingCoachPlanEdit: null,
       pendingExploreSights: false,
       pendingScanVenueId: null,
       exploreLaunchPresentation: false,

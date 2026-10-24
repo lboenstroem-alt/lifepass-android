@@ -67,6 +67,16 @@ export function startNextBlock(programId: string | null | undefined): void {
   intents.requestTab('Coach');
 }
 
+/**
+ * "Change with Coach" (COACH-6): the Coach, which asks what to change about
+ * this day; the next words go to the plan change with the day as context.
+ */
+export function changeWithCoach(session: Pick<SessionView, 'id' | 'title'>): void {
+  const intents = useIntentStore.getState();
+  intents.parkCoachPlanEdit({ sessionId: session.id, sessionTitle: session.title });
+  intents.requestTab('Coach');
+}
+
 /** The handlers for a card whose day belongs to `programId`. */
 export function todayHandlers(programId: string | null): TodayCardHandlers {
   return {
@@ -83,5 +93,6 @@ export function todayHandlers(programId: string | null): TodayCardHandlers {
     onResumePlan: () => {
       if (programId) void setProgramStatus('active', programId);
     },
+    onChangeWithCoach: (session) => changeWithCoach(session),
   };
 }

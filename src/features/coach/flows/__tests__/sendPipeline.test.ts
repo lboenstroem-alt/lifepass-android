@@ -25,14 +25,22 @@ function flows(overrides: Partial<Record<CoachFlowId, Partial<CoachFlow>>>, log:
     },
     ...overrides[id],
   });
-  return { program: make('program'), adjust: make('adjust'), venueWizard: make('venueWizard'), dayPlan: make('dayPlan') };
+  return {
+    program: make('program'),
+    adjust: make('adjust'),
+    planEdit: make('planEdit'),
+    venueWizard: make('venueWizard'),
+    dayPlan: make('dayPlan'),
+  };
 }
 
 describe('the send pipeline', () => {
-  it('is iOS order: the programme offer comes before the venue and day-plan open questions', () => {
+  it('is iOS order: the plan change, then the programme offer, before the venue and day-plan open questions', () => {
     expect(SEND_PIPELINE).toEqual([
       'program.open',
       'adjust.open',
+      'planEdit.open',
+      'planEdit.start',
       'program.start',
       'venueWizard.open',
       'dayPlan.open',
@@ -107,7 +115,89 @@ describe('the send pipeline', () => {
   });
 
   it('nothing taken leaves the words for the model', async () => {
-    const set = { program: inactiveFlow('program'), adjust: inactiveFlow('adjust'), venueWizard: inactiveFlow('venueWizard'), dayPlan: inactiveFlow('dayPlan') };
+    const set = {
+      program: inactiveFlow('program'),
+      adjust: inactiveFlow('adjust'),
+      planEdit: inactiveFlow('planEdit'),
+      venueWizard: inactiveFlow('venueWizard'),
+      dayPlan: inactiveFlow('dayPlan'),
+    };
     expect(await runSendPipeline(set, 'how are you', TYPED, { abandonOpenQuestions: jest.fn() })).toBeNull();
+  });
+
+  describe('the plan change (COACH-6)', () => {
+    it('an open suggestion takes the words before the programme offer', async () => {
+      const programStart = jest.fn(() => true);
+      const set = flows({ planEdit: { hasOpenQuestion: () => true, takeTyped: () => true }, program: { startFrom: programStart } }, []);
+      expect(await runSendPipeline(set, 'no, make it 4 sets', TYPED, { abandonOpenQuestions: jest.fn() })).toBe('planEdit.open');
+      expect(programStart).not.toHaveBeenCalled();
+    });
+
+    it('words the server says are no plan change go on from the programme offer, never to the plan change twice', async () => {
+      const log: string[] = [];
+      const start = jest.fn(() => {
+        log.push('planEdit.start');
+        return true;
+      });
+      const set = flows(
+        {
+          planEdit: { hasOpenQuestion: () => true, takeTyped: () => 'passed' as const, startFrom: start },
+          program: {
+            startFrom: () => {
+              log.push('program.start');
+              return false;
+            },
+          },
+          venueWizard: {
+            startFrom: () => {
+              log.push('venueWizard.start');
+              return false;
+            },
+          },
+        },
+        log,
+      );
+      expect(await runSendPipeline(set, 'which pools are open now?', TYPED, { abandonOpenQuestions: jest.fn() })).toBeNull();
+      expect(start).not.toHaveBeenCalled();
+      expect(log).toEqual(['program.start', 'venueWizard.start']);
+    });
+
+    it('a plan-change start that passes lets the programme offer and the wizards look', async () => {
+      const programStart = jest.fn(() => true);
+      const set = flows({ planEdit: { startFrom: () => 'passed' as const }, program: { startFrom: programStart } }, []);
+      expect(await runSendPipeline(set, 'a 4 week plan', TYPED, { abandonOpenQuestions: jest.fn() })).toBe('program.start');
+    });
+
+    it('a parked prompt never reaches the plan change by its words', async () => {
+      const start = jest.fn(() => true);
+      const set = flows({ planEdit: { startFrom: start } }, []);
+      expect(await runSendPipeline(set, 'swap my exercise', PARKED, { abandonOpenQuestions: jest.fn() })).toBeNull();
+      expect(start).not.toHaveBeenCalled();
+    });
+
+    it('Adjust my plan hands typed words on when the server changes plans by chat: it closes, and the plan change takes them', async () => {
+      const abandon = jest.fn();
+      const adjustTyped = jest.fn(() => true);
+      const start = jest.fn((_text: string, _options: CoachSendOptions, context: { handedOnFrom?: string | null }) => context.handedOnFrom === 'adjust.open');
+      const set = flows({ adjust: { isActive: () => true, handsTypedOn: () => true, takeTyped: adjustTyped }, planEdit: { startFrom: start } }, []);
+      expect(await runSendPipeline(set, 'make Thursday lighter', TYPED, { abandonOpenQuestions: abandon })).toBe('planEdit.start');
+      expect(abandon).toHaveBeenCalledTimes(1);
+      expect(adjustTyped).not.toHaveBeenCalled();
+    });
+
+    it('without the feature Adjust my plan swallows the words as before', async () => {
+      const start = jest.fn(() => true);
+      const set = flows({ adjust: { isActive: () => true, handsTypedOn: () => false, takeTyped: () => true }, planEdit: { startFrom: start } }, []);
+      expect(await runSendPipeline(set, 'make Thursday lighter', TYPED, { abandonOpenQuestions: jest.fn() })).toBe('adjust.open');
+      expect(start).not.toHaveBeenCalled();
+    });
+
+    it('runs from a later step when asked (a chip\'s words that are no plan change)', async () => {
+      const planOpen = jest.fn(() => true);
+      const programStart = jest.fn(() => true);
+      const set = flows({ planEdit: { hasOpenQuestion: () => true, takeTyped: planOpen }, program: { startFrom: programStart } }, []);
+      expect(await runSendPipeline(set, 'a 4 week plan', TYPED, { abandonOpenQuestions: jest.fn() }, 'program.start')).toBe('program.start');
+      expect(planOpen).not.toHaveBeenCalled();
+    });
   });
 });

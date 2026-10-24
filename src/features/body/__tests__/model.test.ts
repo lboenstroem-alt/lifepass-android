@@ -22,6 +22,7 @@ import {
   sameConsent,
   showsTargetRow,
   STORE_LINE_KEYS,
+  storeLineKeys,
   targetSubtitle,
   trackingSubtitle,
   trendDirectionKey,
@@ -212,6 +213,15 @@ describe('what we store', () => {
     expect(STORE_LINE_KEYS[0]).toBe('healthconsent.store.body');
     expect(STORE_LINE_KEYS[STORE_LINE_KEYS.length - 1]).toBe('healthconsent.ai.photo');
     expect(RETENTION_KEY).toBe('bodygoals.android.retention');
+  });
+
+  it('a member who gave the v4 consent (COACH-6) sees its lines: the new never line, then the description and the plan change after the photo', () => {
+    expect(storeLineKeys('2026-09-v3')).toBe(STORE_LINE_KEYS);
+    expect(storeLineKeys(null)).toBe(STORE_LINE_KEYS);
+    const v4 = storeLineKeys('2026-09-v4');
+    expect(v4).not.toContain('healthconsent.ai.never_text');
+    expect(v4).toContain('healthconsent.ai.never_text_v4');
+    expect(v4.slice(-3)).toEqual(['healthconsent.ai.photo', 'healthconsent.ai.describe', 'healthconsent.ai.plan_edit']);
   });
 
   it('nothing Android shows on Body and goals names Apple Health or Health Connect', () => {

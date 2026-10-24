@@ -13,7 +13,10 @@
  *               title, length, status mark; a rest row is dimmed and not a
  *               button; a session loads and opens its preview (Start only
  *               for today's planned session of a live plan)
- *   actions     live:     Change training days, Pause (asks) / Resume, End (asks)
+ *   changes     live:     the changes made in chat (OP-62), with Undo on those
+ *                         the server can still undo (COACH-6; ./PlanEditChanges.tsx)
+ *   actions     live:     Change training days (not on a custom plan),
+ *                         Pause (asks) / Resume, End (asks)
  *               proposal: Start this plan (Switch to this plan), Discard
  *               past:     none
  *
@@ -52,6 +55,7 @@ import {
 import {
   fetchProgram,
   fetchSession,
+  isCustomProgram,
   updateProgram,
   useHealthStore,
   type ProgramDetail,
@@ -76,6 +80,7 @@ import { sessionKindIcon } from '../shell/sessionKindIcon';
 import StatusMark from '../week/StatusMark';
 
 import { clampWeek, initialWeek, showsDeloadNote, shownWeek, sortedWeeks, weekNote } from './overviewRules';
+import PlanEditChanges from './PlanEditChanges';
 import { canStartToday, useSessionPreview } from './sessionPreview';
 
 /** iOS leaves 140 pt under the page: the tab bar floats over it, plus room to breathe. */
@@ -153,6 +158,7 @@ export default function ProgramOverviewScreen({ route, navigation }: SharedRoute
         <WeekPicker weeks={weeks.map((week) => week.weekNo)} selected={shown?.weekNo ?? selectedWeek} onSelect={setSelectedWeek} />
         <WeekNotes note={weekNote(shown)} deload={showsDeloadNote(weeks, shown)} />
         <DayRows days={shown?.days ?? []} mode={mode} />
+        {mode === 'live' ? <PlanEditChanges program={program} onPlanChanged={() => void load()} /> : null}
         {mode === 'live' ? <LiveActions program={program} onUpdated={applyDetail} /> : null}
         {mode === 'proposal' ? (
           fromCard ? (
@@ -403,7 +409,10 @@ function LiveActions({ program, onUpdated }: { program: ProgramSummary; onUpdate
 
   return (
     <View style={styles.actions}>
-      <QuietButton title={t('plan.overview.change_days')} onPress={changeDays} disabled={isActing} testID="programOverview.changeDays" />
+      {/* A custom plan's days are the member's cycle: the server refuses Change days on it. */}
+      {!isCustomProgram(program) ? (
+        <QuietButton title={t('plan.overview.change_days')} onPress={changeDays} disabled={isActing} testID="programOverview.changeDays" />
+      ) : null}
       <QuietButton
         title={t(paused ? 'plan.overview.resume' : 'plan.overview.pause')}
         onPress={() => (paused ? void setStatus('active') : ask('pause'))}

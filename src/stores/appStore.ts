@@ -115,6 +115,8 @@ export const ServerFeature = {
   planRevision: 'plan_revision',
   feedback: 'health_feedback',
   mealDescribe: 'meal_describe',
+  /** Changing the workout plan by talking to the Coach (OP-58 to OP-62). */
+  planEdit: 'plan_edit',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -294,6 +296,12 @@ export const selectSupportsPlanRevision = (s: AppStoreState): boolean =>
 export const selectSupportsFeedback = (s: AppStoreState): boolean => s.serverFeatures.includes(ServerFeature.feedback);
 export const selectSupportsMealDescribe = (s: AppStoreState): boolean =>
   s.serverFeatures.includes(ServerFeature.mealDescribe);
+/**
+ * The server changes plans by chat (`plan_edit`). It advertises it only once
+ * the privacy text and the consent line that name it are served, so this
+ * alone also says the consent version that names it may be sent.
+ */
+export const selectSupportsPlanEdit = (s: AppStoreState): boolean => s.serverFeatures.includes(ServerFeature.planEdit);
 /**
  * Whether "has this member bought anything" can be decided: signed out, or
  * both the profile and the plan have been read (iOS
