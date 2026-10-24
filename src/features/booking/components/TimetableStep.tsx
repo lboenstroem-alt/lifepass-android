@@ -4,6 +4,12 @@
 // 14:00" in grey, "Full" in red) and can't be picked. Back and Next; Next is
 // the readable grey until something is chosen. A Bókun activity shows the
 // group party section above (BOOK-2).
+//
+// ONE SCROLL. The title, the party section (its steppers and age pickers
+// grow tall at large text) and the slots or classes scroll together, and
+// Back and Next are pinned below them (./BookingStepFooter.tsx). Before,
+// only the list scrolled: at the largest font size on a small phone the party
+// section alone could fill the screen and push Back and Next off its bottom.
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import {
@@ -17,7 +23,7 @@ import { useT, VenueTimeFormat } from '../../../i18n';
 import { colors, radius } from '../../../theme';
 import { bookingCopy, isNotOpenReason } from '../bookingCopy';
 import GroupPartySection, { type GroupPartySectionProps } from '../party/GroupPartySection';
-import SecondaryButton from './SecondaryButton';
+import BookingStepFooter from './BookingStepFooter';
 
 export interface TimetableStepProps {
   readonly usesClasses: boolean;
@@ -41,27 +47,27 @@ export default function TimetableStep(props: TimetableStepProps) {
   const { t } = useT();
   const { usesClasses, isLoading, party, bottomInset = 0 } = props;
   return (
-    <View style={[styles.container, { paddingBottom: 16 + bottomInset }]}>
-      <LPText size={18} weight="bold" align="center" accessibilityRole="header">
-        {usesClasses ? t('booking.select_class') : t('booking.select_time')}
-      </LPText>
-      {party ? (
-        <GroupPartySection {...party} />
-      ) : null}
-      <View style={styles.body}>
-        {isLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={colors.actionFill} accessibilityLabel={t('a11y.loading')} testID="booking.timetable.loading" />
-          </View>
-        ) : usesClasses ? (
-          <ClassList {...props} />
-        ) : (
-          <SlotGrid {...props} />
-        )}
-      </View>
-      <View style={styles.buttons}>
-        <SecondaryButton title={t('common.back')} onPress={props.onBack} testID="booking.timetable.back" />
-        <View style={styles.flex}>
+    <View style={styles.container} testID="booking.timetable.step">
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} testID="booking.timetable.scroll">
+        <LPText size={18} weight="bold" align="center" accessibilityRole="header">
+          {usesClasses ? t('booking.select_class') : t('booking.select_time')}
+        </LPText>
+        {party ? <GroupPartySection {...party} /> : null}
+        <View style={styles.body}>
+          {isLoading ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={colors.actionFill} accessibilityLabel={t('a11y.loading')} testID="booking.timetable.loading" />
+            </View>
+          ) : usesClasses ? (
+            <ClassList {...props} />
+          ) : (
+            <SlotGrid {...props} />
+          )}
+        </View>
+      </ScrollView>
+      <BookingStepFooter
+        back={{ title: t('common.back'), onPress: props.onBack, testID: 'booking.timetable.back' }}
+        primary={
           <PrimaryButton
             title={t('common.next')}
             onPress={props.onNext}
@@ -70,8 +76,10 @@ export default function TimetableStep(props: TimetableStepProps) {
             shape="booking"
             testID="booking.timetable.next"
           />
-        </View>
-      </View>
+        }
+        bottomInset={bottomInset}
+        testID="booking.timetable.footer"
+      />
     </View>
   );
 }
@@ -86,7 +94,7 @@ function SlotGrid({ slots, selectedSlotId, onSelectSlot }: TimetableStepProps) {
     );
   }
   return (
-    <ScrollView contentContainerStyle={styles.grid}>
+    <View style={styles.grid}>
       {slots.map((slot) => {
         const selected = slot.id === selectedSlotId;
         const time = VenueTimeFormat.time(slot.startTime);
@@ -120,7 +128,7 @@ function SlotGrid({ slots, selectedSlotId, onSelectSlot }: TimetableStepProps) {
           </Pressable>
         );
       })}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -135,7 +143,7 @@ function ClassList({ classes, selectedEventId, onSelectClass, activityName }: Ti
   }
   const copy = bookingCopy(language);
   return (
-    <ScrollView contentContainerStyle={styles.list}>
+    <View style={styles.list}>
       {classes.map((klass) => {
         const selected = klass.eventId === selectedEventId;
         const bookable = isClassBookable(klass);
@@ -191,27 +199,32 @@ function ClassList({ classes, selectedEventId, onSelectClass, activityName }: Ti
           </Pressable>
         );
       })}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  scroll: {
+    flex: 1,
+  },
+  // Grows to the visible height, so the spinner and the empty state sit in
+  // the middle of what is left under the title and the party section.
+  content: {
+    flexGrow: 1,
     padding: 16,
     gap: 16,
   },
   body: {
-    flex: 1,
+    flexGrow: 1,
   },
   center: {
-    flex: 1,
+    flexGrow: 1,
+    minHeight: 160,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  buttons: {
-    flexDirection: 'row',
-    gap: 12,
   },
   flex: {
     flex: 1,

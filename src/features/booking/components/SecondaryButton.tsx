@@ -1,6 +1,8 @@
 // The booking flow's Back button (iOS BookingFlowView.secondaryButton): a
-// muted fill, the foreground label, as tall as the Confirm beside it.
-import { Pressable, StyleSheet } from 'react-native';
+// muted fill, the foreground label, as tall as the Confirm beside it. The
+// row it sits in (BookingStepFooter) decides its width: `flex: 1` beside the
+// primary button, full width when the row stacks at large text.
+import { Pressable, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 
 import { LPText } from '../../../components/ui';
 import { colors, radius } from '../../../theme';
@@ -10,9 +12,10 @@ export interface SecondaryButtonProps {
   readonly onPress: () => void;
   readonly disabled?: boolean;
   readonly testID?: string;
+  readonly style?: StyleProp<ViewStyle>;
 }
 
-export default function SecondaryButton({ title, onPress, disabled = false, testID }: SecondaryButtonProps) {
+export default function SecondaryButton({ title, onPress, disabled = false, testID, style }: SecondaryButtonProps) {
   return (
     <Pressable
       onPress={onPress}
@@ -20,7 +23,7 @@ export default function SecondaryButton({ title, onPress, disabled = false, test
       accessibilityRole="button"
       accessibilityLabel={title}
       accessibilityState={{ disabled }}
-      style={({ pressed }) => [styles.button, pressed && styles.pressed, disabled && styles.disabled]}
+      style={({ pressed }) => [styles.button, style, pressed && styles.pressed, disabled && styles.disabled]}
       testID={testID}
     >
       <LPText size={15} weight="semibold" align="center">
@@ -32,7 +35,6 @@ export default function SecondaryButton({ title, onPress, disabled = false, test
 
 const styles = StyleSheet.create({
   button: {
-    flex: 1,
     minHeight: 48,
     paddingVertical: 14,
     paddingHorizontal: 12,
