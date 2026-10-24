@@ -64,6 +64,15 @@ export default function DateStep({ selectedDay, usesClasses, onSelect, onNext, t
   );
 }
 
+/**
+ * How far the member's font size grows the grid's text: the weekday heads
+ * and the day numbers alike. Seven columns share the width, about 47 dp each
+ * on a 360 dp phone. Uncapped at font scale 2 the widest head, "mán." (54 dp
+ * at 24 sp), broke in the middle ("má" / "n.", seen on an emulator); at 1.6
+ * it is 43 dp and fits.
+ */
+export const CALENDAR_MAX_SCALE = 1.6;
+
 interface VenueCalendarProps {
   readonly selectedDay: string;
   readonly today: string;
@@ -109,7 +118,15 @@ function VenueCalendar({ selectedDay, today, onSelect }: VenueCalendarProps) {
       </View>
       <View style={styles.week} importantForAccessibility="no-hide-descendants">
         {heads.map((head) => (
-          <LPText key={head} size={12} weight="semibold" color={colors.mutedTextStrong} align="center" style={styles.cell}>
+          <LPText
+            key={head}
+            size={12}
+            weight="semibold"
+            color={colors.mutedTextStrong}
+            align="center"
+            maxScale={CALENDAR_MAX_SCALE}
+            style={styles.cell}
+          >
             {head}
           </LPText>
         ))}
@@ -137,7 +154,7 @@ function VenueCalendar({ selectedDay, today, onSelect }: VenueCalendarProps) {
                     size={17}
                     weight={selected || isToday ? 'semibold' : 'regular'}
                     color={selected ? colors.onAccent : past ? colors.paper4 : isToday ? colors.actionFill : colors.paper}
-                    maxScale={1.6}
+                    maxScale={CALENDAR_MAX_SCALE}
                   >
                     {dayNumber(day)}
                   </LPText>
