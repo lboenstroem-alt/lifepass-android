@@ -40,8 +40,9 @@ export default function ConfirmStep({ store, activityName, venueName, offers, on
   // still in flight; it waits, as the system back does (useBusyGuard).
   const busy = useBooking(store, bookingInProgress);
 
-  // Keyed by what each row is, not by its label: in Icelandic "Activity",
-  // "Class" and "Time" are all "Tími", and rows keyed by label collided.
+  // Keyed by what each row is, not by its label: two labels can share a word
+  // in Icelandic ("Class" and "Time" are both "Tími"; "Activity" was too,
+  // until it became "Þjónusta" so the card never shows "Tími" twice).
   const rows: { id: string; label: string; value: string }[] = [
     { id: 'activity', label: t('booking.activity'), value: activityName },
   ];

@@ -113,8 +113,12 @@ describe('at the largest font size (2.0), in Icelandic', () => {
     const scroll = screen.getByTestId('booking.confirm.scroll');
     expect(within(scroll).getByText(is('booking.confirm_title'))).toBeOnTheScreen();
     const card = within(scroll).getByTestId('booking.confirm.card');
-    // Every row, though "Activity" and "Time" are both "Tími" in Icelandic.
-    expect(within(card).getAllByText(is('booking.time'))).toHaveLength(2);
+    // Every row, each under its own label: the booked service is "Þjónusta",
+    // so "Tími" labels the time alone.
+    expect(within(card).getByText('Þjónusta')).toBeOnTheScreen();
+    expect(within(card).getByText(is('booking.venue'))).toBeOnTheScreen();
+    expect(within(card).getByText(is('booking.date'))).toBeOnTheScreen();
+    expect(within(card).getAllByText('Tími')).toHaveLength(1);
     expect(within(card).getByText('Forest Lagoon Access')).toBeOnTheScreen();
     expect(within(card).getByText('Forest Lagoon')).toBeOnTheScreen();
     expect(within(card).getByText('10:00')).toBeOnTheScreen();

@@ -8,11 +8,19 @@
  *   sheet, dialog or tab bar sits on top of it): "Please update LifePass",
  *   why, and one Update button to Google Play. Nothing else can be reached.
  *   Hardware back leaves the app, as back does on any app's first screen.
- *   The words scroll and the button is pinned below them, so it stays on
- *   screen at the largest font size.
+ *   The words scroll and the button is pinned below them, OUTSIDE the
+ *   scroll, so at the largest font size on a small phone the title and the
+ *   body can be scrolled through and Update is always on screen. The title
+ *   stops growing at iOS's accessibility1 size: past it the longest
+ *   Icelandic word ("Vinsamlegast") no longer fits a 360 dp wide phone and
+ *   would break in the middle.
  * - available: "A new version is available", Update or Not now, once per
- *   new version. Shown once the launch screen has gone, so it never flashes
- *   over the splash; either answer retires it for that version.
+ *   new version. Shown once the launch screen has gone (the same test
+ *   RootNavigator draws it by, src/navigation/launchScreen.ts), so it never
+ *   flashes over it. Only an answer retires it for that version: Update,
+ *   Not now, or back and a tap outside, which press Not now. A prompt that
+ *   was never answered (the app closed under it, a block took its place)
+ *   comes back at the next launch.
  * - none: nothing.
  */
 import { useEffect, useState } from 'react';
@@ -20,8 +28,9 @@ import { AppState, BackHandler, Modal, ScrollView, StyleSheet, View } from 'reac
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Dialog, LPText, PrimaryButton, Wordmark } from '../../components/ui';
+import { FONT_SCALE_CAP } from '../../hooks/useA11ySize';
 import { useT } from '../../i18n';
-import { useAppStore } from '../../stores/appStore';
+import { useLaunchScreenShowing } from '../../navigation/launchScreen';
 import { colors } from '../../theme';
 import { openPlayStore } from './openStore';
 import { checkForUpdate, checkForUpdateIfStale, dismissUpdateAvailable, useAppUpdate } from './updateStore';
@@ -30,7 +39,7 @@ export default function AppUpdateHost() {
   const prompt = useAppUpdate((s) => s.prompt);
   const storeUrl = useAppUpdate((s) => s.storeUrl);
   // The soft prompt waits for the launch screen to go.
-  const launched = useAppStore((s) => !s.isLoading);
+  const launched = !useLaunchScreenShowing();
 
   useEffect(() => {
     void checkForUpdate();
@@ -86,10 +95,18 @@ export function UpdateRequiredCover({ storeUrl }: { readonly storeUrl: string })
       <View style={[styles.page, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} testID="appupdate.required.scroll">
           <Wordmark height={22} />
-          <LPText serif size={28} weight="medium" align="center" accessibilityRole="header">
+          <LPText
+            serif
+            size={28}
+            weight="medium"
+            align="center"
+            accessibilityRole="header"
+            maxScale={FONT_SCALE_CAP.accessibility1}
+            testID="appupdate.required.title"
+          >
             {t('appupdate.required.title')}
           </LPText>
-          <LPText size={15} color={colors.paper2} align="center">
+          <LPText size={15} color={colors.paper2} align="center" testID="appupdate.required.body">
             {t('appupdate.required.body')}
           </LPText>
           {storeFailed ? (
@@ -98,7 +115,7 @@ export function UpdateRequiredCover({ storeUrl }: { readonly storeUrl: string })
             </LPText>
           ) : null}
         </ScrollView>
-        <View style={styles.footer}>
+        <View style={styles.footer} testID="appupdate.required.footer">
           <PrimaryButton title={t('appupdate.update')} onPress={() => void update()} testID="appupdate.required.update" />
         </View>
       </View>
@@ -119,7 +136,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: 18,
-    paddingHorizontal: 28,
+    paddingHorizontal: 24,
     paddingVertical: 32,
   },
   footer: {
