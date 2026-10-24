@@ -21,6 +21,7 @@ import { restoreTestFontScale, setTestFontScale } from '../../../hooks/testing';
 import { lookup, setCurrentLanguage } from '../../../i18n';
 import { navigationRef } from '../../../navigation/navigationRef';
 import BookingFlowScreen from '../BookingFlowScreen';
+import { CALENDAR_MAX_SCALE } from '../components/DateStep';
 import { bookingPosts, CONFIRMED, plus, respond, slotsReply, START, VENUE_ID } from './bookingHarness';
 
 // The Kenni sheet (a refusal step) draws icons, whose font loader needs expo-asset.
@@ -155,6 +156,11 @@ describe('at the largest font size (2.0), in Icelandic', () => {
     expect(within(screen.getByTestId('booking.date.scroll')).getByTestId('booking.calendar.next')).toBeOnTheScreen();
     expectPinned('booking.date.next', 'date');
     expect(screen.getByTestId('booking.date.footer.stacked')).toBeOnTheScreen();
+    // The weekday heads stop growing where the day numbers do, so "mán."
+    // never breaks in the middle of its narrow column.
+    for (const head of ['mán.', 'þri.', 'mið.', 'fim.', 'fös.', 'lau.', 'sun.']) {
+      expect(screen.getByText(head, { includeHiddenElements: true })).toHaveProp('maxFontSizeMultiplier', CALENDAR_MAX_SCALE);
+    }
   });
 });
 
