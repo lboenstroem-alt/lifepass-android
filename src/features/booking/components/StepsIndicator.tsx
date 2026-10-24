@@ -2,9 +2,14 @@
 // pass (iOS BookingFlowView.stepsIndicator). Not buttons (the steps move
 // only with Next and Back, so selection and consent can't be skipped);
 // TalkBack reads each name, the current one marked selected.
+//
+// The labels stop growing at the first accessibility size: three Icelandic
+// names in one row at a font scale of 2 would wrap and take height from the
+// step below, where Back, Next and Confirm must stay on screen.
 import { StyleSheet, View } from 'react-native';
 
 import { LPText } from '../../../components/ui';
+import { FONT_SCALE_CAP } from '../../../hooks/useA11ySize';
 import { useT } from '../../../i18n';
 import { colors } from '../../../theme';
 import type { BookingStep } from '../bookingSession';
@@ -28,7 +33,12 @@ export default function StepsIndicator({ step, usesClasses }: StepsIndicatorProp
             accessibilityState={{ selected: step === index }}
           >
             <View style={[styles.dot, { backgroundColor: step >= index ? colors.actionFill : colors.line }]} />
-            <LPText size={11} weight="medium" color={step >= index ? colors.paper : colors.mutedTextStrong}>
+            <LPText
+              size={11}
+              weight="medium"
+              color={step >= index ? colors.paper : colors.mutedTextStrong}
+              maxScale={FONT_SCALE_CAP.accessibility1}
+            >
               {label}
             </LPText>
           </View>

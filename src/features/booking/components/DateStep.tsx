@@ -3,6 +3,11 @@
 // only selects it; Next advances, and the timetable loads on arrival at the
 // next step, so it is always fresh. Classes say they show the two weeks from
 // the picked day.
+//
+// The calendar scrolls and Next is pinned below it (./BookingStepFooter.tsx),
+// as on the other two steps: at the largest font size the month grid alone
+// is taller than a small phone, and Next must not wait at the end of a
+// scroll the member may not know is there.
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -22,6 +27,7 @@ import {
   weekdayHeads,
   type CalendarMonth,
 } from '../calendar';
+import BookingStepFooter from './BookingStepFooter';
 
 export interface DateStepProps {
   readonly selectedDay: string;
@@ -37,19 +43,24 @@ export default function DateStep({ selectedDay, usesClasses, onSelect, onNext, t
   const { t } = useT();
   const floor = today ?? todayServerDay();
   return (
-    <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + bottomInset }]}>
-      <LPText size={18} weight="bold" align="center" accessibilityRole="header">
-        {usesClasses ? t('booking.pick_start_date') : t('booking.select_date')}
-      </LPText>
-      <VenueCalendar selectedDay={selectedDay} today={floor} onSelect={onSelect} />
-      {usesClasses ? (
-        <LPText size={12} color={colors.mutedTextStrong} align="center">
-          {t('booking.two_weeks_hint')}
+    <View style={styles.container} testID="booking.date.step">
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} testID="booking.date.scroll">
+        <LPText size={18} weight="bold" align="center" accessibilityRole="header">
+          {usesClasses ? t('booking.pick_start_date') : t('booking.select_date')}
         </LPText>
-      ) : null}
-      <View style={styles.spacer} />
-      <PrimaryButton title={t('common.next')} onPress={onNext} tone="action" shape="booking" testID="booking.date.next" />
-    </ScrollView>
+        <VenueCalendar selectedDay={selectedDay} today={floor} onSelect={onSelect} />
+        {usesClasses ? (
+          <LPText size={12} color={colors.mutedTextStrong} align="center">
+            {t('booking.two_weeks_hint')}
+          </LPText>
+        ) : null}
+      </ScrollView>
+      <BookingStepFooter
+        primary={<PrimaryButton title={t('common.next')} onPress={onNext} tone="action" shape="booking" testID="booking.date.next" />}
+        bottomInset={bottomInset}
+        testID="booking.date.footer"
+      />
+    </View>
   );
 }
 
@@ -141,13 +152,15 @@ function VenueCalendar({ selectedDay, today, onSelect }: VenueCalendarProps) {
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  scroll: {
+    flex: 1,
+  },
   content: {
-    flexGrow: 1,
     padding: 16,
     gap: 24,
-  },
-  spacer: {
-    flexGrow: 1,
   },
   calendar: {
     gap: 4,

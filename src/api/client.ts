@@ -87,9 +87,12 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
  * `NotAuthenticatedError` instead of sending a request the API would 401.
  * `optional` is for the public attraction feeds, which a tourist with no
  * account must see: the token is sent when there is one, and nothing fails
- * without it.
+ * without it. `none` never reads or sends a token, for an anonymous route
+ * whose answer is the same for everyone (`GET /app-version`, the update
+ * check at launch): the auth SDK is not asked, so a slow or failing token
+ * refresh can never hold that call up.
  */
-export type AuthMode = 'required' | 'optional';
+export type AuthMode = 'required' | 'optional' | 'none';
 
 export type QueryValue = string | number | boolean | null | undefined;
 export type Query = Readonly<Record<string, QueryValue | readonly (string | number | boolean)[]>>;
@@ -683,6 +686,7 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
    * we have is sent, and the route decides.
    */
   async function readToken(auth: AuthMode, options: CallOptions<unknown>): Promise<string | null> {
+    if (auth === 'none') return null;
     // No network at all: settled before the auth SDK is asked. An expired
     // token would otherwise be refreshed first, and supabase-js retries that
     // refresh for about 25 s before it gives up; iOS fails at once. An

@@ -24,8 +24,8 @@ import WorkoutRunnerScreen from '../features/runner/screen/WorkoutRunnerScreen';
 import WriteReviewScreen from '../features/venue/reviews/WriteReviewScreen';
 import { useAppStore } from '../stores/appStore';
 import AuthNavigator from './AuthNavigator';
+import { useLaunchScreenShowing } from './launchScreen';
 import MealCaptureNavigator from './MealCaptureNavigator';
-import { useNavPrefs } from './navPrefs';
 import { noTabBarScreenLayout } from './NoTabBarLayout';
 import SharedSheetNavigator from './SharedSheetNavigator';
 import TabNavigator from './TabNavigator';
@@ -34,11 +34,10 @@ import type { RootStackParamList } from './types';
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function RootNavigator() {
-  const isLoading = useAppStore((s) => s.isLoading);
+  const launchScreenShowing = useLaunchScreenShowing();
   const isAuthenticated = useAppStore((s) => s.isAuthenticated);
-  const launchDecided = useNavPrefs((s) => s.launchTab !== null);
 
-  if (isLoading || !launchDecided) return <LaunchScreen />;
+  if (launchScreenShowing) return <LaunchScreen />;
 
   return (
     <>

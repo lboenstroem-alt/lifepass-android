@@ -26,6 +26,8 @@ const PACKAGE_IDS = [
   'QA-1', 'REL-1',
   // Changing the plan by talking to the Coach, after the release package.
   'COACH-6',
+  // After the parity plan: the update prompt (src/features/appUpdate).
+  'UPDATE-1',
 ];
 
 const PACK_DIR = path.join(__dirname, '..', 'android');
