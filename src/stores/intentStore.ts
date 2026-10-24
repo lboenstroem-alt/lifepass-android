@@ -91,6 +91,8 @@ export type CoachProgramEntry =
  */
 export interface CoachPlanEditEntry {
   readonly sessionId?: string | null;
+  /** The day's title, for "What would you like to change about {title}?". */
+  readonly sessionTitle?: string | null;
   readonly exerciseId?: string | null;
   /** Put in the input, unsent. Absent: the Coach asks what to change. */
   readonly prefill?: string | null;

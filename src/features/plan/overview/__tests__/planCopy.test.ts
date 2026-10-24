@@ -120,9 +120,8 @@ describe("a custom plan's days (COACH-6)", () => {
   it('says how often the cycle repeats, in both languages, never the padded weekdays', () => {
     const custom = program({ custom: true, cycleDays: 4, trainingDays: [1, 2, 3, 5, 6] });
     expect(cycleDaysLine(custom, t('en'), 'en')).toBe('Repeats every 4 days');
-    expect(cycleDaysLine(custom, t('is'), 'is')).toBe('Endurtekur sig á 4 daga fresti');
-    // Icelandic 21 is singular.
-    expect(cycleDaysLine(program({ custom: true, cycleDays: 21 }), t('is'), 'is')).toBe('Endurtekur sig á 21 dags fresti');
+    expect(cycleDaysLine(custom, t('is'), 'is')).toBe('Endurtekst á 4 daga fresti');
+    expect(cycleDaysLine(program({ custom: true, cycleDays: 14 }), t('en'), 'en')).toBe('Repeats every 14 days');
   });
 
   it('a plan with no cycle length falls back to its weekdays', () => {

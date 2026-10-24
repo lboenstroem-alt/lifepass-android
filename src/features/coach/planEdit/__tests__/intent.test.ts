@@ -1,79 +1,83 @@
 /**
- * The plan-edit router (../intent.ts) against the shared router corpus, and
- * its rule on its own: an edit verb with a plan object, or "don't have" with
- * equipment or an exercise, and never a question without an edit verb.
+ * Where typed words go while the plan can be changed in chat: the shared
+ * router corpus, and the plan-edit rule (../intent.ts) on its own. The port
+ * of iOS `PlanEditRouterTests`.
  *
- * THE CORPUS is the same file iOS tests (spec "ROUTER CORPUS"): its sha256
- * is pinned here, so a copy that drifts from the other app's fails before
- * any case runs. When the monorepo's canonical
- * docs/fixtures/plan-edit-router-corpus.json lands, it replaces this copy
- * byte for byte and the pin moves with it.
+ * THE CORPUS IS SHARED. `plan-edit-router-corpus.json` is the same bytes in
+ * the monorepo (`docs/fixtures/`), the iOS tests and here, and each platform
+ * asserts its hash and passes every case. Changing a case means changing all
+ * three copies, and the three hashes together.
  */
 import { sha256 } from '@noble/hashes/sha2';
-import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
+import { bytesToHex } from '@noble/hashes/utils';
 import fs from 'fs';
 import path from 'path';
 
-import { detectVenueCategory } from '../../../../data/coachQuestions';
 import { decodeHealthDay } from '../../../../health';
 import { planIntentAnswers, programIntentMatches } from '../../routing/intents';
-import { EMPTY_VOCABULARY, planEditIntentMatches, planVocabularyFrom, vocabularyOf } from '../intent';
+import { venueWizardCategory } from '../../routing/scheduleCue';
+import { planEditIntentMatches, planEditTokens, planVocabularyFrom, vocabularyTokens } from '../intent';
 
 const CORPUS_FILE = path.join(__dirname, 'fixtures', 'plan-edit-router-corpus.json');
-const CORPUS_SHA256 = '53428d700f09e07b3b8240dce808d3fe1b1f8385d8e164d99eeecb41616e4c0f';
+const CORPUS_SHA256 = 'dfae69746a57760023710686d9ce8ad1c08daa05344b6c7455a1cbf28af48c05';
 
-interface CorpusCase {
-  readonly text: string;
-  readonly lang: 'en' | 'is' | 'de';
-  readonly expect: 'planEdit' | 'chat' | 'venue' | 'dayPlan' | 'program';
-}
+type Destination = 'planEdit' | 'program' | 'dayPlan' | 'venue' | 'chat';
 
 interface Corpus {
+  readonly name: string;
   readonly version: number;
   readonly vocabulary: readonly string[];
-  readonly cases: readonly CorpusCase[];
+  readonly cases: readonly { readonly lang: string; readonly text: string; readonly expect: Destination }[];
 }
 
-const raw = fs.readFileSync(CORPUS_FILE, 'utf8');
-const corpus = JSON.parse(raw) as Corpus;
-const vocabulary = vocabularyOf(corpus.vocabulary);
+const bytes = fs.readFileSync(CORPUS_FILE);
+const corpus = JSON.parse(bytes.toString('utf8')) as Corpus;
+
+/**
+ * Where the pipeline sends words with nothing open in the chat and a plan
+ * running (iOS `CoachTypedDestination.resolve`): the plan change, the
+ * programme offer, the day plan, the venue wizard, the chat.
+ */
+function destination(text: string, planEditEnabled: boolean, vocabulary: readonly string[]): Destination {
+  const trimmed = text.trim();
+  if (planEditEnabled && planEditIntentMatches(trimmed, vocabulary)) return 'planEdit';
+  if (programIntentMatches(trimmed)) return 'program';
+  if (planIntentAnswers(trimmed) !== null) return 'dayPlan';
+  if (venueWizardCategory(trimmed) !== null) return 'venue';
+  return 'chat';
+}
 
 describe('the shared router corpus', () => {
-  it('is the copy both apps pin', () => {
-    expect(bytesToHex(sha256(utf8ToBytes(raw)))).toBe(CORPUS_SHA256);
+  it('is the agreed one, byte for byte', () => {
+    expect(bytesToHex(sha256(new Uint8Array(bytes)))).toBe(CORPUS_SHA256);
+    expect(corpus.name).toBe('plan-edit-router-corpus');
     expect(corpus.version).toBe(1);
   });
 
-  it('has about sixty messages in English, Icelandic and German, every destination among them', () => {
+  it('every message routes where it says (100%)', () => {
     expect(corpus.cases.length).toBeGreaterThanOrEqual(60);
-    for (const lang of ['en', 'is', 'de'] as const) {
-      expect(corpus.cases.filter((c) => c.lang === lang && c.expect === 'planEdit').length).toBeGreaterThanOrEqual(9);
-    }
-    for (const destination of ['planEdit', 'chat', 'venue', 'dayPlan', 'program'] as const) {
-      expect(corpus.cases.some((c) => c.expect === destination)).toBe(true);
-    }
-  });
-
-  it('routes every message where the corpus says (100%)', () => {
     const wrong = corpus.cases
-      .filter((c) => planEditIntentMatches(c.text, vocabulary) !== (c.expect === 'planEdit'))
-      .map((c) => `${c.lang} "${c.text}" should ${c.expect === 'planEdit' ? '' : 'not '}go to the plan change`);
+      .map((item) => ({ item, got: destination(item.text, true, corpus.vocabulary) }))
+      .filter(({ item, got }) => got !== item.expect)
+      .map(({ item, got }) => `[${item.lang}] "${item.text}": expected ${item.expect}, got ${got}`);
     expect(wrong).toEqual([]);
   });
 
-  it('leaves the other destinations to the matchers that already own them', () => {
-    const wrong: string[] = [];
-    for (const c of corpus.cases) {
-      if (c.expect === 'program' && !programIntentMatches(c.text)) wrong.push(`program: ${c.text}`);
-      if (c.expect === 'dayPlan' && planIntentAnswers(c.text) === null) wrong.push(`dayPlan: ${c.text}`);
-      if (c.expect === 'venue' && detectVenueCategory(c.text) === null) wrong.push(`venue: ${c.text}`);
+  it('every language carries plan edits and advice for the chat', () => {
+    for (const lang of ['en', 'is', 'de']) {
+      const cases = corpus.cases.filter((item) => item.lang === lang);
+      expect(cases.some((item) => item.expect === 'planEdit')).toBe(true);
+      expect(cases.some((item) => item.expect === 'chat')).toBe(true);
     }
-    expect(wrong).toEqual([]);
+  });
+
+  it('without the server feature nothing ever goes to the plan change', () => {
+    for (const item of corpus.cases) expect(destination(item.text, false, corpus.vocabulary)).not.toBe('planEdit');
   });
 });
 
 describe('the rule', () => {
-  it('an edit verb needs a plan object', () => {
+  it('an edit verb needs something of the plan', () => {
     expect(planEditIntentMatches('swap my exercise')).toBe(true);
     expect(planEditIntentMatches('swap the music')).toBe(false);
     expect(planEditIntentMatches('change gyms')).toBe(false);
@@ -86,27 +90,26 @@ describe('the rule', () => {
     expect(planEditIntentMatches('ég er ekki með kortið')).toBe(false);
   });
 
-  it('a question without an edit verb is the chat\'s, one with an edit verb is a change', () => {
+  it('a question without an edit verb is advice for the chat; one with an edit verb is a change', () => {
     expect(planEditIntentMatches('which exercise is best for my back?')).toBe(false);
-    expect(planEditIntentMatches("what if I don't have a cable machine?")).toBe(false);
     expect(planEditIntentMatches('should I swap my workout for a rest day?')).toBe(true);
   });
 
-  it('"make" is a change only with a rest day or a dose', () => {
-    expect(planEditIntentMatches('make Friday a rest day')).toBe(true);
-    expect(planEditIntentMatches('make it 3 sets')).toBe(true);
-    expect(planEditIntentMatches('make me a workout plan')).toBe(false);
+  it('a booking is never the plan', () => {
+    expect(planEditIntentMatches('move my booking to Saturday')).toBe(false);
+    expect(planEditIntentMatches('færðu bókunina mína')).toBe(false);
   });
 
-  it('reads Icelandic and German typed without their letters', () => {
-    expect(planEditIntentMatches('faerdu aefinguna a laugardag')).toBe(true);
-    expect(planEditIntentMatches('Ich habe keine Kurzhanteln')).toBe(true);
-    expect(planEditIntentMatches('ich habe keine kurzhanteln')).toBe(true);
+  it('the plan\'s own words count', () => {
+    expect(planEditIntentMatches('swap Zottman for something else')).toBe(false);
+    expect(planEditIntentMatches('swap Zottman for something else', ['Zottman curls'])).toBe(true);
   });
 
-  it('knows nothing of the plan without its vocabulary', () => {
-    expect(planEditIntentMatches('swap bench press for push-ups', EMPTY_VOCABULARY)).toBe(false);
-    expect(planEditIntentMatches('swap bench press for push-ups', vocabularyOf(['Barbell bench press']))).toBe(true);
+  it('folds as iOS does: apostrophes dropped, ß as ss, Icelandic letters spelled out', () => {
+    expect(planEditTokens("Don't")).toEqual(['dont']);
+    expect(planEditTokens('Fußball')).toEqual(['fussball']);
+    expect(planEditTokens('Ég er ekki með þetta æfingu')).toEqual(['eg', 'er', 'ekki', 'med', 'thetta', 'aefingu']);
+    expect(planEditTokens('Übung')).toEqual(['ubung']);
   });
 
   it('nothing typed is nothing', () => {
@@ -116,30 +119,27 @@ describe('the rule', () => {
 });
 
 describe("the plan's words", () => {
-  it('names a day title by its words before the bracket, and an exercise by its runs of words, singular or plural', () => {
-    const words = vocabularyOf(['Push (Brust & Trizeps)', 'Bodyweight squat', 'Barbell bench press']);
-    expect(words.words.has('push')).toBe(true);
-    expect(words.words.has('squat')).toBe(true);
-    expect(words.words.has('squats')).toBe(true);
-    expect(words.phrases).toContain('bench press');
-    // Too common to stand for one exercise.
-    expect(words.words.has('body')).toBe(false);
+  it('keeps the significant words of titles and names', () => {
+    const words = vocabularyTokens(['Push (Brust & Trizeps)', 'Full body strength', 'Lat pulldown']);
+    expect(words.has('push')).toBe(true);
+    expect(words.has('pulldown')).toBe(true);
+    expect(words.has('body')).toBe(false);
+    expect(words.has('strength')).toBe(false);
   });
 
-  it('reads them off the cached Today read: today\'s exercises, the week\'s titles, the upcoming rows', () => {
+  it('reads them off the cached Today read of a live plan, once each', () => {
     const day = decodeHealthDay({
       date: '2026-10-23',
+      program: { id: 'p1', status: 'active' },
       day: {
         date: '2026-10-23',
         session: { id: 's1', title: 'Pull (Rücken & Arme)', blocks: [{ blockNo: 1, exerciseId: 'lat-pulldown', name: 'Lat pulldown' }] },
       },
-      week: { days: [{ date: '2026-10-24', title: 'Calisthenics' }] },
+      week: { days: [{ date: '2026-10-24', title: 'Calisthenics' }, { date: '2026-10-25', title: 'calisthenics' }] },
       upcoming: [{ id: 's2', title: 'Push (Brust & Trizeps)' }],
     });
-    const words = planVocabularyFrom(day);
-    expect(planEditIntentMatches('replace lat pulldown with pull-ups', words)).toBe(true);
-    expect(planEditIntentMatches('swap Calisthenics and Pull', words)).toBe(true);
-    expect(planEditIntentMatches('move Push to Sunday', words)).toBe(true);
-    expect(planVocabularyFrom(null)).toBe(EMPTY_VOCABULARY);
+    expect(planVocabularyFrom(day)).toEqual(['Pull (Rücken & Arme)', 'Lat pulldown', 'Calisthenics', 'Push (Brust & Trizeps)']);
+    expect(planVocabularyFrom(decodeHealthDay({ date: '2026-10-23', program: { id: 'p1', status: 'completed' } }))).toEqual([]);
+    expect(planVocabularyFrom(null)).toEqual([]);
   });
 });

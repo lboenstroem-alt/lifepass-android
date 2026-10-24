@@ -14,7 +14,7 @@
  *   change: the pipeline sends them on from the programme offer.
  * - `enter`: the empty state's "Change my plan", and a change parked by
  *   Plan ("Change with Coach") or the runner ("I don't have this").
- * - its own bubbles (the preview card, the consent tap, the notice), each
+ * - its own bubbles (the preview card and the consent tap), each
  *   loaded the first time one is drawn: the store loads every flow as the
  *   Coach's hooks load, long before any screen.
  *
@@ -29,14 +29,13 @@ import type * as CardModule from '../planEdit/PlanEditCard';
 import type * as ConsentModule from '../planEdit/PlanEditConsentBubble';
 import {
   abandonPlanEdit,
-  enterParkedPlanEdit,
+  beginPlanEdit,
   hasOpenPlanEdit,
   PlanEditMessageKind,
   resetPlanEdit,
+  routeToPlanEdit,
   selectPlanEditOption,
-  startPlanEdit,
-  startPlanEditFrom,
-  takeTypedPlanEdit,
+  startPlanEditFromChip,
 } from '../planEdit/flow';
 import type { CoachFlow, CoachFlowEntry, CoachMessageRendererProps, CoachSendOptions, CoachStartContext } from './types';
 
@@ -61,12 +60,12 @@ export const planEditFlow: CoachFlow = {
 
   hasOpenQuestion: hasOpenPlanEdit,
 
-  takeTyped: (text: string) => takeTypedPlanEdit(text),
+  takeTyped: (text: string) => routeToPlanEdit(text, { handedOn: false }),
 
   startFrom(text: string, options: CoachSendOptions, context: CoachStartContext) {
     const handedOn = context.handedOnFrom === 'adjust.open';
     if (!options.detectPlanRequest && !handedOn) return false;
-    return startPlanEditFrom(text, { handedOn, abandonOpenQuestions: () => context.abandonOpenQuestions() });
+    return routeToPlanEdit(text, { handedOn });
   },
 
   abandon: abandonPlanEdit,
@@ -78,10 +77,6 @@ export const planEditFlow: CoachFlow = {
       () => (require('../planEdit/PlanEditCard') as typeof CardModule).default,
       'PlanEditCard',
     ),
-    [PlanEditMessageKind.notice]: loadedOnFirstDraw(
-      () => (require('../planEdit/PlanEditCard') as typeof CardModule).PlanEditNotice,
-      'PlanEditNotice',
-    ),
     [PlanEditMessageKind.consent]: loadedOnFirstDraw(
       () => (require('../planEdit/PlanEditConsentBubble') as typeof ConsentModule).default,
       'PlanEditConsentBubble',
@@ -91,9 +86,9 @@ export const planEditFlow: CoachFlow = {
   enter(entry: CoachFlowEntry) {
     switch (entry.kind) {
       case 'chip':
-        return startPlanEdit(entry.userText);
+        return startPlanEditFromChip(entry.userText);
       case 'planEdit':
-        return enterParkedPlanEdit(entry.entry);
+        return beginPlanEdit(entry.entry);
       default:
         return undefined;
     }

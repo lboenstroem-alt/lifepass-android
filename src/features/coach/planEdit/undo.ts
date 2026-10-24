@@ -8,12 +8,12 @@
  * All or nothing on the server: days done or skipped since the change stay
  * as history (`keptRows`), and the toast says so.
  */
-import { newIdempotencyKey } from '../../../api';
+import { isApiError, newIdempotencyKey } from '../../../api';
 import { useHealthStore } from '../../../health';
 import { currentLanguage, translate } from '../../../i18n';
 import { track } from '../../../lib/analytics';
 
-import { planEditErrorCode, undoPlanEdit } from './api';
+import { planEditErrorReason, undoPlanEdit } from './api';
 import { presentToast } from './platform';
 
 const undoKeys = new Map<string, string>();
@@ -30,26 +30,34 @@ export function refreshPlan(): void {
   })();
 }
 
-/** OP-60 for one edit, then the plan read again. Resolves with the days kept as history; throws the API's error. */
-export async function undoEdit(programId: string, editId: string): Promise<number> {
+/**
+ * OP-60 for one edit (`entry`: the chat's card or Plan's Changes list), then
+ * the plan read again. Resolves with the days kept as history; throws the
+ * API's error. The key is kept for a retry of the same tap and goes once the
+ * server has answered.
+ */
+export async function undoEdit(programId: string, editId: string, entry: 'card' | 'changes'): Promise<number> {
   const key = undoKeys.get(editId) ?? makeKey();
   undoKeys.set(editId, key);
   try {
     const response = await undoPlanEdit(programId, editId, key);
-    track('plan_edit_undone');
+    undoKeys.delete(editId);
+    track('plan_edit_undone', { entry });
     refreshPlan();
     return response.keptRows;
   } catch (error) {
-    track('plan_edit_error', { code: planEditErrorCode(error) });
+    track('plan_edit_error', { reason: planEditErrorReason(error) });
+    if (isApiError(error) && error.isProblem('plan_edit_undo_unavailable', 'plan_edit_not_pending')) undoKeys.delete(editId);
     throw error;
   }
 }
 
-/** "Change undone", and "Days you already did stay as they are." when some were kept. */
+/**
+ * The Changes list's toast (iOS `PlanEditChangesModel`): "Days you already
+ * did stay as they are." when an Undo kept some, else "Change undone".
+ */
 export function announceUndone(keptRows: number): void {
-  const language = currentLanguage();
-  const toast = translate('coach.planEdit.undoneToast', language);
-  presentToast(keptRows > 0 ? `${toast}. ${translate('coach.planEdit.keptRows', language)}` : toast);
+  presentToast(translate(keptRows > 0 ? 'coach.planEdit.keptRows' : 'coach.planEdit.undoneToast', currentLanguage()));
 }
 
 /** The server's rule (`undoable`) and its window (`undoUntil`), read now. */

@@ -506,7 +506,11 @@ function CoachInputBar({
   const { t } = useT();
   const inputText = useCoachStore((s) => s.inputText);
   const isTyping = useCoachStore((s) => s.isTyping);
-  const locked = useCoachStore(selectIsAILocked);
+  // Locked only while the plan cannot be changed in chat either (the lock
+  // covers the chat, not the plan change).
+  const aiLocked = useCoachStore(selectIsAILocked);
+  const planEditOffered = usePlanEditOffered();
+  const locked = aiLocked && !planEditOffered;
   const limitReached = useCoachStore((s) => s.limitReached);
   const freeLimitReached = useCoachStore((s) => s.freeLimitReached);
   const inputEmpty = inputText.trim().length === 0;

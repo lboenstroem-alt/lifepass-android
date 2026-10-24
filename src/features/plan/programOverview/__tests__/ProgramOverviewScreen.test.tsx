@@ -442,7 +442,7 @@ describe('changes made in chat (COACH-6)', () => {
     api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
     api.on('GET', editsPath, Reply.ok({ edits: [edit(), edit({ id: OLDER, status: 'undone', undoable: false, summary: 'No cable machine.' })] }));
     await renderOverview('live');
-    expect(await screen.findByText(en('coach.planEdit.changesList'))).toBeOnTheScreen();
+    expect(await screen.findByText(en('coach.planEdit.changesList').toUpperCase())).toBeOnTheScreen();
     expect(screen.getByText('Push-ups instead of bench press on Push days.')).toBeOnTheScreen();
     expect(screen.getByTestId(`programOverview.change.${OLDER}.undone`)).toBeOnTheScreen();
     expect(api.sent(editsPath, 'GET').query).toEqual({ locale: 'en' });
@@ -465,12 +465,20 @@ describe('changes made in chat (COACH-6)', () => {
     expect(await screen.findByText(en('coach.planEdit.error.undoWindow'))).toBeOnTheScreen();
   });
 
+  it('a failed read says so; a server without the list (404) draws nothing', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', editsPath, Reply.problem(500, 'internal_error'));
+    await renderOverview('live');
+    expect(await screen.findByText(en('coach.planEdit.changes.loadFailed'))).toBeOnTheScreen();
+  });
+
   it('nothing is read or drawn on a server that does not change plans by chat and a plan with no change', async () => {
     useAppStore.setState({ serverFeatures: [] });
     api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
     await renderOverview('live');
     expect(api.sentAll(editsPath)).toHaveLength(0);
-    expect(screen.queryByText(en('coach.planEdit.changesList'))).toBeNull();
+    expect(screen.queryByText(en('coach.planEdit.changesList').toUpperCase())).toBeNull();
   });
 
   it('a plan that carries a change is read even after the feature was turned off, so it can still be undone', async () => {

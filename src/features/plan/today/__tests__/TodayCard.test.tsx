@@ -621,7 +621,7 @@ describe('Change with Coach (COACH-6)', () => {
     seed(todayJSON({ blocks }));
     await renderToday();
     await fireEvent.press(screen.getByTestId('plan.today.changeWithCoach'));
-    expect(useIntentStore.getState().pendingCoachPlanEdit).toEqual({ sessionId: SESSION });
+    expect(useIntentStore.getState().pendingCoachPlanEdit).toEqual({ sessionId: SESSION, sessionTitle: 'Full body strength' });
     expect(useIntentStore.getState().pendingTab).toBe('Coach');
   });
 

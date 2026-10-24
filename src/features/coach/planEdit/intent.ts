@@ -1,273 +1,299 @@
 /**
- * Typed words that ask to CHANGE the plan that is running: iOS
- * `PlanEditIntent` (Models/PlanEditIntent.swift). The send pipeline's
- * `planEdit.start` step (../flows/planEdit.ts) runs it only while the server
- * changes plans by chat and a plan is live (./availability.ts); a match
- * sends the words to OP-58, which can still answer "not a plan edit", and
- * then the words go on through the Coach as before.
+ * Words that ask to change the plan that is running: the Android port of
+ * iOS `PlanEditIntent` (Models/PlanEditIntent.swift), table for table. The
+ * send pipeline's `planEdit.start` step (../flows/planEdit.ts) runs it only
+ * while the server changes plans by chat and a plan is live
+ * (./availability.ts); a match sends the words to OP-58, which can still
+ * answer "not a plan edit", and then the words go on through the Coach.
  *
- * THE RULE (spec "ROUTING TYPED TEXT", step 4), deliberately narrow:
+ * NARROW ON PURPOSE (spec, critic 15). A message goes to the plan change
+ * when it has an EDIT VERB and something of the PLAN in it ("swap bench for
+ * dips", "færðu æfinguna á laugardag", "Tausch die Klimmzüge"), says the
+ * member DOESN'T HAVE a piece of equipment or an exercise ("I don't have a
+ * cable machine", "Ich habe keine Beinpresse"), or that it is back ("I have
+ * dumbbells again"). A question with no edit verb is advice, and goes to the
+ * chat ("how many sets should I do?", "hvaða æfing er góð fyrir bakið?").
+ * Anything about a booking stays out.
  *
- *   (an EDIT verb AND a plan object)  OR  (a "don't have" phrase AND an equipment or exercise word)
- *   AND NOT a question without an edit verb
+ * A word missed here reaches the chat, which cannot change a plan; a word
+ * caught wrongly costs one refunded call, and the server answers
+ * `not_plan_edit` so the same words go on down the normal path.
  *
- * A false positive costs a refunded model call, a moment and one of the
- * member's hourly attempts; a false negative costs nothing, because the
- * words reach the chat as they always did and "Change my plan" is a tap
- * away. So whole words and phrases only, in the folded spelling every Coach
- * reader shares (../routing/tokens.ts: lower case, no diacritics, ð as d, þ
- * as th, æ as ae; German ü, ö, ä lose their dots, ß stays).
- *
- * Plan objects include the plan's own words: the folded names of the
- * exercises and days the cached plan shows (`planVocabularyFrom`), so
- * "swap bench press for push-ups" matches when the plan has a bench press.
- *
- * Every table is the same in iOS, and both apps must pass the shared router
- * corpus (__tests__/fixtures/plan-edit-router-corpus.json) 100%.
+ * The plan's own words count too: the names of the exercises and days the
+ * cached plan shows (`planVocabularyFrom`). Both apps pass the shared router
+ * corpus (__tests__/fixtures/plan-edit-router-corpus.json, the same bytes in
+ * iOS and the monorepo) 100%.
  */
 import type { HealthDay } from '../../../health/models';
-import { hasPhrase, phraseOf, tokens } from '../routing/tokens';
 
 // ---------------------------------------------------------------------------
-// Tables (folded)
+// Folding
 
-/** Single words that ask for a change. */
-export const EDIT_VERBS: ReadonlySet<string> = new Set([
-  // English
-  'swap', 'replace', 'change', 'switch', 'move', 'add', 'remove', 'drop', 'rename', 'reduce', 'increase',
-  // Icelandic (with the dose verbs: fewer, more, longer, shorter)
-  'skipta', 'skiptu', 'breyta', 'breyttu', 'faera', 'faerdu', 'taktu', 'faekkadu', 'fjolgadu', 'lengdu', 'styttu',
-  // German
-  'tauschen', 'tausch', 'tausche', 'ersetzen', 'ersetze', 'statt', 'anstatt', 'andern', 'verschieben',
-  'verschieb', 'verschiebe', 'hinzufugen', 'fug', 'entfernen', 'entferne', 'streichen', 'streich',
-]);
-
-/** Phrases that ask for a change. */
-export const EDIT_PHRASES: readonly string[] = [
-  'instead of',
-  'i stadinn fyrir', 'baeta vid', 'baettu vid', 'taka ut', 'taktu ut',
-];
+/** Icelandic letters that are letters of their own, spelled out as iOS does. */
+const ICELANDIC_LETTERS: Readonly<Record<string, string>> = { ð: 'd', þ: 'th', æ: 'ae' };
+const COMBINING_MARKS = /\p{M}/gu;
+const NOT_A_WORD_CHARACTER = /[^\p{L}\p{N}]+/u;
 
 /**
- * "make" asks for a change only with a rest day or a dose ("make Thursday a
- * rest day", "make it 4 sets", "gerðu fimmtudag að hvíldardegi", "mach
- * Donnerstag zum Ruhetag"): "make me a plan" is the programme wizard's.
+ * Lower case, apostrophes dropped ("don't" is "dont"), `ß` as `ss`, `ð` as
+ * `d`, `þ` as `th`, `æ` as `ae`, diacritics off, split on anything that is
+ * not a letter or a digit (iOS `PlanEditIntent.tokens(of:)`). So "Ég er ekki
+ * með handlóð" and "eg er ekki med handlod" read the same, and so do "Übung"
+ * and "Ubung".
  */
-const MAKE_VERBS: ReadonlySet<string> = new Set(['make', 'gerdu', 'mach', 'mache']);
-
-/** The plan's things, as words. */
-export const PLAN_OBJECT_WORDS: ReadonlySet<string> = new Set([
-  // English
-  'exercise', 'exercises', 'workout', 'workouts', 'set', 'sets', 'rep', 'reps', 'training',
-  // Icelandic
-  'aefing', 'aefingu', 'aefingar', 'aefingum', 'aefinguna', 'aefingin', 'aefingunni', 'aefingarnar', 'aefingunum',
-  'sett', 'settum', 'settin', 'settunum', 'settinu',
-  'hvildardagur', 'hvildardag', 'hvildardegi', 'aaetlun', 'aaetlunina', 'aaetluninni',
-  // German
-  'ubung', 'ubungen', 'satze', 'satz', 'wiederholungen', 'ruhetag', 'trainingsplan', 'trainings',
-]);
-
-/** The plan's things, as phrases. */
-export const PLAN_OBJECT_PHRASES: readonly string[] = ['rest day', 'my plan', 'the plan', 'my workout plan'];
-
-/** What "make" needs next to it (a rest day or a dose). */
-const MAKE_OBJECT_WORDS: ReadonlySet<string> = new Set([
-  'set', 'sets', 'rep', 'reps', 'seconds', 'minutes',
-  'sett', 'settin', 'endurtekningar', 'sekundur', 'hvildardag', 'hvildardegi', 'hvildardagur',
-  'satze', 'satz', 'wiederholungen', 'sekunden', 'ruhetag',
-]);
-const MAKE_OBJECT_PHRASES: readonly string[] = ['rest day'];
-
-/** "I don't have", "there's no", "ég er ekki með", "ich habe keine", "mein Gym hat keine". */
-export const DONT_HAVE_PHRASES: readonly string[] = [
-  // English ("don't" folds to "don t")
-  'don t have', 'dont have', 'do not have', 'doesn t have', 'does not have', 'there s no', 'there is no',
-  'haven t got', 'no longer have',
-  // Icelandic
-  'ekki med', 'hef ekki',
-  // German
-  'habe keine', 'habe keinen', 'habe kein', 'hab keine', 'hab keinen', 'hab kein', 'hat keine', 'hat keinen',
-  'hat kein', 'gibt es kein', 'gibt es keine', 'gibt es keinen', 'gibt keine', 'gibt keinen',
-];
-
-/** "No ... at my gym", "engin ... í ræktinni": the absence word, then the place. */
-const ABSENCE_WORDS: ReadonlySet<string> = new Set(['no', 'engin', 'enginn', 'ekkert', 'engar', 'engir']);
-const AT_MY_GYM_PHRASES: readonly string[] = ['at my gym', 'in my gym', 'at the gym', 'i raektinni', 'i raektinni minni'];
-
-/** Equipment, the thing a member does not have. */
-export const EQUIPMENT_WORDS: ReadonlySet<string> = new Set([
-  // English
-  'machine', 'machines', 'cable', 'cables', 'barbell', 'barbells', 'dumbbell', 'dumbbells', 'dumbells',
-  'kettlebell', 'kettlebells', 'band', 'bands', 'bench', 'rack', 'equipment', 'weights', 'plates', 'rings',
-  'treadmill', 'rower', 'bike', 'smith', 'trx', 'box', 'bar',
-  // Icelandic
-  'vel', 'velar', 'velina', 'kapalvel', 'kapalvelina', 'kapall', 'stong', 'stangir', 'stongina', 'handlod',
-  'handlodin', 'ketilbjalla', 'ketilbjollu', 'ketilbjollur', 'teygja', 'teygju', 'teygjur', 'bekkur', 'bekk',
-  'bunad', 'bunadinn', 'bunadur', 'bunadi', 'lod', 'lodin', 'fotapressa', 'fotapressu',
-  // German
-  'maschine', 'maschinen', 'kabel', 'kabelzug', 'kabelmaschine', 'langhantel', 'langhanteln', 'kurzhantel',
-  'kurzhanteln', 'hantel', 'hanteln', 'bander', 'bank', 'beinpresse', 'klimmzugstange', 'gerat', 'gerate',
-  'gewichte', 'rudergerat', 'laufband',
-]);
-
-/** Equipment named in two words. */
-export const EQUIPMENT_PHRASES: readonly string[] = [
-  'leg press', 'squat rack', 'pull up bar', 'pullup bar', 'chin up bar', 'cable machine', 'rowing machine',
-];
-
-/** Words that make a question of what was typed. */
-export const QUESTION_WORDS: ReadonlySet<string> = new Set([
-  'how', 'what', 'which', 'why', 'should',
-  'hvada', 'hvernig', 'hvad',
-  'welche', 'welcher', 'welches', 'wie', 'was', 'warum', 'soll', 'sollte',
-]);
-const QUESTION_PHRASES: readonly string[] = ['af hverju'];
-
-/** Words too common to stand for an exercise or a day on their own. */
-const GENERIC_WORDS: ReadonlySet<string> = new Set([
-  'with', 'each', 'side', 'sides', 'body', 'strength', 'upper', 'lower', 'full', 'light', 'heavy', 'easy', 'hard',
-  'holds', 'hold', 'day', 'days', 'rest', 'session', 'class', 'walk', 'swim', 'cardio', 'mobility', 'training',
-  'workout', 'exercise', 'stretch', 'other', 'their', 'there', 'about', 'after', 'before', 'morgen', 'heute',
-]);
-
-// ---------------------------------------------------------------------------
-// The plan's own words
-
-/** The folded words and phrases that name something in the cached plan. */
-export interface PlanVocabulary {
-  /** Single words (at least five letters, not generic). */
-  readonly words: ReadonlySet<string>;
-  /** Phrases of two or more words. */
-  readonly phrases: readonly string[];
+export function planEditTokens(text: string): string[] {
+  const folded = text
+    .toLowerCase()
+    .replace(/['’]/g, '')
+    .replace(/ß/g, 'ss')
+    .replace(/[ðþæ]/g, (letter) => ICELANDIC_LETTERS[letter] ?? letter)
+    .normalize('NFD')
+    .replace(COMBINING_MARKS, '');
+  return folded.split(NOT_A_WORD_CHARACTER).filter((word) => word.length > 0);
 }
 
-export const EMPTY_VOCABULARY: PlanVocabulary = { words: new Set(), phrases: [] };
-
-/** A name's word, and its English plural or singular ("squat" and "squats": a member says either). */
-function addWithPlural(words: Set<string>, word: string): void {
-  words.add(word);
-  if (word.endsWith('s') && word.length > 5) words.add(word.slice(0, -1));
-  else words.add(`${word}s`);
+function containsAny(phrase: string, phrases: readonly string[]): boolean {
+  return phrases.some((candidate) => phrase.includes(` ${candidate} `));
 }
 
-/**
- * The vocabulary of a list of names: each whole name, each run of two or
- * more of its words, and each of its words that could only mean it. A day
- * title is cut at its first bracket ("Push (Brust & Trizeps)" is "push").
- */
-export function vocabularyOf(names: readonly (string | null | undefined)[]): PlanVocabulary {
-  const words = new Set<string>();
-  const phrases = new Set<string>();
-  for (const raw of names) {
-    if (!raw) continue;
-    for (const part of [raw, raw.split('(')[0] ?? '']) {
-      const folded = tokens(part);
-      if (folded.length === 0) continue;
-      for (let start = 0; start < folded.length; start += 1) {
-        for (let end = start + 2; end <= folded.length; end += 1) phrases.add(folded.slice(start, end).join(' '));
-      }
-      for (const word of folded) {
-        if (word.length >= 5 && !GENERIC_WORDS.has(word) && !/^\d+$/.test(word)) addWithPlural(words, word);
-      }
-      if (folded.length === 1 && folded[0]!.length >= 4 && !GENERIC_WORDS.has(folded[0]!)) addWithPlural(words, folded[0]!);
+function intersects(words: ReadonlySet<string>, table: Iterable<string>): boolean {
+  for (const word of table) if (words.has(word)) return true;
+  return false;
+}
+
+/** A question form: it ends with a question mark, or opens with a question word. */
+function isQuestion(text: string, words: readonly string[], phrase: string): boolean {
+  if (text.trim().endsWith('?')) return true;
+  const first = words[0];
+  if (first === undefined) return false;
+  return QUESTION_STARTERS.has(first) || phrase.startsWith(' af hverju ');
+}
+
+/** The significant words of the plan's own day titles and exercise names. */
+export function vocabularyTokens(vocabulary: readonly string[]): Set<string> {
+  const result = new Set<string>();
+  for (const name of vocabulary) {
+    for (const word of planEditTokens(name)) {
+      if (word.length >= 4 && !VOCABULARY_STOPWORDS.has(word)) result.add(word);
     }
   }
-  return { words, phrases: [...phrases] };
-}
-
-/**
- * The names the cached Today read shows: today's exercises and title, the
- * week's day titles, the upcoming rows' titles. Only what is already on the
- * phone; nothing is read for this.
- */
-export function planVocabularyFrom(day: HealthDay | null | undefined): PlanVocabulary {
-  if (!day) return EMPTY_VOCABULARY;
-  const names: (string | null)[] = [];
-  const session = day.day?.session ?? null;
-  if (session) {
-    names.push(session.title);
-    for (const block of session.blocks ?? []) names.push(block.name);
-  }
-  for (const cell of day.week?.days ?? []) names.push(cell.title);
-  for (const row of day.upcoming ?? []) names.push(row.title);
-  return vocabularyOf(names);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
 // The rule
 
-function hasWord(words: readonly string[], set: ReadonlySet<string>): boolean {
-  return words.some((word) => set.has(word));
+/** True when the words ask to change the running plan (see the file comment). */
+export function planEditIntentMatches(text: string, vocabulary: readonly string[] = []): boolean {
+  const words = planEditTokens(text);
+  if (words.length === 0) return false;
+  const phrase = ` ${words.join(' ')} `;
+  const wordSet = new Set(words);
+  if (intersects(wordSet, BOOKING_WORDS)) return false;
+  const hasEditVerb =
+    intersects(wordSet, EDIT_VERBS) ||
+    containsAny(phrase, EDIT_PHRASES) ||
+    (wordSet.has('make') && containsAny(phrase, MAKE_TARGETS)) ||
+    (intersects(wordSet, ['mach', 'mache', 'gerdu']) && containsAny(phrase, MAKE_TARGETS));
+  // Advice: a question that asks for no change.
+  if (isQuestion(text, words, phrase) && !hasEditVerb) return false;
+
+  const vocabularyWords = vocabularyTokens(vocabulary);
+  const namesSomething =
+    intersects(wordSet, EXERCISE_WORDS) ||
+    intersects(wordSet, EQUIPMENT_WORDS) ||
+    containsAny(phrase, EXERCISE_PHRASES) ||
+    containsAny(phrase, EQUIPMENT_PHRASES) ||
+    intersects(wordSet, vocabularyWords);
+  const namesPlan = namesSomething || intersects(wordSet, PLAN_WORDS) || containsAny(phrase, PLAN_PHRASES);
+  if (hasEditVerb && namesPlan) return true;
+
+  // "I have dumbbells again": the equipment comes back.
+  const hasAgain =
+    intersects(wordSet, ['again', 'aftur', 'wieder']) && intersects(wordSet, ['have', 'got', 'med', 'habe', 'hab', 'hat', 'gibt']);
+  if (hasAgain && namesSomething) return true;
+
+  const saysDoesNotHave =
+    containsAny(phrase, DONT_HAVE_PHRASES) ||
+    (wordSet.has('no') && intersects(wordSet, ['gym', 'here'])) ||
+    (intersects(wordSet, ['kein', 'keine', 'keinen']) && intersects(wordSet, ['gym', 'studio', 'fitnessstudio', 'hier']));
+  return saysDoesNotHave && namesSomething;
 }
+
+// ---------------------------------------------------------------------------
+// The plan's own words
 
 /**
- * A typed word names one of the plan's words: the same word, or one that
- * differs only in its ending ("bekkpressu" for "Bekkpressa", "hnébeygjurnar"
- * for "Hnébeygja", "squats" for "squat"): both at least five letters, and
- * all but the last two letters of the shorter one shared.
+ * The names the cached Today read shows for the live plan (iOS
+ * `HealthStore.planVocabulary`): today's session title, its exercises and
+ * its pool alternative's, the week's day titles, the upcoming rows' titles.
+ * Only what is already on the phone; nothing is read for this.
  */
-export function namesVocabularyWord(words: readonly string[], vocabulary: PlanVocabulary): boolean {
-  for (const word of words) {
-    if (vocabulary.words.has(word)) return true;
-    if (word.length < 5) continue;
-    for (const known of vocabulary.words) {
-      if (known.length < 5) continue;
-      const shorter = Math.min(word.length, known.length);
-      let shared = 0;
-      while (shared < shorter && word[shared] === known[shared]) shared += 1;
-      if (shared >= 5 && shared >= shorter - 2) return true;
-    }
+export function planVocabularyFrom(day: HealthDay | null | undefined): string[] {
+  const program = day?.program;
+  if (!day || !program || (program.status !== 'active' && program.status !== 'paused')) return [];
+  const names: (string | null)[] = [];
+  const session = day.day?.session ?? null;
+  if (session) {
+    names.push(session.title);
+    for (const block of session.blocks ?? []) names.push(block.name);
+    for (const block of session.poolAlternative?.blocks ?? []) names.push(block.name);
   }
-  return false;
+  for (const cell of day.week?.days ?? []) names.push(cell.title);
+  for (const row of day.upcoming ?? []) names.push(row.title);
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of names) {
+    const name = raw?.trim() ?? '';
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    result.push(name);
+  }
+  return result;
 }
 
-function namesPlanThing(words: readonly string[], phrase: string, vocabulary: PlanVocabulary): boolean {
-  return (
-    hasWord(words, PLAN_OBJECT_WORDS) ||
-    hasPhrase(phrase, PLAN_OBJECT_PHRASES) ||
-    namesVocabularyWord(words, vocabulary) ||
-    hasPhrase(phrase, vocabulary.phrases)
-  );
-}
+// ---------------------------------------------------------------------------
+// Tables (folded, iOS's verbatim)
 
-function asksForChange(words: readonly string[], phrase: string, vocabulary: PlanVocabulary): boolean {
-  if (hasWord(words, EDIT_VERBS) || hasPhrase(phrase, EDIT_PHRASES)) return true;
-  if (!hasWord(words, MAKE_VERBS)) return false;
-  // "make it 4 sets", "make Thursday a rest day", "make squats 10x30".
-  return (
-    hasWord(words, MAKE_OBJECT_WORDS) ||
-    hasPhrase(phrase, MAKE_OBJECT_PHRASES) ||
-    words.some((word) => /^\d+x\d+$/.test(word)) ||
-    namesVocabularyWord(words, vocabulary) ||
-    hasPhrase(phrase, vocabulary.phrases)
-  );
-}
+/** Words in a title that say nothing about which day or exercise it is. */
+const VOCABULARY_STOPWORDS: ReadonlySet<string> = new Set([
+  'with', 'and', 'the', 'your', 'body', 'full', 'easy', 'hard', 'rest', 'strength',
+  'moderate', 'minutes', 'plan', 'this', 'that', 'from', 'workout', 'session',
+  'und', 'mit', 'oder', 'fur', 'dein', 'deine',
+  'med', 'fyrir', 'dagur', 'eftir',
+]);
 
-function saysDontHave(words: readonly string[], phrase: string): boolean {
-  if (hasPhrase(phrase, DONT_HAVE_PHRASES)) return true;
-  return hasWord(words, ABSENCE_WORDS) && hasPhrase(phrase, AT_MY_GYM_PHRASES);
-}
+/** Single-word edit verbs, EN / IS / DE, in the forms people type. */
+export const EDIT_VERBS: ReadonlySet<string> = new Set([
+  // English
+  'swap', 'swaps', 'swapping', 'swapped', 'replace', 'replaces', 'replacing', 'replaced',
+  'change', 'changes', 'changing', 'changed', 'switch', 'switching', 'switched',
+  'move', 'moves', 'moving', 'moved', 'add', 'adding', 'added',
+  'remove', 'removes', 'removing', 'removed', 'drop', 'dropping', 'dropped',
+  'rename', 'renaming', 'renamed', 'delete', 'instead', 'exchange', 'substitute',
+  'put', 'shorten', 'lengthen', 'reduce', 'increase', 'adjust', 'tweak', 'edit', 'modify',
+  // Icelandic
+  'skipta', 'skiptu', 'skipti', 'breyta', 'breyttu', 'breytt', 'faera', 'faerdu', 'faert',
+  'taktu', 'fjarlaegdu', 'fjarlaegja', 'baettu', 'settu', 'faekkadu', 'fjolgadu',
+  'lengdu', 'styttu', 'nefndu', 'adlaga', 'adlagadu', 'lagadu',
+  // German
+  'tauschen', 'tausch', 'tausche', 'ersetzen', 'ersetze', 'ersetz', 'statt', 'anstatt',
+  'andern', 'ander', 'andere', 'verschieben', 'verschieb', 'verschiebe',
+  'hinzufugen', 'fug', 'fuge', 'entfernen', 'entfern', 'entferne', 'streichen', 'streich',
+  'streiche', 'nimm', 'wechsel', 'wechseln', 'wechsle',
+  'umbenennen', 'reduzier', 'reduziere', 'erhoh', 'erhohe', 'anpassen',
+]);
 
-function namesEquipmentOrExercise(words: readonly string[], phrase: string, vocabulary: PlanVocabulary): boolean {
-  return hasWord(words, EQUIPMENT_WORDS) || hasPhrase(phrase, EQUIPMENT_PHRASES) || namesPlanThing(words, phrase, vocabulary);
-}
+/** What "make" (and "mach", "gerðu") changes when it is an edit: "make it 4 sets", "make Thursday a rest day". */
+const MAKE_TARGETS: readonly string[] = [
+  'rest day', 'ruhetag', 'hvildardag', 'hvildardegi', 'sets', 'reps', 'workout',
+  'shorter', 'longer', 'easier', 'harder', 'kurzer', 'langer', 'styttri', 'lengri',
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+];
 
-/** A question: it opens with a question word, or ends with "?" and has one. */
-function isQuestion(text: string, words: readonly string[], phrase: string): boolean {
-  if (words.length > 0 && QUESTION_WORDS.has(words[0]!)) return true;
-  if (hasPhrase(phrase, QUESTION_PHRASES) && phrase.startsWith(` ${QUESTION_PHRASES[0]} `)) return true;
-  return text.trim().endsWith('?') && (hasWord(words, QUESTION_WORDS) || hasPhrase(phrase, QUESTION_PHRASES));
-}
+/** Edit verbs of more than one word. */
+const EDIT_PHRASES: readonly string[] = [
+  'instead of', 'get rid of', 'take out', 'take off', 'switch out', 'swap out', 'make it',
+  'i stadinn fyrir', 'i stad', 'baeta vid', 'taka ut', 'taka af', 'setja inn',
+  'fuge hinzu', 'fug hinzu', 'nimm raus', 'raus nehmen', 'rausnehmen',
+];
 
-/** True when the words ask to change the running plan (see the file comment). */
-export function planEditIntentMatches(text: string, vocabulary: PlanVocabulary = EMPTY_VOCABULARY): boolean {
-  const words = tokens(text);
-  if (words.length === 0) return false;
-  const phrase = phraseOf(words);
-  const change = asksForChange(words, phrase, vocabulary);
-  // A question with no edit verb is the chat's ("how many sets should I do?",
-  // "hvaða æfing er góð fyrir bakið?", "Welche Übung ist gut für den Rücken?").
-  if (!change && isQuestion(text, words, phrase)) return false;
-  if (change && namesPlanThing(words, phrase, vocabulary)) return true;
-  return saysDontHave(words, phrase) && namesEquipmentOrExercise(words, phrase, vocabulary);
-}
+/** A day, the plan, or a part of a workout. */
+const PLAN_WORDS: ReadonlySet<string> = new Set([
+  // English
+  'exercise', 'exercises', 'workout', 'workouts', 'session', 'sessions', 'set', 'sets',
+  'rep', 'reps', 'routine', 'warmup', 'cardio', 'stretch', 'stretches', 'stretching',
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+  'mondays', 'tuesdays', 'wednesdays', 'thursdays', 'fridays', 'saturdays', 'sundays',
+  // Icelandic
+  'aefing', 'aefingu', 'aefingar', 'aefingum', 'aefingin', 'aefinguna', 'aefingunni',
+  'aefingarnar', 'aefinganna', 'sett', 'settin', 'settum', 'settunum', 'endurtekningar',
+  'endurtekningum', 'hvildardag', 'hvildardagur', 'hvildardaginn', 'hvildardegi',
+  'aaetlun', 'aaetlunin', 'aaetlunina', 'aaetluninni', 'aaetlunarinnar', 'upphitun',
+  'aefingaaaetlun', 'aefingaaaetlunin', 'aefingaaaetlunina', 'aefingaaaetluninni',
+  'aefingadag', 'aefingadagur', 'aefingadaginn', 'aefingadegi',
+  'manudag', 'manudagur', 'manudaginn', 'thridjudag', 'thridjudagur', 'thridjudaginn',
+  'midvikudag', 'midvikudagur', 'midvikudaginn', 'fimmtudag', 'fimmtudagur', 'fimmtudaginn',
+  'fostudag', 'fostudagur', 'fostudaginn', 'laugardag', 'laugardagur', 'laugardaginn',
+  'sunnudag', 'sunnudagur', 'sunnudaginn',
+  // German
+  'ubung', 'ubungen', 'satz', 'satze', 'wiederholungen', 'ruhetag', 'ruhetage', 'trainingsplan',
+  'training', 'trainingstag', 'einheit', 'aufwarmen',
+  'montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag', 'sonntag',
+  'montags', 'dienstags', 'mittwochs', 'donnerstags', 'freitags', 'samstags', 'sonntags',
+]);
+
+const PLAN_PHRASES: readonly string[] = [
+  'rest day', 'rest days', 'training day', 'training days', 'leg day', 'push day', 'pull day',
+  'warm up', 'my plan', 'the plan', 'this plan', 'my training', 'my routine',
+  'meinen plan', 'mein plan', 'den plan', 'meinem plan', 'dem plan',
+];
+
+/** Exercise names people type without the plan in front of them. */
+const EXERCISE_WORDS: ReadonlySet<string> = new Set([
+  // English
+  'bench', 'squat', 'squats', 'deadlift', 'deadlifts', 'curl', 'curls', 'press', 'presses',
+  'row', 'rows', 'pullup', 'pullups', 'pushup', 'pushups', 'chinup', 'chinups', 'plank',
+  'planks', 'lunge', 'lunges', 'dips', 'pushdown', 'pushdowns', 'fly', 'flys',
+  'flyes', 'flies', 'raise', 'raises', 'burpees', 'crunches', 'situps', 'pulldown',
+  'pulldowns', 'kickback', 'kickbacks', 'thrust', 'thrusts', 'handstand', 'lsit', 'kickups',
+  // Icelandic
+  'hnebeygja', 'hnebeygjur', 'hnebeygju', 'bekkpressa', 'bekkpressu', 'armbeygjur',
+  'armbeygju', 'upphifingar', 'upphifingum', 'rettstoduloft', 'uthrysting', 'planki',
+  'planka', 'framstig',
+  // German
+  'bankdrucken', 'kniebeuge', 'kniebeugen', 'kreuzheben', 'klimmzug', 'klimmzuge',
+  'liegestutz', 'liegestutze', 'rudern', 'ausfallschritte', 'seitheben', 'bizepscurls',
+]);
+
+const EXERCISE_PHRASES: readonly string[] = [
+  'pull up', 'pull ups', 'push up', 'push ups', 'chin up', 'chin ups', 'sit ups',
+  'bench press', 'leg press', 'lat pulldown', 'hip thrust',
+];
+
+/** Equipment, for "I don't have ...". */
+const EQUIPMENT_WORDS: ReadonlySet<string> = new Set([
+  // English
+  'machine', 'machines', 'cable', 'cables', 'dumbbell', 'dumbbells', 'barbell', 'barbells',
+  'kettlebell', 'kettlebells', 'band', 'bands', 'rack', 'treadmill', 'rower', 'equipment',
+  'weights', 'parallettes', 'rings',
+  // Icelandic
+  'velina', 'velar', 'velarnar', 'kapalvel', 'kapalvelina', 'kapalvelar', 'handlod',
+  'handlodin', 'handlodum', 'stong', 'stongina', 'stongum', 'lod', 'lodin', 'ketilbjalla',
+  'ketilbjollu', 'ketilbjollur', 'teygja', 'teygju', 'teygjur', 'bekk', 'bekkinn', 'bunad',
+  'bunadinn', 'bunadur', 'bunadurinn', 'fotapressa', 'fotapressu',
+  // German
+  'maschine', 'maschinen', 'kabel', 'kabelzug', 'kurzhantel', 'kurzhanteln', 'langhantel',
+  'langhanteln', 'hantel', 'hanteln', 'bander', 'bank', 'beinpresse', 'gerat', 'gerate',
+  'latzug', 'klimmzugstange', 'stange',
+]);
+
+const EQUIPMENT_PHRASES: readonly string[] = [
+  'pull up bar', 'cable machine', 'smith machine', 'resistance band', 'resistance bands',
+];
+
+/** "I don't have", "there's no", "ég er ekki með", "Ich habe keine". */
+const DONT_HAVE_PHRASES: readonly string[] = [
+  'dont have', 'do not have', 'doesnt have', 'does not have', 'havent got', 'have not got',
+  'dont got', 'have no', 'has no', 'theres no', 'there is no', 'there are no', 'no longer have',
+  'ekki med', 'engin', 'enginn', 'ekkert', 'eg a ekki', 'ekki til',
+  'habe keine', 'habe keinen', 'habe kein', 'hab keine', 'hab keinen', 'hab kein',
+  'gibt es kein', 'gibt es keine', 'gibt es keinen', 'gibt kein', 'gibt keine', 'gibt keinen',
+  'hat keine', 'hat keinen', 'hat kein',
+];
+
+/** The words a question opens with. A question without an edit verb is advice for the chat. */
+const QUESTION_STARTERS: ReadonlySet<string> = new Set([
+  'how', 'what', 'which', 'why', 'should', 'whats', 'when', 'where', 'is', 'are',
+  'can', 'could', 'do', 'does',
+  'hvada', 'hvernig', 'hvad', 'hvers', 'hvenaer', 'hvar', 'aetti', 'get', 'ma',
+  'welche', 'welcher', 'welches', 'wie', 'was', 'warum', 'soll', 'sollte', 'wann', 'wo',
+  'kann', 'kannst', 'ist', 'sind',
+]);
+
+/** A booking is not the plan. */
+const BOOKING_WORDS: ReadonlySet<string> = new Set([
+  'book', 'booking', 'bookings', 'booked', 'reservation', 'reserve',
+  'boka', 'bokun', 'bokunin', 'bokunina', 'bokuninni', 'bokunar', 'bokanir', 'bokadu',
+  'buchen', 'buchung', 'buche', 'reservieren',
+]);

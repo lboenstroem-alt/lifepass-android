@@ -138,16 +138,17 @@ describe('the guard track runs', () => {
     expect(refusedParams({ value: 72.5 })).toEqual(['value']);
   });
 
-  it('the plan-change events (COACH-6) carry band words and problem codes, never a number or the words typed', () => {
+  it('the plan-change events (COACH-6) carry band words, fixed choices and problem codes, never a number or the words typed', () => {
     const names: readonly string[] = ANALYTICS_EVENTS;
     for (const name of ['plan_edit_sent', 'plan_edit_preview', 'plan_edit_applied', 'plan_edit_undone', 'plan_edit_cancelled', 'plan_edit_error']) {
       expect(names).toContain(name);
     }
-    expect(refusedParams({ kind: 'preview', ops: '2-5', variants: 'one' })).toEqual([]);
-    expect(refusedParams({ ops: '6+', variants: 'none' })).toEqual([]);
-    expect(refusedParams({ code: 'plan_edit_limit' })).toEqual([]);
-    expect(refusedParams({ ops: 3 })).toEqual(['ops']);
-    expect(refusedParams({ variants: '2' })).toEqual(['variants']);
+    expect(refusedParams({ kind: 'preview', items: '2-5', count_band: 'one' })).toEqual([]);
+    expect(refusedParams({ items: '6+', count_band: 'none' })).toEqual([]);
+    expect(refusedParams({ choice: 'own' })).toEqual([]);
+    expect(refusedParams({ entry: 'changes' })).toEqual([]);
+    expect(refusedParams({ reason: 'plan_edit_limit' })).toEqual([]);
+    expect(refusedParams({ items: 3 })).toEqual(['items']);
     expect(refusedParams({ message: 'swap bench press' })).toEqual(['message']);
   });
 

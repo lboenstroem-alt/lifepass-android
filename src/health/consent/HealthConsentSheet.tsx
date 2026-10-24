@@ -332,7 +332,7 @@ function ConsentPresentation({ visible, entry, onClose, onGranted, onOpenAccount
             <IconLine icon="remove-circle-outline" text={t('healthconsent.ai.never_numbers')} />
             <IconLine
               icon="remove-circle-outline"
-              text={t(supportsPlanEdit ? 'healthconsent.ai.never_text_plan_edit' : 'healthconsent.ai.never_text')}
+              text={t(supportsPlanEdit ? 'healthconsent.ai.never_text_v4' : 'healthconsent.ai.never_text')}
             />
             <IconLine icon="remove-circle-outline" text={t('healthconsent.ai.never_location')} />
             <IconLine icon="camera-outline" text={t('healthconsent.ai.photo')} />

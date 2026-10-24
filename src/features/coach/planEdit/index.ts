@@ -5,7 +5,7 @@
  * and the card's line rules. Nothing here loads the Coach's store or a
  * screen.
  */
-export { fetchPlanEdits, planEditFailureCopyKey, planEditUndoFailure, type PlanEditUndoFailure } from './api';
+export { fetchPlanEdits, isMissingRoute, planEditProblem, type PlanEditProblem } from './api';
 export { usePlanEditOffered } from './availability';
 export { announceUndone, isUndoable, undoEdit } from './undo';
 export type { PlanEditChangeGroup, PlanEditChangeItem, PlanEditView } from './types';

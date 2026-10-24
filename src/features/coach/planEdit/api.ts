@@ -46,24 +46,52 @@ export const PLAN_EDIT_TIMEOUT_MS = 32_000;
 export const PLAN_EDIT_MIN_LENGTH = 2;
 export const PLAN_EDIT_MAX_LENGTH = 500;
 
-/** Control characters other than whitespace (the server strips them; tabs and newlines become spaces). */
-const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
+/** Control characters (iOS `CharacterSet.controlCharacters`, C0 and C1). */
+const CONTROL = /[\u0000-\u001F\u007F-\u009F]/g;
 const WHITESPACE = /\s+/g;
 
 /**
- * The server's `cleanPlanEditText`: NFC, control characters stripped,
- * whitespace collapsed, trimmed. Sent as cleaned, so the phone and the
- * server count the same characters (and a retry of the same words hashes the
- * same).
+ * The server's `cleanPlanEditText` (iOS `PlanEditText.cleaned`): NFC, every
+ * control character a space, whitespace collapsed, trimmed. Sent as
+ * cleaned, so the phone and the server count the same characters (and a
+ * retry of the same words hashes the same). The count is JavaScript's (UTF-16
+ * code units), the server's own.
  */
 export function cleanPlanEditText(text: string): string {
-  return text.normalize('NFC').replace(CONTROL, '').replace(WHITESPACE, ' ').trim();
+  return text.normalize('NFC').replace(CONTROL, ' ').replace(WHITESPACE, ' ').trim();
 }
 
 /** Words the server would take: 2 to 500 characters once cleaned. */
 export function isPlanEditSendable(text: string): boolean {
   const cleaned = cleanPlanEditText(text);
   return cleaned.length >= PLAN_EDIT_MIN_LENGTH && cleaned.length <= PLAN_EDIT_MAX_LENGTH;
+}
+
+/** Cleaned and cut to `limit` between whole characters (iOS `PlanEditText.capped`). */
+export function capPlanEditText(text: string, limit: number = PLAN_EDIT_MAX_LENGTH): string {
+  const clean = cleanPlanEditText(text);
+  if (clean.length <= limit) return clean;
+  let result = '';
+  for (const character of clean) {
+    if (result.length + character.length > limit) break;
+    result += character;
+  }
+  return result.trim();
+}
+
+/**
+ * The answer to a question the Coach asked, sent together with the request
+ * it asked about, so the model reads both: the server keeps no
+ * conversation, and "Bench press" alone means nothing. The original is cut
+ * if the two do not fit (iOS `PlanEditText.answer`).
+ */
+export function answerPlanEditQuestion(answer: string, original: string): string {
+  const reply = cleanPlanEditText(answer);
+  const first = cleanPlanEditText(original);
+  if (!first) return capPlanEditText(reply);
+  const room = PLAN_EDIT_MAX_LENGTH - reply.length - 1;
+  if (room <= 0) return capPlanEditText(reply);
+  return capPlanEditText(`${capPlanEditText(first, room)} ${reply}`);
 }
 
 /** OP-58's body (strict on the server: no other key). */
@@ -157,36 +185,43 @@ export function fetchPlanEdits(programId: string, language: Lang): Promise<reado
 // Refusals
 
 /**
- * What a failed OP-58 means for the chat. `passOn` is not a failure the
- * member sees: the words go on through the Coach as if this step never ran
- * (the route has gone, or the words are not ones it takes).
+ * Every refusal the plan-change routes give, as the Coach answers it (iOS
+ * `PlanEditProblem`). One table for OP-58 to OP-61: each caller picks what
+ * applies to it.
  */
-export type PlanEditSendFailure =
-  /** 409 `plan_edit_consent_required`: the one-tap consent, then the same words with the same key. */
-  | 'consent'
-  /** 422 `plan_edit_personal_data`: nothing was sent, nothing spent. */
-  | 'personalData'
-  /** 429 `plan_edit_limit` (daily or attempts: the same words). */
-  | 'limit'
-  /** 503 `plan_edit_paused`. */
-  | 'paused'
-  /** 502 `coach_upstream_error`: the model failed (refunded). Retry with a new key. */
-  | 'upstream'
-  /** 409 `program_action_not_allowed` `not_live`, or the plan is gone. */
-  | 'notLive'
+export type PlanEditProblem =
+  /** 409 `plan_edit_consent_required` (the v4 text), or consent gone: the one-tap consent, then the same words. */
+  | { readonly kind: 'consentNeeded' }
+  | { readonly kind: 'personalData' }
+  /** 429 `plan_edit_limit` (`daily` or `attempts`: the same words). */
+  | { readonly kind: 'limit' }
+  /** 503 `plan_edit_paused`: the fleet's daily ceiling. */
+  | { readonly kind: 'servicePaused' }
+  /** 502 `coach_upstream_error`: refunded, so Retry sends a new key. */
+  | { readonly kind: 'upstream' }
+  /** 409 `plan_edit_stale` or 404 `plan_edit_not_found` at Apply. */
+  | { readonly kind: 'stale' }
+  | { readonly kind: 'confirmRequired' }
+  /** 409 `plan_edit_not_pending` with its reason (`applied`, `undone`, `discarded`, `superseded`). */
+  | { readonly kind: 'notPending'; readonly reason: string | null }
+  | { readonly kind: 'undoWindow' }
+  | { readonly kind: 'undoChanged' }
+  /** 409 `program_action_not_allowed` `not_live`. */
+  | { readonly kind: 'notLive' }
   /** 409 `program_action_not_allowed` `paused`. */
-  | 'planPaused'
-  /** No connection, or no answer in time: the Coach's own offline words. */
-  | 'offline'
-  | 'rateLimited'
-  /** A 404 that is not a problem, or 400 `invalid-plan-edit`: the words go on through the Coach. */
-  | 'passOn'
-  /** The gate, consent withdrawn, a pending deletion, a minor: every health screen's own rules. */
-  | 'refused'
-  | 'other';
-
-/** The rules every health screen answers itself (src/health/store.ts `handle`). */
-const HEALTH_GATE_PROBLEMS = ['no_active_plan_or_pass', 'health_consent_required', 'account_pending_deletion', 'health_minor_blocked'];
+  | { readonly kind: 'planPaused' }
+  /** 404 `health_program_not_found`. */
+  | { readonly kind: 'programGone' }
+  /** The route is missing (a 404 that is no problem, or `not_found`): the server stopped offering it. */
+  | { readonly kind: 'featureOff' }
+  | { readonly kind: 'keyReused' }
+  | { readonly kind: 'rateLimited' }
+  /** No connection, or no answer in time. */
+  | { readonly kind: 'offline' }
+  | { readonly kind: 'pendingDeletion' }
+  | { readonly kind: 'notMember' }
+  | { readonly kind: 'minor' }
+  | { readonly kind: 'other' };
 
 /**
  * A 404 that is NOT a problem document: the route is not on this server (a
@@ -197,116 +232,55 @@ export function isMissingRoute(error: ApiError): boolean {
   return error instanceof HttpStatusError && error.httpStatus === 404;
 }
 
-export function planEditSendFailure(error: ApiError): PlanEditSendFailure {
-  // A timeout too: the Coach says what it says for no connection.
-  if (error.isOffline) return 'offline';
-  if (error.isProblem('plan_edit_consent_required')) return 'consent';
-  if (error.isProblem('plan_edit_personal_data')) return 'personalData';
-  if (error.isProblem('plan_edit_limit')) return 'limit';
-  if (error.isProblem('plan_edit_paused')) return 'paused';
-  if (error.isProblem('coach_upstream_error')) return 'upstream';
-  if (error.isProblem('program_action_not_allowed')) return error.reason === 'paused' ? 'planPaused' : 'notLive';
-  if (error.isProblem('health_program_not_found')) return 'notLive';
-  // The route is invisible (the flag went off), or the words are not ones it takes.
-  if (error.isProblem('invalid-plan-edit', 'not_found')) return 'passOn';
-  if (error.isProblem('rate_limited', 'rate-limited')) return 'rateLimited';
-  if (error.isProblem(...HEALTH_GATE_PROBLEMS)) return 'refused';
-  if (isMissingRoute(error)) return 'passOn';
-  if ((error.status ?? 0) >= 500) return 'upstream';
-  return 'other';
-}
-
-/** What a failed Apply means for the card. */
-export type PlanEditApplyFailure =
-  /** 409 `plan_edit_stale` or 404 `plan_edit_not_found`: "Your plan changed since I suggested this. Ask me again." */
-  | 'stale'
-  /** 409 `plan_edit_confirm_required`: the cycle dialog first. */
-  | 'confirmRequired'
-  /** 409 `plan_edit_not_pending` `applied`: it was applied already (another phone): the card says Changed. */
-  | 'alreadyApplied'
-  | 'notLive'
-  | 'planPaused'
-  | 'offline'
-  | 'rateLimited'
-  | 'refused'
-  | 'other';
-
-export function planEditApplyFailure(error: ApiError): PlanEditApplyFailure {
-  if (error.isOffline) return 'offline';
-  if (error.isProblem('plan_edit_confirm_required')) return 'confirmRequired';
-  if (error.isProblem('plan_edit_stale', 'plan_edit_not_found')) return 'stale';
-  if (error.isProblem('plan_edit_not_pending')) return error.reason === 'applied' ? 'alreadyApplied' : 'stale';
-  if (error.isProblem('program_action_not_allowed')) return error.reason === 'paused' ? 'planPaused' : 'notLive';
-  if (error.isProblem('health_program_not_found')) return 'notLive';
-  if (error.isProblem('rate_limited', 'rate-limited')) return 'rateLimited';
-  if (error.isProblem(...HEALTH_GATE_PROBLEMS)) return 'refused';
-  return 'other';
-}
-
-/** What a failed Undo means for the card and the Changes list. */
-export type PlanEditUndoFailure =
-  /** 409 `plan_edit_undo_unavailable` `window_closed`. */
-  | 'undoWindow'
-  /** 409 `plan_edit_undo_unavailable` `plan_changed` or `later_edit`. */
-  | 'undoChanged'
-  /** 409 `plan_edit_not_pending` `undone`: it was undone already: the card says Undone. */
-  | 'alreadyUndone'
-  | 'offline'
-  | 'rateLimited'
-  | 'refused'
-  | 'other';
-
-export function planEditUndoFailure(error: ApiError): PlanEditUndoFailure {
-  if (error.isOffline) return 'offline';
-  if (error.isProblem('plan_edit_undo_unavailable')) return error.reason === 'window_closed' ? 'undoWindow' : 'undoChanged';
-  if (error.isProblem('plan_edit_not_pending')) return error.reason === 'undone' ? 'alreadyUndone' : 'undoChanged';
-  if (error.isProblem('plan_edit_not_found', 'health_program_not_found')) return 'undoChanged';
-  if (error.isProblem('rate_limited', 'rate-limited')) return 'rateLimited';
-  if (error.isProblem(...HEALTH_GATE_PROBLEMS)) return 'refused';
-  return 'other';
-}
-
-/** The copy key a failure shows (null: the caller words it, or nothing is said). */
-export function planEditFailureCopyKey(
-  failure: PlanEditSendFailure | PlanEditApplyFailure | PlanEditUndoFailure,
-): string | null {
-  switch (failure) {
-    case 'personalData':
-      return 'coach.planEdit.error.personalData';
-    case 'limit':
-      return 'coach.planEdit.error.limit';
-    case 'paused':
-      return 'coach.planEdit.error.paused';
-    case 'upstream':
-      return 'coach.planEdit.error.upstream';
-    case 'stale':
-      return 'coach.planEdit.error.stale';
-    case 'notLive':
-      return 'coach.planEdit.error.notLive';
-    case 'planPaused':
-      return 'coach.planEdit.error.planPaused';
-    case 'undoWindow':
-      return 'coach.planEdit.error.undoWindow';
-    case 'undoChanged':
-      return 'coach.planEdit.error.undoChanged';
-    case 'rateLimited':
-      return 'health.err.rate_limited';
-    case 'other':
-      return 'coach.planEdit.error.upstream';
-    case 'offline':
-    case 'consent':
-    case 'confirmRequired':
-    case 'alreadyApplied':
-    case 'alreadyUndone':
-    case 'passOn':
-    case 'refused':
-      return null;
+/** What a refusal means (iOS `PlanEditProblem.classify`). */
+export function planEditProblem(error: ApiError): PlanEditProblem {
+  if (error.isOffline) return { kind: 'offline' };
+  if (isMissingRoute(error)) return { kind: 'featureOff' };
+  switch (error.normalisedCode) {
+    case 'plan_edit_consent_required':
+    case 'health_consent_required':
+      return { kind: 'consentNeeded' };
+    case 'plan_edit_personal_data':
+      return { kind: 'personalData' };
+    case 'plan_edit_limit':
+      return { kind: 'limit' };
+    case 'plan_edit_paused':
+      return { kind: 'servicePaused' };
+    case 'coach_upstream_error':
+      return { kind: 'upstream' };
+    case 'plan_edit_stale':
+    case 'plan_edit_not_found':
+      return { kind: 'stale' };
+    case 'plan_edit_confirm_required':
+      return { kind: 'confirmRequired' };
+    case 'plan_edit_not_pending':
+      return { kind: 'notPending', reason: error.reason ?? null };
+    case 'plan_edit_undo_unavailable':
+      return { kind: error.reason === 'window_closed' ? 'undoWindow' : 'undoChanged' };
+    case 'program_action_not_allowed':
+      return { kind: error.reason === 'paused' ? 'planPaused' : 'notLive' };
+    case 'health_program_not_found':
+      return { kind: 'programGone' };
+    case 'not_found':
+      return { kind: 'featureOff' };
+    case 'idempotency_key_reused':
+      return { kind: 'keyReused' };
+    case 'rate_limited':
+      return { kind: 'rateLimited' };
+    case 'account_pending_deletion':
+      return { kind: 'pendingDeletion' };
+    case 'no_active_plan_or_pass':
+      return { kind: 'notMember' };
+    case 'health_minor_blocked':
+      return { kind: 'minor' };
+    default:
+      return (error.status ?? 0) >= 500 ? { kind: 'upstream' } : { kind: 'other' };
   }
 }
 
-/** `plan_edit_error.code`: fixed words, never the member's. */
-export function planEditErrorCode(error: unknown): string {
-  if (!isApiError(error)) return 'client';
+/** `plan_edit_error.reason`: fixed words, never the member's (iOS: the problem code, or `offline`). */
+export function planEditErrorReason(error: unknown): string {
+  if (!isApiError(error)) return 'unknown';
   if (error.isOffline) return 'offline';
   return error.normalisedCode.replace(/[^a-z_]/g, '').slice(0, 40) || 'unknown';
 }

@@ -13,7 +13,7 @@
  */
 import type { Feeling, ProgramSummary, SessionBrief, SessionStatusView } from '../../../health';
 import { duration, integer, decimal, longDay, weekdayAbbreviation } from '../../../i18n/format';
-import { pluralKey, type Lang, type Params } from '../../../i18n';
+import type { Lang, Params } from '../../../i18n';
 import { statusWord } from '../week/weekRules';
 
 export type Translate = (key: string, params?: Params) => string;
@@ -53,8 +53,9 @@ export function cycleDaysLine(
   lang: Lang,
 ): string {
   const days = program.cycleDays;
-  if (days === null || days < 1) return t('plan.overview.days', { days: weekdayList(program.trainingDays, lang) });
-  return t(pluralKey('plan.overview.cycle_days', days, lang), { count: integer(days, lang) });
+  // A cycle is 2 to 14 days (a CHECK on the server), so one plural form.
+  if (days === null || days < 2) return t('plan.overview.days', { days: weekdayList(program.trainingDays, lang) });
+  return t('plan.overview.cycle', { count: integer(days, lang) });
 }
 
 /**

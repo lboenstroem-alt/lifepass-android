@@ -195,7 +195,7 @@ describe('the empty state', () => {
     await renderCoach();
     expect(screen.queryByRole('button', { name: en('coach.chip.adjust_plan') })).toBeNull();
     await fireEvent.press(screen.getByTestId('coach.chip.planEdit'));
-    expect(screen.getByText(en('coach.planEdit.prompt'))).toBeOnTheScreen();
+    expect(screen.getByText(en('coach.planEdit.ask'))).toBeOnTheScreen();
     expect(api.sentAll('/coach')).toHaveLength(0);
   });
 

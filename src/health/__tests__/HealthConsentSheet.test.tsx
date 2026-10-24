@@ -256,7 +256,7 @@ it('a server that changes plans by chat (COACH-6): the plan-change line and its 
   api.on('POST', '/profile/health-consent', Reply.ok({ optedIn: true, version: '2026-09-v4', consentedAt: null, ageSource: 'kennitala' }));
   await render(<Harness />);
   expect(screen.getByText(en('healthconsent.ai.plan_edit'))).toBeOnTheScreen();
-  expect(screen.getByText(en('healthconsent.ai.never_text_plan_edit'))).toBeOnTheScreen();
+  expect(screen.getByText(en('healthconsent.ai.never_text_v4'))).toBeOnTheScreen();
   expect(screen.queryByText(en('healthconsent.ai.never_text'))).toBeNull();
   // v4 is v3 and one line more: the description line stays.
   expect(screen.getByText(en('healthconsent.ai.describe'))).toBeOnTheScreen();

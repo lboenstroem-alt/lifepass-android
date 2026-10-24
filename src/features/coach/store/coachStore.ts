@@ -45,6 +45,7 @@ import { parseVenuePayload, resolveVenueCards, venuesReplyAsText } from '../chat
 import { adjustFlow } from '../flows/adjust';
 import { dayPlanFlow } from '../flows/dayPlan';
 import { planEditFlow } from '../flows/planEdit';
+import { offersPlanEdit } from '../planEdit/availability';
 import { programFlow } from '../flows/program';
 import {
   PASSED_RESUMES_AT,
@@ -529,7 +530,19 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
 
       // The daily cap and the free allowance only lock the AI path; the
       // flows above never call the model on typed words, so they still work.
-      if (isAILocked(get())) return;
+      // While the plan can be changed in chat the input stays open (the lock
+      // does not cover that), so words meant for the chat are answered with
+      // the lock rather than dropped (iOS `send`).
+      if (isAILocked(get())) {
+        if (offersPlanEdit()) {
+          const state = get();
+          append(
+            { role: 'user', text: trimmed },
+            { role: 'assistant', text: tr(state.freeLimitReached ? 'coach.input.free_limit' : 'coach.input.limit_reached') },
+          );
+        }
+        return;
+      }
 
       append({ role: 'user', text: trimmed });
       await callAI();

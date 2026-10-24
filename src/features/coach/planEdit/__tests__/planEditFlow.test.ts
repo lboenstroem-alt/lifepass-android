@@ -12,19 +12,21 @@ import { api, Reply, type StubReply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { decodeHealthDay, useHealthStore } from '../../../../health';
-import { lookup, setCurrentLanguage } from '../../../../i18n';
+import { lookup, setCurrentLanguage, translate } from '../../../../i18n';
 import { setAnalyticsObserver, type AnalyticsParams } from '../../../../lib/analytics';
 import { useAppStore } from '../../../../stores/appStore';
 import { resetIntentStoreForTests, useIntentStore } from '../../../../stores/intentStore';
 import { pendingCoachSaves, resetCoachStoreForTests, useCoachStore } from '../../store/coachStore';
 import { isOpenQuestion, type CoachMessage } from '../../store/messages';
+import { setProgramContextForTests } from '../../program/context';
 import { setPlanEditAvailabilityForTests } from '../availability';
 import {
   applyCard,
   cancelCard,
+  declineConsentFor,
   grantConsentFor,
   PlanEditMessageKind,
-  planEditStateForTests,
+  planEditThreadForTests,
   resetPlanEdit,
   selectVariant,
   setPlanEditDepsForTests,
@@ -109,6 +111,7 @@ beforeEach(() => {
   setPlanEditDepsForTests({ makeKey: () => `key-${(keys += 1)}`, grant });
   grant.mockClear();
   setPlanEditAvailabilityForTests({ kind: 'available', programId: PROGRAM_ID, program: DAY.program, day: DAY });
+  setProgramContextForTests({ access: 'entitled', hasConsent: true, hasLiveProgram: true, supportsPlanRevision: true, liveProgram: DAY.program });
   useAppStore.setState({ serverFeatures: ['plan_edit', 'plan_revision'] });
   useHealthStore.setState({ load });
   load.mockClear();
@@ -123,6 +126,7 @@ beforeEach(() => {
 afterEach(async () => {
   setAnalyticsObserver(null);
   setPlanEditAvailabilityForTests(null);
+  setProgramContextForTests(null);
   setPlanEditDepsForTests({ makeKey: null, grant: null });
   useHealthStore.setState({ load: realLoad });
   resetPlanEdit();
@@ -152,7 +156,7 @@ describe('typed words that ask to change the plan', () => {
     expect(api.sentAll('/coach')).toHaveLength(0);
 
     expect(events.map((e) => e.event)).toEqual(['plan_edit_sent', 'plan_edit_preview']);
-    expect(events[1]!.params).toEqual({ kind: 'preview', ops: '2-5', variants: 'one' });
+    expect(events[1]!.params).toEqual({ kind: 'preview', items: '2-5', count_band: 'one' });
   });
 
   it('that are no plan change go on to the chat: one member bubble, not a health one, and no plan-edit bubble in its history', async () => {
@@ -218,7 +222,7 @@ describe('typed words that ask to change the plan', () => {
 });
 
 describe('a clarifying question', () => {
-  it('shows its choices, and a tap sends the choice\'s words', async () => {
+  it("shows its choices, and a tap sends the choice's words with the request they answer", async () => {
     answerEdits(
       Reply.ok(responseJson({ kind: 'clarify', reply: null, variants: [], question: { text: 'Which press?', choices: ['Bench press', 'Shoulder press'] } })),
       Reply.ok(responseJson()),
@@ -229,7 +233,8 @@ describe('a clarifying question', () => {
     expect(question.options?.map((o) => o.label)).toEqual(['Bench press', 'Shoulder press']);
 
     await coach().selectOption(question.id, question.options![0]!.value, 'Bench press');
-    expect(sentEdits()[1]!.body).toEqual({ message: 'Bench press', locale: 'en' });
+    // The server keeps no conversation: the answer travels with its request.
+    expect(sentEdits()[1]!.body).toEqual({ message: 'swap the press for something else Bench press', locale: 'en' });
     expect(messages().filter((m) => m.role === 'user').map((m) => m.text)).toEqual(['swap the press for something else', 'Bench press']);
     expect(card().status).toBe('pending');
   });
@@ -240,10 +245,10 @@ describe('a clarifying question', () => {
       Reply.ok(responseJson()),
     );
     await coach().send('swap the press for something else');
-    expect(planEditStateForTests().openClarify).not.toBeNull();
+    expect(planEditThreadForTests()?.questionFor).toBe('swap the press for something else');
     await coach().send('the Thursday one');
     expect(sentEdits()).toHaveLength(2);
-    expect(sentEdits()[1]!.body).toEqual({ message: 'the Thursday one', locale: 'en' });
+    expect(sentEdits()[1]!.body).toEqual({ message: 'swap the press for something else the Thursday one', locale: 'en' });
   });
 
   it('a suggestion offers Adjust my plan or a new plan as a chip', async () => {
@@ -259,7 +264,19 @@ describe('a clarifying question', () => {
       ),
     );
     await coach().send('change my plan so I lose weight');
-    expect(openBubble().options?.map((o) => o.label)).toEqual([en('program.adjust.opt.new_plan')]);
+    expect(openBubble().options?.map((o) => o.label)).toEqual([en('program.chip.make_new')]);
+  });
+
+  it('Adjust my plan is offered only on a plan that can be adjusted (never a custom one)', async () => {
+    const answer = (suggestion: string) =>
+      Reply.ok(responseJson({ kind: 'clarify', reply: null, variants: [], question: { text: 'Change the goal?', choices: [] }, suggestion }));
+    answerEdits(answer('adjust_plan'));
+    await coach().send('change my plan to 3 days a week');
+    expect(openBubble().options?.map((o) => o.label)).toEqual([en('coach.chip.adjust_plan')]);
+    setProgramContextForTests({ access: 'entitled', hasConsent: true, hasLiveProgram: true, supportsPlanRevision: true, liveProgram: { ...DAY.program!, custom: true } });
+    answerEdits(answer('adjust_plan'));
+    await coach().send('change my plan to 3 days a week');
+    expect(openBubble().options?.map((o) => o.label)).toEqual([en('program.chip.make_new')]);
   });
 });
 
@@ -276,9 +293,9 @@ describe('nothing to change', () => {
       ),
     );
     await coach().send('swap the exercises in my yoga workout');
-    const [reply, notice] = messages().slice(-2);
-    expect(reply!.text).toBe("I couldn't do that.");
-    expect(notice).toMatchObject({ kind: PlanEditMessageKind.notice, payload: { lines: ['A class day has no exercises to swap.'] } });
+    expect(messages()[messages().length - 1]!.text).toBe("I couldn't do that.\nA class day has no exercises to swap.");
+    // Nothing is open: the next words are not taken as a refinement.
+    expect(planEditThreadForTests()?.takesWords).toBe(false);
   });
 });
 
@@ -292,10 +309,10 @@ describe('the refusals', () => {
     await coach().send('swap bench press for push-ups');
     expect(messages()[messages().length - 1]!.text).toBe(en(key));
     expect(messages()[messages().length - 2]).toMatchObject({ role: 'user', text: 'swap bench press for push-ups', isHealth: true });
-    expect(events.find((e) => e.event === 'plan_edit_error')?.params).toEqual({ code: slug });
+    expect(events.find((e) => e.event === 'plan_edit_error')?.params).toEqual({ reason: slug });
   });
 
-  it('a failed answer offers Retry, which sends the same words under a new key, under the same bubble', async () => {
+  it('a failed answer offers Try again, which sends the same words under a new key', async () => {
     answerEdits(Reply.problem(502, 'coach_upstream_error'), Reply.ok(responseJson()));
     await coach().send('swap bench press for push-ups');
     const retry = openBubble();
@@ -303,8 +320,32 @@ describe('the refusals', () => {
     await coach().selectOption(retry.id, retry.options![0]!.value, en('coach.planEdit.retry'));
     expect(sentEdits().map((r) => r.headers['idempotency-key'])).toEqual(['key-1', 'key-2']);
     expect(sentEdits()[1]!.body).toEqual({ message: 'swap bench press for push-ups', locale: 'en' });
-    expect(messages().filter((m) => m.role === 'user')).toHaveLength(1);
+    expect(messages().filter((m) => m.role === 'user').map((m) => m.text)).toEqual(['swap bench press for push-ups', en('coach.planEdit.retry')]);
     expect(card().status).toBe('pending');
+  });
+
+  it('no connection offers Try again under the SAME key (a request that arrived is answered again for free)', async () => {
+    answerEdits(Reply.fail(), Reply.ok(responseJson()));
+    await coach().send('swap bench press for push-ups');
+    const retry = openBubble();
+    await coach().selectOption(retry.id, retry.options![0]!.value, en('coach.planEdit.retry'));
+    expect(sentEdits().map((r) => r.headers['idempotency-key'])).toEqual(['key-1', 'key-1']);
+    expect(card().status).toBe('pending');
+  });
+
+  it('an answer this build does not know is taken as no plan change: the chat has the words', async () => {
+    answerEdits(Reply.ok({ kind: 'teleport', reply: 'Beam me up.' }));
+    api.on('POST', '/coach', Reply.ok({ reply: 'Okay.' }));
+    await coach().send('swap bench press for push-ups');
+    expect(api.sentAll('/coach')).toHaveLength(1);
+    expect(messages().some((m) => m.text === 'Beam me up.')).toBe(false);
+  });
+
+  it('a membership gate, a pending deletion or a minor answer in their own words, with the way on', async () => {
+    answerEdits(Reply.problem(403, 'no_active_plan_or_pass'));
+    await coach().send('swap bench press for push-ups');
+    expect(openBubble().text).toBe(en('program.gate.not_member'));
+    expect(openBubble().options?.map((o) => o.label)).toEqual([en('plan.gate.cta_choose')]);
   });
 
   it('a key the server already used is resent once with a fresh one', async () => {
@@ -349,6 +390,18 @@ describe('the one-tap consent', () => {
     expect(card().status).toBe('pending');
     expect(messages().filter((m) => m.role === 'user')).toHaveLength(1);
   });
+
+  it('"Not now" sends nothing and says the plan stays as it is', async () => {
+    answerEdits(Reply.problem(409, 'plan_edit_consent_required'));
+    await coach().send('swap bench press for push-ups');
+    const consent = messages()[messages().length - 1]!;
+    declineConsentFor(consent.id);
+    expect(grant).not.toHaveBeenCalled();
+    expect(sentEdits()).toHaveLength(1);
+    expect(messages()[messages().length - 1]!.text).toBe(en('coach.planEdit.consent.declined'));
+    await grantConsentFor(consent.id);
+    expect(grant).not.toHaveBeenCalled();
+  });
 });
 
 describe('Apply, Cancel, Undo', () => {
@@ -368,9 +421,9 @@ describe('Apply, Cancel, Undo', () => {
     expect(card()).toMatchObject({ status: 'applied', applied: { editId: EDIT_A, undoable: true } });
     expect(presentToastMock).toHaveBeenCalledWith(en('coach.planEdit.updatedToast'));
     expect(load).toHaveBeenCalledWith({ force: true });
-    expect(events.some((e) => e.event === 'plan_edit_applied')).toBe(true);
-    // An applied card no longer takes typed refinements.
-    expect(planEditStateForTests().openPreviewId).toBeNull();
+    expect(events.find((e) => e.event === 'plan_edit_applied')?.params).toEqual({ choice: 'single' });
+    // An applied change ends the thread: typed words no longer refine it.
+    expect(planEditThreadForTests()).toBeNull();
   });
 
   it('a change that makes the plan a cycle asks first, then applies with confirmCustom', async () => {
@@ -395,7 +448,7 @@ describe('Apply, Cancel, Undo', () => {
     await applyCard(message.id);
     expect(api.sentAll(applyPath(EDIT_A))).toHaveLength(0);
     expect(runnerOpenForMock).toHaveBeenCalledWith(TODAY_SESSION);
-    expect(card().status).toBe('pending');
+    expect(card()).toMatchObject({ status: 'pending', errorKey: 'coach.planEdit.runnerOpen' });
   });
 
   it('a stale suggestion says so and offers Ask again, which sends the words again under a new key', async () => {
@@ -403,7 +456,6 @@ describe('Apply, Cancel, Undo', () => {
     api.on('POST', applyPath(EDIT_A), Reply.problem(409, 'plan_edit_stale'));
     await applyCard(message.id);
     expect(card(messages().find((m) => m.id === message.id)).status).toBe('stale');
-    expect(load).toHaveBeenCalledWith({ force: true });
     const ask = openBubble();
     expect(ask.text).toBe(en('coach.planEdit.error.stale'));
     expect(ask.options?.map((o) => o.label)).toEqual([en('coach.planEdit.askAgain')]);
@@ -434,8 +486,9 @@ describe('Apply, Cancel, Undo', () => {
     api.on('POST', undoPath(EDIT_A), Reply.ok(undoJson({ keptRows: 2 })));
     await undoCard(message.id);
     expect(api.sent(undoPath(EDIT_A)).headers['idempotency-key']).toBe('key-3');
-    expect(card().status).toBe('undone');
-    expect(presentToastMock).toHaveBeenLastCalledWith(`${en('coach.planEdit.undoneToast')}. ${en('coach.planEdit.keptRows')}`);
+    expect(card()).toMatchObject({ status: 'undone', keptRows: 2 });
+    expect(presentToastMock).toHaveBeenLastCalledWith(en('coach.planEdit.undoneToast'));
+    expect(events.find((e) => e.event === 'plan_edit_undone')?.params).toEqual({ entry: 'card' });
   });
 
   it('an Undo the server refuses says why and offers it no more', async () => {
@@ -444,7 +497,7 @@ describe('Apply, Cancel, Undo', () => {
     await applyCard(message.id);
     api.on('POST', undoPath(EDIT_A), Reply.problem(409, 'plan_edit_undo_unavailable', { reason: 'later_edit' }));
     await undoCard(message.id);
-    expect(card()).toMatchObject({ status: 'applied', errorKey: 'coach.planEdit.error.undoChanged', applied: { undoable: false } });
+    expect(card()).toMatchObject({ status: 'applied', undoBlockedKey: 'coach.planEdit.error.undoChanged' });
   });
 });
 
@@ -454,7 +507,7 @@ describe('the entry points', () => {
     await coach().startPlanEdit();
     expect(messages().slice(-2).map((m) => [m.role, m.text, m.isHealth])).toEqual([
       ['user', en('coach.planEdit.chip'), true],
-      ['assistant', en('coach.planEdit.prompt'), true],
+      ['assistant', en('coach.planEdit.ask'), true],
     ]);
     await coach().send('the Thursday one is too long');
     expect(sentEdits()).toHaveLength(1);
@@ -469,6 +522,10 @@ describe('the entry points', () => {
     });
     await coach().consumeParkedEntries();
     expect(coach().inputText).toBe("I don't have the equipment for Lat pulldown");
+    expect(messages().slice(-2).map((m) => [m.role, m.text])).toEqual([
+      ['user', en('coach.planEdit.notHaveThis')],
+      ['assistant', en('coach.planEdit.askPrefilled')],
+    ]);
     expect(sentEdits()).toHaveLength(0);
     await coach().send(coach().inputText);
     expect(sentEdits()[0]!.body).toEqual({
@@ -480,9 +537,12 @@ describe('the entry points', () => {
 
   it('"Change with Coach" from Plan asks what to change about that day', async () => {
     answerEdits(Reply.ok(responseJson()));
-    useIntentStore.getState().parkCoachPlanEdit({ sessionId: TODAY_SESSION });
+    useIntentStore.getState().parkCoachPlanEdit({ sessionId: TODAY_SESSION, sessionTitle: 'Push' });
     await coach().consumeParkedEntries();
-    expect(messages()[messages().length - 1]!.text).toBe(en('coach.planEdit.prompt'));
+    expect(messages().slice(-2).map((m) => m.text)).toEqual([
+      en('coach.planEdit.changeWithCoach'),
+      translate('coach.planEdit.askSession', 'en', { title: 'Push' }),
+    ]);
     await coach().send('make it shorter');
     expect(sentEdits()[0]!.body).toEqual({ message: 'make it shorter', locale: 'en', context: { sessionId: TODAY_SESSION } });
   });
@@ -495,7 +555,7 @@ describe('the health lane', () => {
     expect(messages().some((m) => m.flow === 'planEdit')).toBe(true);
     coach().dropHealthMessages();
     expect(messages().some((m) => m.flow === 'planEdit')).toBe(false);
-    expect(planEditStateForTests()).toEqual({ awaiting: null, openPreviewId: null, openClarify: null });
+    expect(planEditThreadForTests()).toBeNull();
   });
 
   it('an answer that lands after a new chat lands nowhere', async () => {
@@ -515,5 +575,18 @@ describe('the health lane', () => {
     for (const { params } of events) {
       for (const value of Object.values(params)) expect(String(value)).not.toMatch(/bench|push/i);
     }
+  });
+
+  it('while the chat is locked, words for the chat are answered with the lock, and the plan can still be changed', async () => {
+    useCoachStore.setState({ limitReached: true });
+    answerEdits(Reply.ok(responseJson()));
+    await coach().send('tell me a joke');
+    expect(api.sentAll('/coach')).toHaveLength(0);
+    expect(messages().slice(-2).map((m) => [m.role, m.text])).toEqual([
+      ['user', 'tell me a joke'],
+      ['assistant', en('coach.input.limit_reached')],
+    ]);
+    await coach().send('swap bench press for push-ups');
+    expect(cards()).toHaveLength(1);
   });
 });

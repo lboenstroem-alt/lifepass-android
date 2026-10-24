@@ -158,7 +158,7 @@ export default function ProgramOverviewScreen({ route, navigation }: SharedRoute
         <WeekPicker weeks={weeks.map((week) => week.weekNo)} selected={shown?.weekNo ?? selectedWeek} onSelect={setSelectedWeek} />
         <WeekNotes note={weekNote(shown)} deload={showsDeloadNote(weeks, shown)} />
         <DayRows days={shown?.days ?? []} mode={mode} />
-        {mode === 'live' ? <PlanEditChanges program={program} /> : null}
+        {mode === 'live' ? <PlanEditChanges program={program} onPlanChanged={() => void load()} /> : null}
         {mode === 'live' ? <LiveActions program={program} onUpdated={applyDetail} /> : null}
         {mode === 'proposal' ? (
           fromCard ? (

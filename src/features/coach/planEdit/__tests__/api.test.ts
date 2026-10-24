@@ -10,16 +10,16 @@ import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../../api/testing';
 import {
+  answerPlanEditQuestion,
   applyPlanEdit,
+  capPlanEditText,
   cleanPlanEditText,
   discardPlanEdit,
   fetchPlanEdits,
   isPlanEditSendable,
-  planEditApplyFailure,
   planEditBody,
-  planEditFailureCopyKey,
-  planEditSendFailure,
-  planEditUndoFailure,
+  planEditErrorReason,
+  planEditProblem,
   postPlanEdit,
   undoPlanEdit,
 } from '../api';
@@ -53,16 +53,27 @@ async function failureOf<T>(call: () => Promise<T>): Promise<import('../../../..
 }
 
 describe('the words', () => {
-  it('are cleaned as the server cleans them: NFC, no control characters, whitespace collapsed', () => {
-    expect(cleanPlanEditText('  swap\u0007  bench\n\tpress  ')).toBe('swap bench press');
+  it('are cleaned as the server cleans them: NFC, every control character a space, whitespace collapsed', () => {
+    expect(cleanPlanEditText('  swap\u0007bench\n\tpress  ')).toBe('swap bench press');
     expect(cleanPlanEditText('Bankdrücken')).toBe('Bankdrücken');
   });
 
-  it('go only as 2 to 500 characters', () => {
+  it('go only as 2 to 500 characters, cut between whole characters', () => {
     expect(isPlanEditSendable('a')).toBe(false);
     expect(isPlanEditSendable(' ok ')).toBe(true);
     expect(isPlanEditSendable('x'.repeat(500))).toBe(true);
     expect(isPlanEditSendable('x'.repeat(501))).toBe(false);
+    expect(capPlanEditText('x'.repeat(600))).toHaveLength(500);
+    // A surrogate pair is never split.
+    expect(capPlanEditText(`${'x'.repeat(499)}😀`)).toBe('x'.repeat(499));
+  });
+
+  it("a question's answer goes with the request it answers (the server keeps no conversation)", () => {
+    expect(answerPlanEditQuestion('Bench press', 'swap the press for something else')).toBe('swap the press for something else Bench press');
+    expect(answerPlanEditQuestion('Bench press', '')).toBe('Bench press');
+    const long = answerPlanEditQuestion('Bench press', 'y'.repeat(600));
+    expect(long).toHaveLength(500);
+    expect(long.endsWith(' Bench press')).toBe(true);
   });
 
   it('build a body with only the keys that say something', () => {
@@ -186,70 +197,58 @@ describe('OP-59 to OP-62', () => {
 
 describe('the refusals', () => {
   it.each([
-    [409, 'plan_edit_consent_required', {}, 'consent'],
+    [409, 'plan_edit_consent_required', {}, 'consentNeeded'],
+    [409, 'health_consent_required', {}, 'consentNeeded'],
     [422, 'plan_edit_personal_data', {}, 'personalData'],
     [429, 'plan_edit_limit', { reason: 'daily' }, 'limit'],
     [429, 'plan_edit_limit', { reason: 'attempts' }, 'limit'],
-    [503, 'plan_edit_paused', {}, 'paused'],
+    [503, 'plan_edit_paused', {}, 'servicePaused'],
     [502, 'coach_upstream_error', {}, 'upstream'],
-    [409, 'program_action_not_allowed', { reason: 'not_live' }, 'notLive'],
-    [409, 'program_action_not_allowed', { reason: 'paused' }, 'planPaused'],
-    [404, 'health_program_not_found', {}, 'notLive'],
-    [400, 'invalid-plan-edit', {}, 'passOn'],
-    [404, 'not_found', {}, 'passOn'],
-    [409, 'health_consent_required', {}, 'refused'],
-    [403, 'no_active_plan_or_pass', {}, 'refused'],
-    [409, 'account_pending_deletion', {}, 'refused'],
-    [429, 'rate_limited', {}, 'rateLimited'],
-  ] as const)('OP-58 %i %s (%j) is %s', async (status, slug, extra, expected) => {
-    api.on('POST', EDITS_PATH, Reply.problem(status, slug, extra));
-    const error = await failureOf(() => postPlanEdit(PROGRAM_ID, { message: 'swap it', locale: 'en' }, 'k'));
-    expect(planEditSendFailure(error)).toBe(expected);
-  });
-
-  it('OP-58: a 404 that is no problem is the route gone, and no connection is the Coach\'s offline line', async () => {
-    api.on('POST', EDITS_PATH, Reply.raw(404, '<html>Not found</html>'));
-    expect(planEditSendFailure(await failureOf(() => postPlanEdit(PROGRAM_ID, { message: 'swap it', locale: 'en' }, 'k')))).toBe('passOn');
-    api.on('POST', EDITS_PATH, Reply.fail());
-    expect(planEditSendFailure(await failureOf(() => postPlanEdit(PROGRAM_ID, { message: 'swap it', locale: 'en' }, 'k')))).toBe('offline');
-  });
-
-  it.each([
     [409, 'plan_edit_stale', {}, 'stale'],
     [404, 'plan_edit_not_found', {}, 'stale'],
     [409, 'plan_edit_confirm_required', {}, 'confirmRequired'],
-    [409, 'plan_edit_not_pending', { reason: 'applied' }, 'alreadyApplied'],
-    [409, 'plan_edit_not_pending', { reason: 'superseded' }, 'stale'],
-    [409, 'plan_edit_not_pending', { reason: 'discarded' }, 'stale'],
-    [409, 'program_action_not_allowed', { reason: 'paused' }, 'planPaused'],
-    [409, 'program_action_not_allowed', { reason: 'not_live' }, 'notLive'],
-  ] as const)('Apply %i %s (%j) is %s', async (status, slug, extra, expected) => {
-    api.on('POST', applyPath(EDIT_A), Reply.problem(status, slug, extra));
-    const error = await failureOf(() => applyPlanEdit(PROGRAM_ID, EDIT_A, { confirmCustom: false }, 'k'));
-    expect(planEditApplyFailure(error)).toBe(expected);
-  });
-
-  it.each([
     [409, 'plan_edit_undo_unavailable', { reason: 'window_closed' }, 'undoWindow'],
     [409, 'plan_edit_undo_unavailable', { reason: 'plan_changed' }, 'undoChanged'],
     [409, 'plan_edit_undo_unavailable', { reason: 'later_edit' }, 'undoChanged'],
-    [409, 'plan_edit_not_pending', { reason: 'undone' }, 'alreadyUndone'],
-  ] as const)('Undo %i %s (%j) is %s', async (status, slug, extra, expected) => {
-    api.on('POST', undoPath(EDIT_A), Reply.problem(status, slug, extra));
-    const error = await failureOf(() => undoPlanEdit(PROGRAM_ID, EDIT_A, 'k'));
-    expect(planEditUndoFailure(error)).toBe(expected);
+    [409, 'program_action_not_allowed', { reason: 'not_live' }, 'notLive'],
+    [409, 'program_action_not_allowed', { reason: 'paused' }, 'planPaused'],
+    [404, 'health_program_not_found', {}, 'programGone'],
+    [404, 'not_found', {}, 'featureOff'],
+    [422, 'idempotency_key_reused', {}, 'keyReused'],
+    [429, 'rate-limited', {}, 'rateLimited'],
+    [409, 'account_pending_deletion', {}, 'pendingDeletion'],
+    [403, 'no_active_plan_or_pass', {}, 'notMember'],
+    [403, 'health_minor_blocked', {}, 'minor'],
+    [400, 'invalid-plan-edit', {}, 'other'],
+    [500, 'internal_error', {}, 'upstream'],
+  ] as const)('%i %s (%j) is %s', async (status, slug, extra, expected) => {
+    api.on('POST', EDITS_PATH, Reply.problem(status, slug, extra));
+    const error = await failureOf(() => postPlanEdit(PROGRAM_ID, { message: 'swap it', locale: 'en' }, 'k'));
+    expect(planEditProblem(error).kind).toBe(expected);
   });
 
-  it('words each one the member sees in the spec\'s copy', () => {
-    expect(planEditFailureCopyKey('personalData')).toBe('coach.planEdit.error.personalData');
-    expect(planEditFailureCopyKey('limit')).toBe('coach.planEdit.error.limit');
-    expect(planEditFailureCopyKey('paused')).toBe('coach.planEdit.error.paused');
-    expect(planEditFailureCopyKey('upstream')).toBe('coach.planEdit.error.upstream');
-    expect(planEditFailureCopyKey('stale')).toBe('coach.planEdit.error.stale');
-    expect(planEditFailureCopyKey('undoWindow')).toBe('coach.planEdit.error.undoWindow');
-    expect(planEditFailureCopyKey('undoChanged')).toBe('coach.planEdit.error.undoChanged');
-    expect(planEditFailureCopyKey('notLive')).toBe('coach.planEdit.error.notLive');
-    expect(planEditFailureCopyKey('planPaused')).toBe('coach.planEdit.error.planPaused');
-    expect(planEditFailureCopyKey('consent')).toBeNull();
+  it('keeps the reason of a refusal that is not pending', async () => {
+    api.on('POST', applyPath(EDIT_A), Reply.problem(409, 'plan_edit_not_pending', { reason: 'superseded' }));
+    const error = await failureOf(() => applyPlanEdit(PROGRAM_ID, EDIT_A, { confirmCustom: false }, 'k'));
+    expect(planEditProblem(error)).toEqual({ kind: 'notPending', reason: 'superseded' });
+  });
+
+  it('a 404 that is no problem is the route gone, and no connection is offline', async () => {
+    api.on('POST', EDITS_PATH, Reply.raw(404, '<html>Not found</html>'));
+    expect(planEditProblem(await failureOf(() => postPlanEdit(PROGRAM_ID, { message: 'swap it', locale: 'en' }, 'k')))).toEqual({
+      kind: 'featureOff',
+    });
+    api.on('POST', EDITS_PATH, Reply.fail());
+    const offline = await failureOf(() => postPlanEdit(PROGRAM_ID, { message: 'swap it', locale: 'en' }, 'k'));
+    expect(planEditProblem(offline)).toEqual({ kind: 'offline' });
+    expect(planEditErrorReason(offline)).toBe('offline');
+  });
+
+  it('the analytics reason is the problem code, fixed words only', async () => {
+    api.on('POST', EDITS_PATH, Reply.problem(429, 'plan_edit_limit'));
+    expect(planEditErrorReason(await failureOf(() => postPlanEdit(PROGRAM_ID, { message: 'swap it', locale: 'en' }, 'k')))).toBe(
+      'plan_edit_limit',
+    );
+    expect(planEditErrorReason(new Error('swap bench'))).toBe('unknown');
   });
 });
