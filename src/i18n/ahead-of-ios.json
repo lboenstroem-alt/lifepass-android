@@ -1,0 +1,19 @@
+{
+ "about": "iOS copy changes Android ships before the iOS sources the tables are generated from have them. scripts/import-ios-strings.py applies each while iOS still has the text under \"ios\", says when iOS has landed one (delete it then), and refuses when iOS has anything else. Never type these into strings.*.json.",
+ "changes": [
+  {
+   "change": "Booking confirm card (IS): the service row says Þjónusta, not Tími, the Time row's word (lifepass-ios: the feat/booking-layout-update-prompt follow-up)",
+   "dictionary": "base",
+   "ios": {
+    "is": {
+     "booking.activity": "Tími"
+    }
+   },
+   "android": {
+    "is": {
+     "booking.activity": "Þjónusta"
+    }
+   }
+  }
+ ]
+}

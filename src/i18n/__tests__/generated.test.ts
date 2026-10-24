@@ -7,12 +7,15 @@
 // refuses exactly what the iOS DEBUG build traps on (a key two packs define,
 // a pack redefining a base key). `scripts/ci.sh` re-runs the generator over
 // the iOS sources when LIFEPASS_IOS_SERVICES points at them and fails on any
-// difference, so the committed tables cannot drift from iOS.
+// difference, so the committed tables cannot drift from iOS. Copy Android
+// ships before iOS has it is in ../ahead-of-ios.json, which the generator
+// applies, so the tables still equal its output.
 import { execFileSync, spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import ahead from '../ahead-of-ios.json';
 import manifest from '../strings.manifest.json';
 import { generatedTables } from '../tables';
 import { baseDictionary, healthPacks, LANGS, placeholders } from './dictionaries';
@@ -68,6 +71,24 @@ describe('the committed tables', () => {
         owner.set(key, dictionary.name);
       }
     }
+  });
+
+  it('carry every ahead-of-iOS change, and the manifest lists exactly those', () => {
+    type Side = Partial<Record<'en' | 'is', Record<string, string>>>;
+    for (const change of ahead.changes as { change: string; ios: Side; android: Side }[]) {
+      for (const lang of LANGS) {
+        const android = change.android[lang] ?? {};
+        for (const [key, value] of Object.entries(android)) {
+          expect([change.change, lang, key, generatedTables[lang][key]]).toEqual([change.change, lang, key, value]);
+        }
+        for (const key of Object.keys(change.ios[lang] ?? {}).filter((k) => !(k in android))) {
+          expect([change.change, lang, key, generatedTables[lang][key]]).toEqual([change.change, lang, key, undefined]);
+        }
+      }
+    }
+    // A change iOS has landed drops out of the manifest when the tables are
+    // regenerated: then delete it from ahead-of-ios.json too.
+    expect(manifest.aheadOfIos).toEqual(ahead.changes.map((c) => c.change));
   });
 
   it('keep every {placeholder} of the English value in the Icelandic one', () => {
@@ -149,10 +170,20 @@ function writeSources(
   return dir;
 }
 
-function generate(services: string): { status: number | null; stderr: string; out: string } {
+/** Write an ahead-of-ios.json with these changes (none by default) and return its path. */
+function writeAhead(changes: unknown[] = []): string {
+  const file = path.join(makeTemp('lp-ios-ahead-'), 'ahead-of-ios.json');
+  fs.writeFileSync(file, JSON.stringify({ changes }));
+  return file;
+}
+
+function generate(
+  services: string,
+  aheadFile: string = writeAhead(),
+): { status: number | null; stdout: string; stderr: string; out: string } {
   const out = makeTemp('lp-i18n-out-');
-  const run = spawnSync('python3', [SCRIPT, services, '--out', out], { encoding: 'utf8' });
-  return { status: run.status, stderr: run.stderr, out };
+  const run = spawnSync('python3', [SCRIPT, services, '--out', out, '--ahead', aheadFile], { encoding: 'utf8' });
+  return { status: run.status, stdout: run.stdout, stderr: run.stderr, out };
 }
 
 function readJson(dir: string, file: string): unknown {
@@ -269,5 +300,108 @@ describe('scripts/import-ios-strings.py', () => {
     expect(status).toBe(0);
     const written = readJson(out, 'strings.manifest.json') as typeof manifest;
     expect(written.dictionaries[0]).toEqual({ name: 'base', keys: ['tab.home'], enOnly: ['tab.only'], isOnly: [] });
+  });
+});
+
+describe('scripts/import-ios-strings.py, copy ahead of iOS', () => {
+  const sources = () =>
+    writeSources(
+      {
+        en: { 'booking.activity': 'Activity', 'venue.hours_this_week': 'This week', 'tab.home': 'Home' },
+        is: { 'booking.activity': 'Tími', 'venue.hours_this_week': 'Þessa viku', 'tab.home': 'Heim' },
+      },
+      { core: { en: { 'tab.plan': 'Plan' }, is: { 'tab.plan': 'Áætlun' } } },
+    );
+  const activity = {
+    change: 'Service row says Þjónusta',
+    dictionary: 'base',
+    ios: { is: { 'booking.activity': 'Tími' } },
+    android: { is: { 'booking.activity': 'Þjónusta' } },
+  };
+  const usualHours = {
+    change: 'Usual hours',
+    dictionary: 'base',
+    ios: { en: { 'venue.hours_this_week': 'This week' }, is: { 'venue.hours_this_week': 'Þessa viku' } },
+    android: { en: { 'venue.hours_usual': 'Usual hours' }, is: { 'venue.hours_usual': 'Almennur opnunartími' } },
+  };
+
+  it('applies a change while iOS still has the old text, and lists it in the manifest', () => {
+    const { status, stdout, stderr, out } = generate(sources(), writeAhead([activity]));
+    expect(stderr).toBe('');
+    expect(status).toBe(0);
+    expect(stdout).toContain('ahead of iOS: Service row says Þjónusta');
+    expect(readJson(out, 'strings.is.json')).toMatchObject({ 'booking.activity': 'Þjónusta', 'tab.home': 'Heim' });
+    expect(readJson(out, 'strings.en.json')).toMatchObject({ 'booking.activity': 'Activity' });
+    expect((readJson(out, 'strings.manifest.json') as typeof manifest).aheadOfIos).toEqual(['Service row says Þjónusta']);
+  });
+
+  it('renames a key in both languages, in the dictionary that owns it', () => {
+    const { status, out } = generate(sources(), writeAhead([usualHours]));
+    expect(status).toBe(0);
+    const en = readJson(out, 'strings.en.json') as Record<string, string>;
+    expect(en['venue.hours_usual']).toBe('Usual hours');
+    expect(en).not.toHaveProperty('venue.hours_this_week');
+    expect(readJson(out, 'strings.is.json')).toMatchObject({ 'venue.hours_usual': 'Almennur opnunartími' });
+    const written = readJson(out, 'strings.manifest.json') as typeof manifest;
+    expect(written.dictionaries[0]!.keys).toEqual(['booking.activity', 'tab.home', 'venue.hours_usual']);
+    expect(written.counts).toEqual({ en: 4, is: 4 });
+  });
+
+  it('leaves a change iOS has landed alone, and says to delete it', () => {
+    const landed = writeSources({
+      en: { 'booking.activity': 'Activity' },
+      is: { 'booking.activity': 'Þjónusta' },
+    });
+    const { status, stderr, out } = generate(landed, writeAhead([activity]));
+    expect(status).toBe(0);
+    expect(stderr).toContain('iOS has landed "Service row says Þjónusta"; delete it from src/i18n/ahead-of-ios.json');
+    expect(readJson(out, 'strings.is.json')).toEqual({ 'booking.activity': 'Þjónusta' });
+    expect((readJson(out, 'strings.manifest.json') as typeof manifest).aheadOfIos).toEqual([]);
+  });
+
+  it('refuses, writing nothing, when iOS has other text for the key', () => {
+    const other = writeSources({
+      en: { 'booking.activity': 'Activity' },
+      is: { 'booking.activity': 'Afþreying' },
+    });
+    const { status, stderr, out } = generate(other, writeAhead([activity]));
+    expect(status).toBe(1);
+    expect(stderr).toContain('iOS has {"is": {"booking.activity": "Afþreying"}}');
+    expect(fs.readdirSync(out)).toEqual([]);
+  });
+
+  it('refuses, writing nothing, when iOS no longer has the key', () => {
+    const gone = writeSources({ en: { 'tab.home': 'Home' }, is: { 'tab.home': 'Heim' } });
+    const { status, stderr, out } = generate(gone, writeAhead([activity]));
+    expect(status).toBe(1);
+    expect(stderr).toContain('"booking.activity": null');
+    expect(fs.readdirSync(out)).toEqual([]);
+  });
+
+  it('refuses a half-landed rename', () => {
+    const half = writeSources({
+      en: { 'venue.hours_usual': 'Usual hours' },
+      is: { 'venue.hours_this_week': 'Þessa viku' },
+    });
+    const { status, stderr } = generate(half, writeAhead([usualHours]));
+    expect(status).toBe(1);
+    expect(stderr).toContain('"Usual hours": iOS has');
+  });
+
+  it('refuses a malformed ahead file', () => {
+    const plain = sources();
+    for (const [changes, message] of [
+      [[{ ...activity, android: activity.ios }], 'changes nothing'],
+      [[{ ...activity, dictionary: 'nope' }], 'no iOS dictionary named nope'],
+      [[{ ...activity, ios: { de: {} } }], 'needs "ios" and "android"'],
+      [[{ dictionary: 'base', ios: {}, android: {} }], 'needs a "change" description'],
+    ] as const) {
+      const { status, stderr, out } = generate(plain, writeAhead([...changes]));
+      expect([status, stderr.includes(message)]).toEqual([1, true]);
+      expect(fs.readdirSync(out)).toEqual([]);
+    }
+    const missing = generate(plain, path.join(makeTemp('lp-ios-ahead-'), 'none.json'));
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain('cannot read');
   });
 });
