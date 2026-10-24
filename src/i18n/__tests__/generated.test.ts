@@ -74,8 +74,11 @@ describe('the committed tables', () => {
   });
 
   it('carry every ahead-of-iOS change, and the manifest lists exactly those', () => {
-    type Side = Partial<Record<'en' | 'is', Record<string, string>>>;
-    for (const change of ahead.changes as { change: string; ios: Side; android: Side }[]) {
+    type Side = Partial<Record<'en' | 'is', Readonly<Record<string, string>>>>;
+    // The JSON import types each entry by its own literal keys; read the
+    // entries as the file's format, whatever and however many there are.
+    const changes = ahead.changes as unknown as readonly { change: string; ios: Side; android: Side }[];
+    for (const change of changes) {
       for (const lang of LANGS) {
         const android = change.android[lang] ?? {};
         for (const [key, value] of Object.entries(android)) {
@@ -88,7 +91,7 @@ describe('the committed tables', () => {
     }
     // A change iOS has landed drops out of the manifest when the tables are
     // regenerated: then delete it from ahead-of-ios.json too.
-    expect(manifest.aheadOfIos).toEqual(ahead.changes.map((c) => c.change));
+    expect(manifest.aheadOfIos).toEqual(changes.map((c) => c.change));
   });
 
   it('keep every {placeholder} of the English value in the Icelandic one', () => {
