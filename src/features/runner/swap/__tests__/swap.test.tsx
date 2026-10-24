@@ -16,9 +16,12 @@ import { UiKitProvider } from '../../../../components/ui';
 import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
 import { TransportError } from '../../../../api/errors';
 import * as localStore from '../../../../health/localStore';
-import { decodeSessionActionResponse, type SessionActionResponse } from '../../../../health/models';
+import { decodeHealthDay, decodeSessionActionResponse, type SessionActionResponse } from '../../../../health/models';
 import { resetHealthStoreForTests, useHealthStore } from '../../../../health/store';
 import { setCurrentLanguage } from '../../../../i18n';
+import { decodeProfile } from '../../../../api/profile';
+import { useAppStore } from '../../../../stores/appStore';
+import { resetIntentStoreForTests, useIntentStore } from '../../../../stores/intentStore';
 import { setAnalyticsObserver, type AnalyticsParams } from '../../../../lib/analytics';
 import { session, t0 } from '../../model/__tests__/fixtures';
 import { liveWorkoutSessionPosting, setWorkoutSessionPosting, type WorkoutSessionPosting } from '../../outbox/posting';
@@ -104,6 +107,8 @@ beforeEach(() => {
   events = [];
   bottomSheetMock.reset();
   resetHealthStoreForTests();
+  resetIntentStoreForTests();
+  useAppStore.setState({ serverFeatures: [], profile: null });
   setCurrentLanguage('en');
   setAnalyticsObserver((event, params) => events.push({ event, params }));
 });
@@ -347,5 +352,64 @@ describe('on the runner page', () => {
     );
     await fireEvent.press(screen.getByTestId('runner.swap'));
     expect(screen.queryByTestId('swap.future')).toBeNull();
+  });
+
+  it('a custom plan: no toggle (the server refuses a swap for the rest of a plan the member wrote)', async () => {
+    useHealthStore.setState({ today: decodeHealthDay({ date: '2026-09-16', program: { id: 'prog-1', status: 'active', custom: true } }) });
+    const controller = runner();
+    await render(
+      <UiKitProvider>
+        <WorkoutRunnerView controller={controller} />
+      </UiKitProvider>,
+    );
+    await fireEvent.press(screen.getByTestId('runner.swap'));
+    expect(screen.queryByTestId('swap.future')).toBeNull();
+  });
+
+  it('"I don\'t have this" (COACH-6): the workout is kept for later and the Coach opens with the words, unsent', async () => {
+    useAppStore.setState({
+      serverFeatures: ['plan_edit'],
+      profile: decodeProfile({
+        id: MEMBER,
+        email: 'member@example.com',
+        locale: 'en',
+        kennitalaVerified: true,
+        marketingConsent: false,
+        health: { access: 'entitled', consent: { version: '2026-09-v3', consentedAt: '2026-09-01T10:00:00Z', ageSource: 'kennitala' } },
+      }),
+    });
+    useHealthStore.setState({ today: decodeHealthDay({ date: '2026-09-16', program: { id: 'prog-1', status: 'active' } }) });
+    const controller = runner();
+    let closed: unknown = null;
+    controller.onClose = (result) => {
+      closed = result;
+    };
+    await render(
+      <UiKitProvider>
+        <WorkoutRunnerView controller={controller} />
+      </UiKitProvider>,
+    );
+    await fireEvent.press(screen.getByTestId('runner.swap'));
+    await fireEvent.press(screen.getByTestId('swap.notHaveThis'));
+    await act(async () => undefined);
+    const parked = useIntentStore.getState().pendingCoachPlanEdit;
+    expect(parked).toEqual({
+      sessionId: 'sess-1',
+      exerciseId: controller.state.exercises[0]!.plannedExerciseId,
+      prefill: `I don't have the equipment for ${controller.state.exercises[0]!.plannedName}`,
+    });
+    expect(useIntentStore.getState().pendingTab).toBe('Coach');
+    expect(closed).toEqual({ kind: 'later' });
+  });
+
+  it('without the feature there is no "I don\'t have this"', async () => {
+    const controller = runner();
+    await render(
+      <UiKitProvider>
+        <WorkoutRunnerView controller={controller} />
+      </UiKitProvider>,
+    );
+    await fireEvent.press(screen.getByTestId('runner.swap'));
+    expect(screen.queryByTestId('swap.notHaveThis')).toBeNull();
   });
 });

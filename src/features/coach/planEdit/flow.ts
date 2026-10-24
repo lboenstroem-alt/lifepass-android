@@ -598,17 +598,18 @@ export async function selectPlanEditOption(messageId: string, value: string, lab
       appendAssistant(t(availability.kind === 'paused' ? 'coach.planEdit.error.planPaused' : 'coach.ai_unavailable'));
       return;
     }
-    // The same words, under a NEW key (a retry after a failure, or a stale suggestion).
+    // The same words under a NEW key (a retry after a failure, or a stale
+    // suggestion asked again), under the member's bubble already on screen.
     const request: PlanEditRequest = {
       ...previous,
       id: `r${(requestCounter += 1)}`,
       programId: availability.programId,
       replacesEditId: null,
       key: makeKey(),
-      userMessageId: null,
+      userMessageId: previous.userMessageId,
     };
     requests.set(request.id, request);
-    request.userMessageId = appendUser(request.text);
+    if (!request.userMessageId || !findMessage(request.userMessageId)) request.userMessageId = appendUser(request.text);
     const result = await send(request);
     if (result === 'passed') await host.resumeSend(request.text);
     return;

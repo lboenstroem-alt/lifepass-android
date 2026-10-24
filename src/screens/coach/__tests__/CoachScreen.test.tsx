@@ -184,6 +184,21 @@ describe('the empty state', () => {
     expect(screen.queryByRole('button', { name: en('coach.chip.program') })).toBeNull();
   });
 
+  it('reads "Change my plan" while a plan runs on a server that changes plans by chat (COACH-6), and it asks what to change', async () => {
+    const withConsent = profile({
+      health: {
+        program: { id: 'program-1', status: 'active' },
+        consent: { version: '2026-09-v3', consentedAt: '2026-09-01T10:00:00Z', ageSource: 'kennitala' },
+      },
+    });
+    useAppStore.setState({ profile: withConsent, serverFeatures: ['plan_revision', 'plan_edit'] });
+    await renderCoach();
+    expect(screen.queryByRole('button', { name: en('coach.chip.adjust_plan') })).toBeNull();
+    await fireEvent.press(screen.getByTestId('coach.chip.planEdit'));
+    expect(screen.getByText(en('coach.planEdit.prompt'))).toBeOnTheScreen();
+    expect(api.sentAll('/coach')).toHaveLength(0);
+  });
+
   it('"What\'s nearby?" shows the six category tiles, never sending a prompt', async () => {
     await renderCoach();
     await fireEvent.press(screen.getByRole('button', { name: en('coach.chip.nearby') }));

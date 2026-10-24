@@ -20,6 +20,8 @@ import { openTargetSheet, type TargetSheetMode } from '../../../body/sheets';
 import { turnOffFoodForSafety } from '../../../feedback';
 import { openChangeDays, type ChangeDaysMode } from '../../../plan/days';
 import { adjustFlow } from '../../flows/adjust';
+import { setPlanEditAvailabilityForTests } from '../../planEdit/availability';
+import { resetPlanEdit } from '../../planEdit/flow';
 import { setProgramContextForTests } from '../../program/context';
 import { proposalOf } from '../../program/messages';
 import { programFlowForTests, resetProgram, weekdayList } from '../../program/wizard';
@@ -798,5 +800,51 @@ describe('the flow contract', () => {
     await coach().startAdjust();
     await adjustFlow.selectOption?.(old.id, 'adjust.length', en('program.adjust.opt.length'));
     expect(last().text).toBe(MENU_TEXT());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COACH-6: changing the plan in chat
+
+describe('with changes made in chat (COACH-6)', () => {
+  afterEach(() => {
+    setPlanEditAvailabilityForTests(null);
+    resetPlanEdit();
+  });
+
+  it('warns before the revision that it replaces them, apart from the equipment the member does not have', async () => {
+    serveRevise(Reply.ok({ program: revisionJson(), replayed: false, chatEdits: 2 }, 201));
+    await confirmEightWeeks();
+    await tap(en('program.adjust.show'));
+    const texts = assistantTexts();
+    expect(texts).toContain(en('coach.planEdit.adjustWarning'));
+    expect(texts.indexOf(en('coach.planEdit.adjustWarning'))).toBeLessThan(texts.indexOf('The same plan, run over eight weeks.'));
+  });
+
+  it('says nothing of it when the plan carries none, or the server is older', async () => {
+    serveRevise(Reply.ok({ program: revisionJson(), replayed: false, chatEdits: 0 }, 201));
+    await confirmEightWeeks();
+    await tap(en('program.adjust.show'));
+    expect(assistantTexts()).not.toContain(en('coach.planEdit.adjustWarning'));
+  });
+
+  it('a custom plan is never adjusted: the wizard\'s own gate answers (it refuses a revision)', async () => {
+    setProgramContextForTests(adjustingContext({ liveProgram: liveProgram({ custom: true, cycleDays: 4 }) }));
+    await coach().startAdjust();
+    expect(adjustFlowForTests()).toBeNull();
+    expect(last().text).toBe(en('program.active_exists'));
+    expect(reviseRequests()).toHaveLength(0);
+  });
+
+  it('words typed while it is open close it and go to the plan change, whatever they say', async () => {
+    setPlanEditAvailabilityForTests({ kind: 'available', programId: PROGRAM_ID, program: liveProgram(), day: null });
+    api.on('POST', `/health/programs/${PROGRAM_ID}/edits`, Reply.ok({ kind: 'clarify', reply: null, question: { text: 'Which day?', choices: [] }, variants: [], notApplied: [], replayed: false }));
+    await coach().startAdjust();
+    expect(adjustFlowForTests()).not.toBeNull();
+    await coach().send('the Thursday one is too long');
+    expect(adjustFlowForTests()).toBeNull();
+    expect(api.sentAll(`/health/programs/${PROGRAM_ID}/edits`)).toHaveLength(1);
+    expect(api.sent(`/health/programs/${PROGRAM_ID}/edits`).body).toEqual({ message: 'the Thursday one is too long', locale: 'en' });
+    expect(assistantTexts()).not.toContain(en('program.typed_hint'));
   });
 });

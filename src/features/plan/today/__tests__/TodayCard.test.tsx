@@ -19,6 +19,7 @@ import { restoreTestFontScale, setTestFontScale } from '../../../../hooks/testin
 import { setCurrentLanguage, translate } from '../../../../i18n';
 import { addServerDays, shortDay } from '../../../../i18n/format';
 import * as runner from '../../../runner';
+import { useAppStore } from '../../../../stores/appStore';
 import { useIntentStore } from '../../../../stores/intentStore';
 import TodaySection from '../../sections/Today';
 import { installWeeklyCheckInOpener } from '../../shell/bridges';
@@ -611,5 +612,33 @@ describe('large text', () => {
     seed(todayJSON({ kind: 'swim', title: 'Pool' }));
     await renderToday();
     expect(screen.getByTestId('plan.today.actions')).toHaveStyle({ flexDirection: 'row' });
+  });
+});
+
+describe('Change with Coach (COACH-6)', () => {
+  it('shows under a planned day while the server changes plans by chat, and opens the Coach about that day', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    seed(todayJSON({ blocks }));
+    await renderToday();
+    await fireEvent.press(screen.getByTestId('plan.today.changeWithCoach'));
+    expect(useIntentStore.getState().pendingCoachPlanEdit).toEqual({ sessionId: SESSION });
+    expect(useIntentStore.getState().pendingTab).toBe('Coach');
+  });
+
+  it('is not offered by a server that does not change plans by chat, nor for a day already done', async () => {
+    seed(todayJSON({ blocks }));
+    await renderToday();
+    expect(screen.queryByTestId('plan.today.changeWithCoach')).toBeNull();
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    seed(todayJSON({ status: 'done' }));
+    await act(async () => settle());
+    expect(screen.queryByTestId('plan.today.changeWithCoach')).toBeNull();
+  });
+
+  it('tags the member\'s own exercise', async () => {
+    seed(todayJSON({ blocks: [{ exerciseId: 'custom-zottman-curl', name: 'Zottman curls', sets: 3, reps: 10, own: true }] }));
+    await renderToday();
+    expect(screen.getByText('Zottman curls')).toBeOnTheScreen();
+    expect(screen.getByText(en('coach.planEdit.ownTag'))).toBeOnTheScreen();
   });
 });

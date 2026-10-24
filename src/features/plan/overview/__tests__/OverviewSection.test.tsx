@@ -16,6 +16,8 @@ import * as bodySheets from '../../../body/sheets';
 import { useChangeDaysPresenter } from '../../days/presenter';
 import { ChangeDaysHost } from '../../days';
 import OverviewSection from '../../sections/Overview';
+import { useAppStore } from '../../../../stores/appStore';
+import { useIntentStore } from '../../../../stores/intentStore';
 import { attachPlanNavigator } from '../../shell/planShell';
 import { dayJSON, freshPlan, memberProfile, signIn, TODAY } from '../../__tests__/planFixtures';
 
@@ -205,5 +207,33 @@ describe('where the rows lead', () => {
     await act(async () => fireEvent.press(button('plan.overview.no_targets')));
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ kind: 'update', programId: PROGRAM }));
     spy.mockRestore();
+  });
+});
+
+describe('a custom plan (COACH-6)', () => {
+  it('says how often it repeats, and offers no Change for its days', async () => {
+    setDay(program({ custom: true, cycleDays: 4, trainingDays: [1, 2, 3, 5, 6] }));
+    await renderSection();
+    expect(screen.getByText('Repeats every 4 days')).toBeOnTheScreen();
+    expect(screen.queryByText('Days: Mon, Tue, Wed, Fri, Sat')).toBeNull();
+    expect(screen.queryByRole('button', { name: en('plan.overview.change_days') })).toBeNull();
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+  });
+
+  it('offers "Change with Coach" there while the server changes plans by chat: the Coach, asked about the plan', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    setDay(program({ custom: true, cycleDays: 4 }));
+    await renderSection();
+    await fireEvent.press(button('coach.planEdit.changeWithCoach'));
+    expect(useIntentStore.getState().pendingCoachPlanEdit).toEqual({});
+    expect(useIntentStore.getState().pendingTab).toBe('Coach');
+  });
+
+  it('a template plan keeps Change days whatever the server supports', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    setDay(program());
+    await renderSection();
+    expect(button('plan.overview.change_days')).toBeEnabled();
+    expect(screen.getByText('Days: Mon, Wed, Fri')).toBeOnTheScreen();
   });
 });

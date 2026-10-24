@@ -34,9 +34,9 @@ import { hasPhrase, phraseOf, tokens } from '../routing/tokens';
 /** Single words that ask for a change. */
 export const EDIT_VERBS: ReadonlySet<string> = new Set([
   // English
-  'swap', 'replace', 'change', 'switch', 'move', 'add', 'remove', 'drop', 'rename',
-  // Icelandic
-  'skipta', 'skiptu', 'breyta', 'breyttu', 'faera', 'faerdu', 'taktu',
+  'swap', 'replace', 'change', 'switch', 'move', 'add', 'remove', 'drop', 'rename', 'reduce', 'increase',
+  // Icelandic (with the dose verbs: fewer, more, longer, shorter)
+  'skipta', 'skiptu', 'breyta', 'breyttu', 'faera', 'faerdu', 'taktu', 'faekkadu', 'fjolgadu', 'lengdu', 'styttu',
   // German
   'tauschen', 'tausch', 'tausche', 'ersetzen', 'ersetze', 'statt', 'anstatt', 'andern', 'verschieben',
   'verschieb', 'verschiebe', 'hinzufugen', 'fug', 'entfernen', 'entferne', 'streichen', 'streich',
@@ -50,19 +50,21 @@ export const EDIT_PHRASES: readonly string[] = [
 
 /**
  * "make" asks for a change only with a rest day or a dose ("make Thursday a
- * rest day", "make it 4 sets"): "make me a plan" is the programme wizard's.
+ * rest day", "make it 4 sets", "gerðu fimmtudag að hvíldardegi", "mach
+ * Donnerstag zum Ruhetag"): "make me a plan" is the programme wizard's.
  */
-const MAKE_VERBS: ReadonlySet<string> = new Set(['make']);
+const MAKE_VERBS: ReadonlySet<string> = new Set(['make', 'gerdu', 'mach', 'mache']);
 
 /** The plan's things, as words. */
 export const PLAN_OBJECT_WORDS: ReadonlySet<string> = new Set([
   // English
-  'exercise', 'exercises', 'workout', 'workouts', 'set', 'sets', 'rep', 'reps',
+  'exercise', 'exercises', 'workout', 'workouts', 'set', 'sets', 'rep', 'reps', 'training',
   // Icelandic
-  'aefing', 'aefingu', 'aefingar', 'aefingum', 'aefinguna', 'aefingin', 'sett', 'settum', 'settin',
+  'aefing', 'aefingu', 'aefingar', 'aefingum', 'aefinguna', 'aefingin', 'aefingunni', 'aefingarnar', 'aefingunum',
+  'sett', 'settum', 'settin', 'settunum', 'settinu',
   'hvildardagur', 'hvildardag', 'hvildardegi', 'aaetlun', 'aaetlunina', 'aaetluninni',
   // German
-  'ubung', 'ubungen', 'satze', 'satz', 'wiederholungen', 'ruhetag', 'trainingsplan',
+  'ubung', 'ubungen', 'satze', 'satz', 'wiederholungen', 'ruhetag', 'trainingsplan', 'trainings',
 ]);
 
 /** The plan's things, as phrases. */
@@ -70,7 +72,9 @@ export const PLAN_OBJECT_PHRASES: readonly string[] = ['rest day', 'my plan', 't
 
 /** What "make" needs next to it (a rest day or a dose). */
 const MAKE_OBJECT_WORDS: ReadonlySet<string> = new Set([
-  'set', 'sets', 'rep', 'reps', 'seconds', 'minutes', 'sett', 'endurtekningar', 'satze', 'wiederholungen', 'sekunden',
+  'set', 'sets', 'rep', 'reps', 'seconds', 'minutes',
+  'sett', 'settin', 'endurtekningar', 'sekundur', 'hvildardag', 'hvildardegi', 'hvildardagur',
+  'satze', 'satz', 'wiederholungen', 'sekunden', 'ruhetag',
 ]);
 const MAKE_OBJECT_PHRASES: readonly string[] = ['rest day'];
 
@@ -139,6 +143,13 @@ export interface PlanVocabulary {
 
 export const EMPTY_VOCABULARY: PlanVocabulary = { words: new Set(), phrases: [] };
 
+/** A name's word, and its English plural or singular ("squat" and "squats": a member says either). */
+function addWithPlural(words: Set<string>, word: string): void {
+  words.add(word);
+  if (word.endsWith('s') && word.length > 5) words.add(word.slice(0, -1));
+  else words.add(`${word}s`);
+}
+
 /**
  * The vocabulary of a list of names: each whole name, each run of two or
  * more of its words, and each of its words that could only mean it. A day
@@ -156,9 +167,9 @@ export function vocabularyOf(names: readonly (string | null | undefined)[]): Pla
         for (let end = start + 2; end <= folded.length; end += 1) phrases.add(folded.slice(start, end).join(' '));
       }
       for (const word of folded) {
-        if (word.length >= 5 && !GENERIC_WORDS.has(word) && !/^\d+$/.test(word)) words.add(word);
+        if (word.length >= 5 && !GENERIC_WORDS.has(word) && !/^\d+$/.test(word)) addWithPlural(words, word);
       }
-      if (folded.length === 1 && folded[0]!.length >= 4 && !GENERIC_WORDS.has(folded[0]!)) words.add(folded[0]!);
+      if (folded.length === 1 && folded[0]!.length >= 4 && !GENERIC_WORDS.has(folded[0]!)) addWithPlural(words, folded[0]!);
     }
   }
   return { words, phrases: [...phrases] };
@@ -189,11 +200,32 @@ function hasWord(words: readonly string[], set: ReadonlySet<string>): boolean {
   return words.some((word) => set.has(word));
 }
 
+/**
+ * A typed word names one of the plan's words: the same word, or one that
+ * differs only in its ending ("bekkpressu" for "Bekkpressa", "hnébeygjurnar"
+ * for "Hnébeygja", "squats" for "squat"): both at least five letters, and
+ * all but the last two letters of the shorter one shared.
+ */
+export function namesVocabularyWord(words: readonly string[], vocabulary: PlanVocabulary): boolean {
+  for (const word of words) {
+    if (vocabulary.words.has(word)) return true;
+    if (word.length < 5) continue;
+    for (const known of vocabulary.words) {
+      if (known.length < 5) continue;
+      const shorter = Math.min(word.length, known.length);
+      let shared = 0;
+      while (shared < shorter && word[shared] === known[shared]) shared += 1;
+      if (shared >= 5 && shared >= shorter - 2) return true;
+    }
+  }
+  return false;
+}
+
 function namesPlanThing(words: readonly string[], phrase: string, vocabulary: PlanVocabulary): boolean {
   return (
     hasWord(words, PLAN_OBJECT_WORDS) ||
     hasPhrase(phrase, PLAN_OBJECT_PHRASES) ||
-    hasWord(words, vocabulary.words) ||
+    namesVocabularyWord(words, vocabulary) ||
     hasPhrase(phrase, vocabulary.phrases)
   );
 }
@@ -206,7 +238,7 @@ function asksForChange(words: readonly string[], phrase: string, vocabulary: Pla
     hasWord(words, MAKE_OBJECT_WORDS) ||
     hasPhrase(phrase, MAKE_OBJECT_PHRASES) ||
     words.some((word) => /^\d+x\d+$/.test(word)) ||
-    hasWord(words, vocabulary.words) ||
+    namesVocabularyWord(words, vocabulary) ||
     hasPhrase(phrase, vocabulary.phrases)
   );
 }

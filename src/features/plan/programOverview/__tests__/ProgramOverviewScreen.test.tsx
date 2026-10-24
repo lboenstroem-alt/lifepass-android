@@ -21,6 +21,7 @@ import { resetUiKit, UiKitProvider } from '../../../../components/ui';
 import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
 import { decodeHealthDay, fetchProgram, ReminderKeys, useHealthStore } from '../../../../health';
 import { setCurrentLanguage, translate } from '../../../../i18n';
+import { useAppStore } from '../../../../stores/appStore';
 import { useIntentStore } from '../../../../stores/intentStore';
 import { openRunner } from '../../../runner';
 import { ChangeDaysHost } from '../../days';
@@ -407,5 +408,76 @@ describe('past mode', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
     expect(await screen.findByText('preview:w2-1')).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: 'preview start' })).toBeNull();
+  });
+});
+
+describe('changes made in chat (COACH-6)', () => {
+  const editsPath = `${programPath}/edits`;
+  const EDIT = '5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f';
+  const OLDER = '6a1d2e3f-4b5c-4d6e-9f70-8b9c0d1e2f30';
+  const edit = (extra: Record<string, unknown> = {}) => ({
+    id: EDIT,
+    programId: PROGRAM,
+    status: 'applied',
+    appliedAt: '2026-10-21T10:00:00.000Z',
+    undoneAt: null,
+    undoUntil: '2099-10-28T10:00:00.000Z',
+    undoable: true,
+    summary: 'Push-ups instead of bench press on Push days.',
+    changes: [],
+    ...extra,
+  });
+
+  it('a custom plan offers no Change training days', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ custom: true, cycleDays: 4 }) }));
+    await renderOverview('live');
+    expect(screen.queryByRole('button', { name: en('plan.overview.change_days') })).toBeNull();
+    expect(button('plan.overview.pause')).toBeOnTheScreen();
+  });
+
+  it('lists them newest first, with Undo while the server can, and Undone on one taken back', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    // The Today read Undo asks for again still says what the server supports.
+    api.on('GET', '/health', Reply.ok({ ...dayJSON(TODAY), features: ['plan_edit'] }));
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit(), edit({ id: OLDER, status: 'undone', undoable: false, summary: 'No cable machine.' })] }));
+    await renderOverview('live');
+    expect(await screen.findByText(en('coach.planEdit.changesList'))).toBeOnTheScreen();
+    expect(screen.getByText('Push-ups instead of bench press on Push days.')).toBeOnTheScreen();
+    expect(screen.getByTestId(`programOverview.change.${OLDER}.undone`)).toBeOnTheScreen();
+    expect(api.sent(editsPath, 'GET').query).toEqual({ locale: 'en' });
+
+    api.on('POST', `${editsPath}/${EDIT}/undo`, Reply.ok({ edit: edit({ status: 'undone', undoable: false }), program: { id: PROGRAM }, changed: [], keptRows: 0, replayed: false }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit({ status: 'undone', undoable: false }), edit({ id: OLDER, status: 'undone', undoable: false })] }));
+    await fireEvent.press(screen.getByTestId(`programOverview.change.${EDIT}.undo`));
+    await waitFor(() => expect(screen.getByTestId(`programOverview.change.${EDIT}.undone`)).toBeOnTheScreen());
+    expect(api.sentAll(`${editsPath}/${EDIT}/undo`, 'POST')).toHaveLength(1);
+    expect(api.sent(`${editsPath}/${EDIT}/undo`).headers['idempotency-key']).toBeTruthy();
+  });
+
+  it('an Undo the server refuses says why on its row', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit()] }));
+    api.on('POST', `${editsPath}/${EDIT}/undo`, Reply.problem(409, 'plan_edit_undo_unavailable', { reason: 'window_closed' }));
+    await renderOverview('live');
+    await fireEvent.press(await screen.findByTestId(`programOverview.change.${EDIT}.undo`));
+    expect(await screen.findByText(en('coach.planEdit.error.undoWindow'))).toBeOnTheScreen();
+  });
+
+  it('nothing is read or drawn on a server that does not change plans by chat and a plan with no change', async () => {
+    useAppStore.setState({ serverFeatures: [] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    await renderOverview('live');
+    expect(api.sentAll(editsPath)).toHaveLength(0);
+    expect(screen.queryByText(en('coach.planEdit.changesList'))).toBeNull();
+  });
+
+  it('a plan that carries a change is read even after the feature was turned off, so it can still be undone', async () => {
+    useAppStore.setState({ serverFeatures: [] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ lastEdit: { editId: EDIT, undoUntil: '2099-10-28T10:00:00.000Z', undoable: true } }) }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit()] }));
+    await renderOverview('live');
+    expect(await screen.findByTestId(`programOverview.change.${EDIT}.undo`)).toBeOnTheScreen();
   });
 });
