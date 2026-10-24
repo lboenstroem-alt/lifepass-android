@@ -10,8 +10,11 @@
 //
 // TWO KEYS ARE THE CONSENT TEXT 2026-09-v4 (`healthconsent.ai.plan_edit`,
 // `healthconsent.ai.never_text_v4`): the words a member accepts, so they
-// change only with a new consent version. Their Icelandic awaits native
-// review with the privacy edition.
+// change only with a new consent version. They are the web's
+// `health.consent.ai.plan_edit` and `health.consent.ai.never_text` of the
+// same version WORD FOR WORD (monorepo apps/web common.{en,is}.json, pinned by
+// health-i18n.test.ts): one text per consent version, whichever screen grants
+// it. Their Icelandic awaits native review with the privacy edition.
 //
 // Everything the preview card says about the change itself (the summary,
 // the day labels, each "before → after", the notes) is server text in the
@@ -87,9 +90,9 @@ export default definePack({
 
     // The consent text, 2026-09-v4
     'healthconsent.ai.plan_edit':
-      "When you ask the Coach to change your workout plan, your message goes to Anthropic with the plan: its exercises, sets and the names and notes you wrote. Never your safety answers, body values or dates. We don't keep your message. A change you apply is kept with your plan, including names and notes for your own exercises; a suggestion you don't apply is deleted within 24 hours.",
+      "If you ask the Coach to change your workout plan, your words and the plan (its exercises, sets and rest, and the names and notes you wrote for your own exercises) go to Anthropic only to make the change. Never your safety answers, body measurements or dates, and never your name, email or any account ID. Anthropic may not train on them and deletes them within 30 days, apart from the exceptions in our privacy policy. We don't keep your words. A change you apply is kept with your plan, and a suggestion you don't apply is deleted within 24 hours.",
     'healthconsent.ai.never_text_v4':
-      'Never notes or anything you type when a plan is made. When you ask the Coach to change your plan, your message is sent to make that change.',
+      'Never notes or anything you type when a plan is made, apart from a change you ask the Coach to make (below). Coach chat messages are sent as you write them, so leave health details out of chat.',
 
     // Plan tab: a plan that repeats as a cycle
     'plan.overview.cycle': 'Repeats every {count} days',
@@ -162,9 +165,9 @@ export default definePack({
 
     // The consent text, 2026-09-v4
     'healthconsent.ai.plan_edit':
-      'Þegar þú biður ráðgjafann að breyta æfingaáætluninni fara skilaboðin þín til Anthropic ásamt áætluninni: æfingum, settum og þeim nöfnum og athugasemdum sem þú skrifaðir. Aldrei svörin þín við öryggisspurningunum, líkamsmælingar eða dagsetningar. Við geymum ekki skilaboðin þín. Breyting sem þú staðfestir er geymd með áætluninni, þar á meðal nöfn og athugasemdir við þínar eigin æfingar; tillaga sem þú staðfestir ekki er eytt innan sólarhrings.',
+      'Ef þú biður ráðgjafann að breyta æfingaáætluninni fara orðin þín og áætlunin (æfingar hennar, sett og hvíld, og nöfn og athugasemdir sem þú skrifaðir fyrir eigin æfingar) til Anthropic eingöngu til að gera breytinguna. Aldrei svör þín við öryggisspurningunum, líkamsmælingar eða dagsetningar, og aldrei nafnið þitt, netfang eða auðkenni aðgangs. Anthropic má ekki nota þau til þjálfunar og eyðir þeim innan 30 daga, með þeim undantekningum sem koma fram í persónuverndarstefnunni. Við geymum ekki orðin þín. Breyting sem þú staðfestir er geymd með áætluninni og tillögu sem þú staðfestir ekki er eytt innan sólarhrings.',
     'healthconsent.ai.never_text_v4':
-      'Aldrei athugasemdir eða neitt sem þú skrifar þegar áætlun er búin til. Þegar þú biður ráðgjafann að breyta áætluninni eru skilaboðin þín send til að gera breytinguna.',
+      'Aldrei athugasemdir eða neitt sem þú skrifar þegar áætlun er búin til, nema breyting sem þú biður ráðgjafann að gera (sjá hér að neðan). Skilaboð í spjalli við ráðgjafann eru send eins og þú skrifar þau, svo slepptu heilsuupplýsingum þar.',
 
     // Plan tab: a plan that repeats as a cycle
     'plan.overview.cycle': 'Endurtekst á {count} daga fresti',

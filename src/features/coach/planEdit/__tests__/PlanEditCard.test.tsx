@@ -11,6 +11,7 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
 import { setCurrentLanguage, translate, type Params } from '../../../../i18n';
+import { useAppStore } from '../../../../stores/appStore';
 import { useRunnerProgress } from '../../../runner';
 import type { CoachFlowBubble } from '../../store/messages';
 import { PlanEditMessageKind, type PlanEditCardPayload } from '../flow';
@@ -215,6 +216,24 @@ describe('the consent', () => {
     expect(flow.grantConsentFor).toHaveBeenCalledWith('c1');
     await fireEvent.press(screen.getByTestId('coach.planEdit.consentNotNow'));
     expect(flow.declineConsentFor).toHaveBeenCalledWith('c1');
+  });
+
+  it('also shows the describe line to a consent older than v3 (v4 covers both)', async () => {
+    const withConsent = (version: string) =>
+      useAppStore.setState((state) => ({
+        profile: { ...(state.profile ?? {}), health: { ...(state.profile?.health ?? {}), consent: { version, consentedAt: '2026-09-20T10:00:00Z', ageSource: 'kennitala' } } } as never,
+      }));
+    withConsent('2026-09-v2');
+    const first = await render(<PlanEditConsentBubble message={consent()} busy={false} />);
+    expect(screen.getByText(en('healthconsent.ai.describe'))).toBeOnTheScreen();
+    expect(screen.getByText(en('healthconsent.ai.plan_edit'))).toBeOnTheScreen();
+    await first.unmount();
+    withConsent('2026-09-v3');
+    const second = await render(<PlanEditConsentBubble message={consent()} busy={false} />);
+    expect(screen.queryByText(en('healthconsent.ai.describe'))).toBeNull();
+    expect(screen.getByText(en('healthconsent.ai.plan_edit'))).toBeOnTheScreen();
+    await second.unmount();
+    useAppStore.setState({ profile: null } as never);
   });
 
   it('goes once answered', async () => {

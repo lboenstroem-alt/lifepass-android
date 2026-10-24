@@ -45,6 +45,12 @@ export const SHEET_CONSENT_PALETTE: AiConsentPalette = {
 export interface AiConsentBlockProps {
   /** The consent line, already the key of the version that will be granted. */
   readonly lineKey: string;
+  /**
+   * Lines of the same version the member has not been shown yet, above the
+   * main one (the describe line for a plan-change grant over a consent older
+   * than v3).
+   */
+  readonly extraLines?: readonly { readonly key: string; readonly icon: keyof typeof Ionicons.glyphMap }[];
   readonly ctaKey: string;
   readonly granting: boolean;
   /** A sentence under the button (a failed grant). */
@@ -60,6 +66,7 @@ export interface AiConsentBlockProps {
 
 export default function AiConsentBlock({
   lineKey,
+  extraLines = [],
   ctaKey,
   granting,
   errorKey,
@@ -73,6 +80,16 @@ export default function AiConsentBlock({
   const { t } = useT();
   return (
     <View style={[styles.consent, { backgroundColor: palette.background, borderColor: palette.border }]} testID={testID}>
+      {extraLines.map((extra) => (
+        <View key={extra.key} style={styles.line} testID={`${testID}.${extra.key}`}>
+          <View {...hiddenFromAccessibility} style={styles.icon}>
+            <Ionicons name={extra.icon} size={16} color={palette.icon} />
+          </View>
+          <LPText size={14} color={palette.text} style={styles.grow}>
+            {t(extra.key)}
+          </LPText>
+        </View>
+      ))}
       <View style={styles.line}>
         <View {...hiddenFromAccessibility} style={styles.icon}>
           <Ionicons name={icon} size={16} color={palette.icon} />

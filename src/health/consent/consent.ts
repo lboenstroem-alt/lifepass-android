@@ -39,6 +39,14 @@ export const HealthConsentVersion = {
   coversPlanEdit(version: string | null | undefined): boolean {
     return version === HealthConsentVersion.withPlanEdit;
   },
+  /**
+   * The consent the member gave already names describing a meal (v3, and v4,
+   * which is v3 and one line more). A member granting v4 from the plan-change
+   * consent without it is shown that line too, since v4 covers both.
+   */
+  coversMealDescribe(version: string | null | undefined): boolean {
+    return version === HealthConsentVersion.withMealDescribe || version === HealthConsentVersion.withPlanEdit;
+  },
   /** The text the consent sheet shows, by what the server supports. */
   shown(supportsMealDescribe: boolean, supportsPlanEdit = false): string {
     if (supportsPlanEdit) return HealthConsentVersion.withPlanEdit;

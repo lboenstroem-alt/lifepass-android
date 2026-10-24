@@ -13,7 +13,9 @@ import { memo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { LPText } from '../../../components/ui';
+import { HealthConsentVersion } from '../../../health';
 import { AiConsentBlock, type AiConsentPalette } from '../../../health/ui';
+import { useAppStore } from '../../../stores/appStore';
 import { useT } from '../../../i18n';
 import type { CoachMessageRendererProps } from '../flows/types';
 import { coachPalette } from '../theme/palette';
@@ -31,8 +33,12 @@ const COACH_CONSENT_PALETTE: AiConsentPalette = {
   buttonText: '#FFFFFF',
 };
 
+/** v4 also covers describing a meal: a consent older than v3 never showed that line, so it is shown here. */
+const DESCRIBE_LINE = [{ key: 'healthconsent.ai.describe', icon: 'chatbubble-ellipses-outline' }] as const;
+
 function PlanEditConsentBubble({ message, busy }: CoachMessageRendererProps) {
   const { t } = useT();
+  const standingVersion = useAppStore((s) => s.profile?.health?.consent?.version ?? null);
   const payload = message.payload as PlanEditConsentPayload | undefined;
   if (!payload || payload.status === 'granted' || payload.status === 'declined') return null;
   const granting = payload.status === 'granting' || busy;
@@ -43,6 +49,7 @@ function PlanEditConsentBubble({ message, busy }: CoachMessageRendererProps) {
       </LPText>
       <AiConsentBlock
         lineKey="healthconsent.ai.plan_edit"
+        extraLines={HealthConsentVersion.coversMealDescribe(standingVersion) ? [] : DESCRIBE_LINE}
         ctaKey="coach.planEdit.consent.cta"
         icon="barbell-outline"
         granting={granting}
