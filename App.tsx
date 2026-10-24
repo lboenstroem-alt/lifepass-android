@@ -9,7 +9,10 @@
  * - location at LAUNCH, not when Home appears: a link can open the app
  *   straight into another tab (F6 `startLocationAtLaunch`);
  * - the link router (check-in, auth, payment returns) and the notification
- *   tap router, both of which park what they receive until the tabs are up.
+ *   tap router, both of which park what they receive until the tabs are up;
+ * - the update check (src/features/appUpdate): below the owner's minimum
+ *   version the app is blocked behind an Update button, and a newer version
+ *   on Google Play is offered once. It fails open: no answer, no prompt.
  *
  * Notification permission is NOT asked here: iOS never asks at launch, only
  * in context (a first booking, a reminder switch), and a member who has not
@@ -46,6 +49,7 @@ import { startDeepLinks } from './src/app/deepLinks';
 import { prepareLaunchTab } from './src/app/launchTab';
 import { startNotificationRouter } from './src/app/notificationRouter';
 import { UiKitProvider } from './src/components/ui';
+import { AppUpdateHost } from './src/features/appUpdate';
 import { onUnhandledNavigationAction } from './src/navigation/legacyRoutes';
 import { navigationRef } from './src/navigation/navigationRef';
 import { setLaunchTab } from './src/navigation/navPrefs';
@@ -119,6 +123,8 @@ export default function App() {
           <RootNavigator />
         </UiKitProvider>
       </NavigationContainer>
+      {/* Over everything, the sign-in screens and the launch screen too. */}
+      <AppUpdateHost />
     </SafeAreaProvider>
   );
 }

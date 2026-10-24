@@ -24,6 +24,8 @@ const PACKAGE_IDS = [
   'PLAN-3', 'RUN-2', 'RUN-3', 'MEAL-2', 'MEAL-3', 'MEAL-4', 'MEAL-5', 'COACH-3', 'COACH-4', 'COACH-5',
   'ATTR-2', 'NOTIF-1', 'NOTIF-2',
   'QA-1', 'REL-1',
+  // After the parity plan: the update prompt (src/features/appUpdate).
+  'UPDATE-1',
 ];
 
 const PACK_DIR = path.join(__dirname, '..', 'android');
