@@ -4,7 +4,8 @@
   "coach.greeting"
  ],
  "aheadOfIos": [
-  "Booking confirm card (IS): the service row says Þjónusta, not Tími, the Time row's word (lifepass-ios: the feat/booking-layout-update-prompt follow-up)"
+  "Booking confirm card (IS): the service row says Þjónusta, not Tími, the Time row's word (lifepass-ios: the feat/booking-layout-update-prompt follow-up)",
+  "Venue hours kicker: Usual hours / Almennur opnunartími, not This week / Þessa viku, key venue.hours_this_week to venue.hours_usual (lifepass-ios feat/venue-usual-hours-is-description bb92f16)"
  ],
  "dictionaries": [
   {

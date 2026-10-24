@@ -14,6 +14,26 @@
      "booking.activity": "Þjónusta"
     }
    }
+  },
+  {
+   "change": "Venue hours kicker: Usual hours / Almennur opnunartími, not This week / Þessa viku, key venue.hours_this_week to venue.hours_usual (lifepass-ios feat/venue-usual-hours-is-description bb92f16)",
+   "dictionary": "base",
+   "ios": {
+    "en": {
+     "venue.hours_this_week": "This week"
+    },
+    "is": {
+     "venue.hours_this_week": "Þessa viku"
+    }
+   },
+   "android": {
+    "en": {
+     "venue.hours_usual": "Usual hours"
+    },
+    "is": {
+     "venue.hours_usual": "Almennur opnunartími"
+    }
+   }
   }
  ]
 }
