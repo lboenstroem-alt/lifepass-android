@@ -210,30 +210,32 @@ describe('where the rows lead', () => {
   });
 });
 
-describe('a custom plan (COACH-6)', () => {
-  it('says how often it repeats, and offers no Change for its days', async () => {
+describe('a custom plan, and changes in chat (COACH-6)', () => {
+  it('a custom plan says how often it repeats, and offers no Change for its days and no Adjust', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit', 'plan_revision'] });
     setDay(program({ custom: true, cycleDays: 4, trainingDays: [1, 2, 3, 5, 6] }));
     await renderSection();
     expect(screen.getByText('Repeats every 4 days')).toBeOnTheScreen();
     expect(screen.queryByText('Days: Mon, Tue, Wed, Fri, Sat')).toBeNull();
     expect(screen.queryByRole('button', { name: en('plan.overview.change_days') })).toBeNull();
-    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+    expect(screen.queryByRole('button', { name: en('coach.chip.adjust_plan') })).toBeNull();
   });
 
-  it('offers "Change with Coach" there while the server changes plans by chat: the Coach, asked about the plan', async () => {
-    useAppStore.setState({ serverFeatures: ['plan_edit'] });
-    setDay(program({ custom: true, cycleDays: 4 }));
-    await renderSection();
-    await fireEvent.press(button('coach.planEdit.changeWithCoach'));
-    expect(useIntentStore.getState().pendingCoachPlanEdit).toEqual({});
-    expect(useIntentStore.getState().pendingTab).toBe('Coach');
-  });
-
-  it('a template plan keeps Change days whatever the server supports', async () => {
-    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+  it('once the Coach changes plans from words, Adjust my plan is a row here, and opens it in the Coach', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit', 'plan_revision'] });
     setDay(program());
     await renderSection();
     expect(button('plan.overview.change_days')).toBeEnabled();
+    await fireEvent.press(button('coach.chip.adjust_plan'));
+    expect(useIntentStore.getState().pendingCoachProgram).toEqual({ kind: 'adjust' });
+    expect(useIntentStore.getState().pendingTab).toBe('Coach');
+  });
+
+  it('without the plan change (the Coach chip still adjusts), no Adjust row', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_revision'] });
+    setDay(program());
+    await renderSection();
+    expect(screen.queryByRole('button', { name: en('coach.chip.adjust_plan') })).toBeNull();
     expect(screen.getByText('Days: Mon, Wed, Fri')).toBeOnTheScreen();
   });
 });

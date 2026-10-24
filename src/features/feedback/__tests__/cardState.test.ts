@@ -237,6 +237,13 @@ describe('which action a line may offer (SPEC 9.6)', () => {
     expect(resolve('unknown')).toBeNull();
   });
 
+  it('a custom plan (COACH-6) offers neither Adjust my plan nor Change days: it refuses both', () => {
+    const custom = { supportsPlanRevision: true, hasLiveProgram: true, access: 'entitled' as const, isCustomPlan: true };
+    expect(resolveFeedbackAction('adjust_plan', custom)).toBeNull();
+    expect(resolveFeedbackAction('change_days', custom)).toBeNull();
+    expect(resolveFeedbackAction('log_meal', custom)).toBe('log_meal');
+  });
+
   it('labels the house way', () => {
     expect(feedbackActionLabelKey('adjust_plan')).toBe('coach.chip.adjust_plan');
     expect(feedbackActionLabelKey('change_days')).toBe('feedback.action.change_days');

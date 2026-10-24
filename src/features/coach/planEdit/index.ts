@@ -6,7 +6,7 @@
  * screen.
  */
 export { fetchPlanEdits, isMissingRoute, planEditProblem, type PlanEditProblem } from './api';
-export { usePlanEditOffered } from './availability';
+export { usePlanEditOffered, usePlanEditReady } from './availability';
 export { announceUndone, isUndoable, undoEdit } from './undo';
 export type { PlanEditChangeGroup, PlanEditChangeItem, PlanEditView } from './types';
 export { SINGLE_LINE_ITEM_TYPES } from './types';

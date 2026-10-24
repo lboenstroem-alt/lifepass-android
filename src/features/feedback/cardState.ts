@@ -121,14 +121,25 @@ function isShown(text: string | null): boolean {
  */
 export function resolveFeedbackAction(
   action: FeedbackAction | null | undefined,
-  context: { readonly supportsPlanRevision: boolean; readonly hasLiveProgram: boolean; readonly access: HealthAccess },
+  context: {
+    readonly supportsPlanRevision: boolean;
+    readonly hasLiveProgram: boolean;
+    readonly access: HealthAccess;
+    /**
+     * The member's own cycle (COACH-6): it refuses both Adjust my plan and
+     * Change days (409 `custom_plan_locked`), so neither is offered.
+     */
+    readonly isCustomPlan?: boolean;
+  },
 ): Exclude<FeedbackAction, 'unknown'> | null {
   if (!action || context.access !== 'entitled') return null;
   switch (action) {
     case 'adjust_plan':
+      if (context.isCustomPlan) return null;
       if (context.supportsPlanRevision && context.hasLiveProgram) return 'adjust_plan';
       return context.hasLiveProgram ? 'change_days' : null;
     case 'change_days':
+      if (context.isCustomPlan) return null;
       return context.hasLiveProgram ? 'change_days' : null;
     case 'log_meal':
       return 'log_meal';

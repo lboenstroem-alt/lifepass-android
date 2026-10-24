@@ -770,14 +770,13 @@ export async function submitRevision(): Promise<void> {
 function applyRevision(program: ProgramDetail, kinds: readonly AdjustChangeKind[], chatEdits: number): void {
   for (const kind of kinds) track('program_adjust_submitted', { change: kind });
   endAdjustFlow();
-  // The running plan carries changes made in chat (COACH-6): switching to
-  // this rebuild replaces them, apart from the equipment the member does
-  // not have. Said before the card, so it is read before the switch.
-  if (chatEdits > 0) appendProgramBubble('coach.planEdit.adjustWarning');
   const intro = program.program.intro?.trim() ?? '';
   if (intro) appendProgramBubble(null, intro);
-  // The same card a build lands as, in revision mode (`SPEC` 6.8).
-  appendProposalMessage(program);
+  // The same card a build lands as, in revision mode (`SPEC` 6.8). The
+  // running plan carries changes made in chat (COACH-6): switching to this
+  // rebuild replaces them, apart from the equipment the member does not
+  // have, and the card says so until the member decides (iOS).
+  appendProposalMessage(program, chatEdits > 0 ? 'coach.planEdit.adjustWarning' : null);
   programStoreChanged();
 }
 

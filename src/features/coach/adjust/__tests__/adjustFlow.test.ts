@@ -812,20 +812,22 @@ describe('with changes made in chat (COACH-6)', () => {
     resetPlanEdit();
   });
 
-  it('warns before the revision that it replaces them, apart from the equipment the member does not have', async () => {
+  it('says under the revision that it replaces them, apart from the equipment the member does not have', async () => {
     serveRevise(Reply.ok({ program: revisionJson(), replayed: false, chatEdits: 2 }, 201));
     await confirmEightWeeks();
     await tap(en('program.adjust.show'));
-    const texts = assistantTexts();
-    expect(texts).toContain(en('coach.planEdit.adjustWarning'));
-    expect(texts.indexOf(en('coach.planEdit.adjustWarning'))).toBeLessThan(texts.indexOf('The same plan, run over eight weeks.'));
+    expect(proposalOf(last())).toMatchObject({ warningKey: 'coach.planEdit.adjustWarning', outcome: null });
   });
 
   it('says nothing of it when the plan carries none, or the server is older', async () => {
     serveRevise(Reply.ok({ program: revisionJson(), replayed: false, chatEdits: 0 }, 201));
     await confirmEightWeeks();
     await tap(en('program.adjust.show'));
-    expect(assistantTexts()).not.toContain(en('coach.planEdit.adjustWarning'));
+    expect(proposalOf(last())?.warningKey).toBeNull();
+    serveRevise(revised());
+    await confirmEightWeeks();
+    await tap(en('program.adjust.show'));
+    expect(proposalOf(last())?.warningKey).toBeNull();
   });
 
   it('a custom plan is never adjusted: the wizard\'s own gate answers (it refuses a revision)', async () => {

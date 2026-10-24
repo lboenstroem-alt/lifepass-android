@@ -36,6 +36,7 @@ const session = (json: Record<string, unknown> = {}) =>
     {
       id: ID,
       title: 'Legs',
+      kind: 'strength',
       minutes: 35,
       intensity: 'easy',
       canPull: true,
@@ -165,15 +166,25 @@ describe('COACH-6', () => {
 
   it('"Change with Coach" runs once the sheet has gone, and only when offered', async () => {
     const onChange = jest.fn();
-    await render(<Harness onChangeWithCoach={onChange} />);
+    await render(<Harness json={{ scheduledFor: '2099-01-01', status: 'planned' }} onChangeWithCoach={onChange} />);
     await fireEvent.press(screen.getByRole('button', { name: en('coach.planEdit.changeWithCoach') }));
     await act(async () => settle());
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('header', { name: 'Legs' })).toBeNull();
   });
 
-  it('is not there without the handler', async () => {
-    await render(<Harness />);
+  it('is not there without the handler, nor for a day already past or done', async () => {
+    await render(<Harness json={{ scheduledFor: '2099-01-01' }} />);
     expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+    await render(<Harness json={{ scheduledFor: '2020-01-01' }} onChangeWithCoach={jest.fn()} />);
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+    await render(<Harness json={{ scheduledFor: '2099-01-01', status: 'done' }} onChangeWithCoach={jest.fn()} />);
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+  });
+
+  it('a rest day says no meta line at all', async () => {
+    await render(<Harness json={{ kind: 'rest', minutes: null, blocks: [] }} />);
+    expect(screen.queryByText(/min/)).toBeNull();
+    expect(screen.queryByText(en('plan.intensity.easy'))).toBeNull();
   });
 });

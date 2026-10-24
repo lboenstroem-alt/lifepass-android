@@ -395,6 +395,7 @@ describe('on the runner page', () => {
     const parked = useIntentStore.getState().pendingCoachPlanEdit;
     expect(parked).toEqual({
       sessionId: 'sess-1',
+      sessionTitle: 'Full body strength',
       exerciseId: controller.state.exercises[0]!.plannedExerciseId,
       prefill: `I don't have the equipment for ${controller.state.exercises[0]!.plannedName}`,
     });

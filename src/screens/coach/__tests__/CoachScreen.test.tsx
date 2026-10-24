@@ -187,6 +187,7 @@ describe('the empty state', () => {
   it('reads "Change my plan" while a plan runs on a server that changes plans by chat (COACH-6), and it asks what to change', async () => {
     const withConsent = profile({
       health: {
+        access: 'entitled',
         program: { id: 'program-1', status: 'active' },
         consent: { version: '2026-09-v3', consentedAt: '2026-09-01T10:00:00Z', ageSource: 'kennitala' },
       },

@@ -21,8 +21,12 @@
  *
  * A plan the member wrote, or one a chat edit made repeat as a cycle
  * (`program.custom`), says how often it repeats ("Repeats every 4 days")
- * instead of its padded weekdays, and offers "Change with Coach" where
- * Change days would be: the server refuses Change days on such a plan.
+ * instead of its padded weekdays, and offers no Change days and no Adjust
+ * my plan: the server refuses both on such a plan (COACH-6, as iOS).
+ *
+ * "Adjust my plan" is a row here once the Coach's chip reads "Change my
+ * plan" (the server changes plans from words), so Adjust keeps a way in
+ * (`onAdjust`; absent hides it).
  *
  * Pure presentation: the section (../sections/Overview.tsx) wires the taps.
  */
@@ -48,8 +52,8 @@ export type PlanOverviewCardProps = {
   onPause: () => void;
   onResume: () => void;
   onEnd: () => void;
-  /** "Change with Coach" (COACH-6): shown on a custom plan in place of Change. Absent: not offered. */
-  onChangeWithCoach?: () => void;
+  /** Adjust my plan in the Coach (COACH-6): offered once the Coach's chip is "Change my plan". Absent hides it. */
+  onAdjust?: () => void;
   testID?: string;
 };
 
@@ -63,7 +67,7 @@ export default function PlanOverviewCard({
   onPause,
   onResume,
   onEnd,
-  onChangeWithCoach,
+  onAdjust,
   testID = 'plan.overview',
 }: PlanOverviewCardProps) {
   const { t, language } = useT();
@@ -95,13 +99,6 @@ export default function PlanOverviewCard({
           disabled={actionsDisabled}
           testID={`${testID}.changeDays`}
         />
-      ) : onChangeWithCoach ? (
-        <TextButton
-          title={t('coach.planEdit.changeWithCoach')}
-          onPress={onChangeWithCoach}
-          disabled={actionsDisabled}
-          testID={`${testID}.changeWithCoach`}
-        />
       ) : null}
     </View>,
   );
@@ -128,6 +125,19 @@ export default function PlanOverviewCard({
       </LPText>
     ),
   );
+  if (onAdjust && !custom) {
+    rows.push(
+      <ChevronButton
+        key="adjust"
+        title={t('coach.chip.adjust_plan')}
+        weight="semibold"
+        color={colors.paper}
+        onPress={onAdjust}
+        disabled={actionsDisabled}
+        testID={`${testID}.adjust`}
+      />,
+    );
+  }
   rows.push(
     <ChevronButton
       key="seeAll"

@@ -35,7 +35,7 @@ import { useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import { useHealthStore } from '../../../health';
 import { currentLanguage, translate } from '../../../i18n';
 import { useIntentStore } from '../../../stores/intentStore';
-import { usePlanEditOffered } from '../../coach/planEdit';
+import { usePlanEditReady } from '../../coach/planEdit';
 
 import FinishWorkoutSheet from '../finish/FinishWorkoutSheet';
 import { finishFlowFor } from '../finish/finishFlow';
@@ -75,7 +75,7 @@ export default function RunnerSheets({ controller, sheet, onClose, isOffline }: 
   }, [sheet, finish]);
 
   const current = currentExercise(state);
-  const planEditOffered = usePlanEditOffered();
+  const planEditReady = usePlanEditReady();
   const programId = state.session.programId;
   const customPlan = useHealthStore((s) => {
     const program = s.today?.program;
@@ -103,10 +103,15 @@ export default function RunnerSheets({ controller, sheet, onClose, isOffline }: 
           onClose();
         }}
         onNotHaveThis={
-          planEditOffered && current
+          planEditReady && !isOffline && current
             ? () => {
                 onClose();
-                notHaveThis(controller, { sessionId: state.sessionId, exerciseId: current.plannedExerciseId, name: current.plannedName });
+                notHaveThis(controller, {
+                  sessionId: state.sessionId,
+                  sessionTitle: state.session.title,
+                  exerciseId: current.plannedExerciseId,
+                  name: current.plannedName,
+                });
               }
             : undefined
         }
@@ -124,11 +129,12 @@ export default function RunnerSheets({ controller, sheet, onClose, isOffline }: 
  */
 export function notHaveThis(
   controller: Pick<RunnerController, 'leaveLater'>,
-  exercise: { readonly sessionId: string; readonly exerciseId: string; readonly name: string },
+  exercise: { readonly sessionId: string; readonly sessionTitle: string | null; readonly exerciseId: string; readonly name: string },
 ): void {
   const intents = useIntentStore.getState();
   intents.parkCoachPlanEdit({
     sessionId: exercise.sessionId,
+    sessionTitle: exercise.sessionTitle,
     exerciseId: exercise.exerciseId || null,
     prefill: translate('coach.planEdit.notHavePrefill', currentLanguage(), { exercise: exercise.name }),
   });

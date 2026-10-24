@@ -34,10 +34,12 @@ export const AFTER_POP_DELAY_MS = 450;
 /** Which of a line's actions this member may take right now. */
 export function resolveFeedbackActionNow(action: FeedbackAction | null | undefined): ShownFeedbackAction | null {
   const app = useAppStore.getState();
+  const health = useHealthStore.getState();
   return resolveFeedbackAction(action, {
     supportsPlanRevision: selectSupportsPlanRevision(app),
-    hasLiveProgram: selectHasLiveProgram(useHealthStore.getState()),
+    hasLiveProgram: selectHasLiveProgram(health),
     access: app.healthAccess,
+    isCustomPlan: health.today?.program?.custom === true,
   });
 }
 
@@ -50,9 +52,10 @@ export function useFeedbackActionResolver(): (action: FeedbackAction | null) => 
   const access = useAppStore((s) => s.healthAccess);
   const supportsPlanRevision = useAppStore(selectSupportsPlanRevision);
   const hasLiveProgram = useHealthStore(selectHasLiveProgram);
+  const isCustomPlan = useHealthStore((s) => s.today?.program?.custom === true);
   return useCallback(
-    (action: FeedbackAction | null) => resolveFeedbackAction(action, { supportsPlanRevision, hasLiveProgram, access }),
-    [access, supportsPlanRevision, hasLiveProgram],
+    (action: FeedbackAction | null) => resolveFeedbackAction(action, { supportsPlanRevision, hasLiveProgram, access, isCustomPlan }),
+    [access, supportsPlanRevision, hasLiveProgram, isCustomPlan],
   );
 }
 

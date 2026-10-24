@@ -36,6 +36,12 @@ export interface ProgramSummaryPayload {
 export interface ProgramProposalPayload {
   readonly detail: ProgramDetail;
   readonly outcome: ProposalOutcome | null;
+  /**
+   * A note under the card until the member switches or discards (iOS
+   * `programProposalWarningKey`): a revision of a plan that carries changes
+   * made in chat replaces them (`coach.planEdit.adjustWarning`, COACH-6).
+   */
+  readonly warningKey?: string | null;
 }
 
 /** What a renderer or the flow reads off a message: its kind and payload. */
@@ -130,8 +136,8 @@ export function appendProgramSummaryMessage(answers: ProgramAnswers): string {
  * Adjust my plan (COACH-5) lands its revisions through this too: the card's
  * Start, Not now and Discard come back to `setProposalOutcome`.
  */
-export function appendProposalMessage(detail: ProgramDetail): string {
-  const payload: ProgramProposalPayload = { detail, outcome: null };
+export function appendProposalMessage(detail: ProgramDetail, warningKey: string | null = null): string {
+  const payload: ProgramProposalPayload = { detail, outcome: null, warningKey };
   const [id] = coachHost().append({
     role: 'assistant',
     text: '',

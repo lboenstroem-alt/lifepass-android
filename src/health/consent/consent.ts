@@ -35,6 +35,10 @@ export const HealthConsentVersion = {
    * shown with it whatever `meal_describe` says).
    */
   withPlanEdit: '2026-09-v4',
+  /** The consent the member gave already names a plan change in the Coach. */
+  coversPlanEdit(version: string | null | undefined): boolean {
+    return version === HealthConsentVersion.withPlanEdit;
+  },
   /** The text the consent sheet shows, by what the server supports. */
   shown(supportsMealDescribe: boolean, supportsPlanEdit = false): string {
     if (supportsPlanEdit) return HealthConsentVersion.withPlanEdit;
