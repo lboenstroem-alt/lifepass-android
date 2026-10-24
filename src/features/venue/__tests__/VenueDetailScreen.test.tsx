@@ -126,6 +126,9 @@ describe('a gym with walk-ins and classes, in the plan', () => {
 
     expect(screen.getByTestId('venue.hours.monday')).toHaveTextContent('06:00 – 22:00');
     expect(screen.getByTestId('venue.hours.sunday')).toHaveTextContent('Closed');
+    // The weekly set staff edit is the usual week, not this week's calendar.
+    expect(within(screen.getByTestId('venue.hours')).getByText('USUAL HOURS')).toBeOnTheScreen();
+    expect(screen.queryByText('THIS WEEK')).toBeNull();
     expect(screen.getByText('Laugavegur 77, 101 Reykjavík')).toBeOnTheScreen();
     expect(screen.getByText('+354 555 1234')).toBeOnTheScreen();
     expect(screen.getAllByRole('button', { name: en('venue.directions') })).toHaveLength(2);
@@ -331,6 +334,7 @@ describe('hours, description and reviews', () => {
     await renderPage();
     expect(screen.getByText(/Vinaleg líkamsræktarstöð/)).toBeOnTheScreen();
     expect(screen.getByText(is('venue.day.monday'))).toBeOnTheScreen();
+    expect(within(screen.getByTestId('venue.hours')).getByText('ALMENNUR OPNUNARTÍMI')).toBeOnTheScreen();
     expect(screen.getByTestId('venue.kicker')).toHaveTextContent('Í ÁSKRIFTINNI ÞINNI');
     expect(screen.getByTestId('venue.walkin.price')).toHaveTextContent(is('venue.included_in_plan'));
     expect(screen.getByRole('button', { name: `${is('venue.scan_short')}, ${is('venue.price.included')}` })).toBeOnTheScreen();
@@ -341,6 +345,20 @@ describe('hours, description and reviews', () => {
     serve({ venue: { descriptionIs: null } });
     await renderPage();
     expect(screen.getByText(/A friendly gym with an open floor/)).toBeOnTheScreen();
+  });
+
+  it('in Icelandic with a blank Icelandic description: the English one, not an empty paragraph', async () => {
+    setCurrentLanguage('is');
+    serve({ venue: { descriptionIs: '   ' } });
+    await renderPage();
+    expect(screen.getByText(/A friendly gym with an open floor/)).toBeOnTheScreen();
+  });
+
+  it('in English with an Icelandic description: still the English one', async () => {
+    serve();
+    await renderPage();
+    expect(screen.getByText(/A friendly gym with an open floor/)).toBeOnTheScreen();
+    expect(screen.queryByText(/Vinaleg líkamsræktarstöð/)).toBeNull();
   });
 
   it('no reviews: "Be the first to review" and "Write one", both opening the reviews', async () => {

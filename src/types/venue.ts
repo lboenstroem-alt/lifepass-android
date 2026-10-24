@@ -44,7 +44,7 @@ export interface Venue {
   readonly slug: string;
   readonly name: string;
   readonly description: string | null;
-  /** Shown instead of `description` when the account language is Icelandic. */
+  /** Shown instead of `description` when the account language is Icelandic and it is not blank. */
   readonly descriptionIs: string | null;
   readonly address: string | null;
   readonly city: string | null;
@@ -100,9 +100,27 @@ export function isComingSoon(venue: { readonly awaitingConnection?: boolean | nu
   return venue.awaitingConnection === true;
 }
 
-/** Display text in the account language: Icelandic when there is one, else the English. */
+/**
+ * The Icelandic description staff wrote in the admin, or null when there is
+ * none. A blank field counts as none, so it never hides the English text
+ * behind an empty paragraph (iOS `Venue.icelandicDescription`).
+ */
+export function icelandicDescription(venue: Pick<Venue, 'descriptionIs'>): string | null {
+  const text = venue.descriptionIs?.trim();
+  return text ? text : null;
+}
+
+/**
+ * Display text in the account language: the Icelandic description when the
+ * app is in Icelandic and staff wrote one, else the English (the web's
+ * `descriptionIs ?? description` on /is pages).
+ */
 export function localizedDescription(venue: Pick<Venue, 'description' | 'descriptionIs'>, language: string): string | null {
-  return language === 'is' ? (venue.descriptionIs ?? venue.description) : venue.description;
+  if (language === 'is') {
+    const icelandic = icelandicDescription(venue);
+    if (icelandic) return icelandic;
+  }
+  return venue.description;
 }
 
 /** The venue's photos (one today); empty when it has none. */
