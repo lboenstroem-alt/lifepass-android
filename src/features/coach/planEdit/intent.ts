@@ -83,6 +83,23 @@ export function vocabularyTokens(vocabulary: readonly string[]): Set<string> {
 // ---------------------------------------------------------------------------
 // The rule
 
+/**
+ * "new" followed within three words by a plan noun: a request for another
+ * plan (iOS `PlanEditIntent.asksForNewPlan`). "Add a new exercise to my
+ * plan" is not one: the plan noun comes after the exercise, past three words.
+ */
+export function asksForNewPlan(words: readonly string[]): boolean {
+  return words.some((word, index) => NEW_WORDS.has(word) && words.slice(index + 1, index + 4).some((next) => PLAN_NOUNS.has(next)));
+}
+
+const NEW_WORDS: ReadonlySet<string> = new Set(['new', 'nyja', 'nyjan', 'nytt', 'nyrri', 'neuen', 'neue', 'neues', 'neu']);
+
+const PLAN_NOUNS: ReadonlySet<string> = new Set([
+  'plan', 'plans', 'program', 'programme',
+  'aaetlun', 'aaetlunina', 'aefingaaaetlun', 'aefingaplan', 'programm',
+  'trainingsplan',
+]);
+
 /** True when the words ask to change the running plan (see the file comment). */
 export function planEditIntentMatches(text: string, vocabulary: readonly string[] = []): boolean {
   const words = planEditTokens(text);
@@ -90,6 +107,9 @@ export function planEditIntentMatches(text: string, vocabulary: readonly string[
   const phrase = ` ${words.join(' ')} `;
   const wordSet = new Set(words);
   if (intersects(wordSet, BOOKING_WORDS)) return false;
+  // A NEW plan is the programme offer ("make me a new workout plan", "nýja
+  // æfingaáætlun"), never a change to the one running.
+  if (asksForNewPlan(words)) return false;
   const hasEditVerb =
     intersects(wordSet, EDIT_VERBS) ||
     containsAny(phrase, EDIT_PHRASES) ||

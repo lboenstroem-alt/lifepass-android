@@ -161,25 +161,29 @@ describe('decoding OP-58 fail soft', () => {
 describe('OP-59 to OP-62', () => {
   it('Apply sends confirmCustom only when confirmed, and decodes the edit and the plan', async () => {
     api.on('POST', applyPath(EDIT_A), Reply.ok(applyJson()));
-    const applied = await applyPlanEdit(PROGRAM_ID, EDIT_A, { confirmCustom: false }, 'apply-1');
+    const applied = await applyPlanEdit(PROGRAM_ID, EDIT_A, { confirmCustom: false, language: 'is' }, 'apply-1');
     expect(api.sent(applyPath(EDIT_A)).body).toEqual({});
+    // The summary and change groups come back in the app's language.
+    expect(api.sent(applyPath(EDIT_A)).query).toEqual({ locale: 'is' });
     expect(api.sent(applyPath(EDIT_A)).headers['idempotency-key']).toBe('apply-1');
     expect(applied.edit).toMatchObject({ id: EDIT_A, status: 'applied', undoable: true });
     expect(applied.program?.excludedEquipment).toEqual(['barbell']);
     expect(applied.features).toEqual(['plan_edit', 'plan_revision']);
-    await applyPlanEdit(PROGRAM_ID, EDIT_A, { confirmCustom: true }, 'apply-2');
+    await applyPlanEdit(PROGRAM_ID, EDIT_A, { confirmCustom: true, language: 'en' }, 'apply-2');
     expect(api.sent(applyPath(EDIT_A)).body).toEqual({ confirmCustom: true });
   });
 
-  it('Undo and Discard send no body, each with its key', async () => {
+  it('Undo and Discard send no body, each with its key and the app language', async () => {
     api.on('POST', undoPath(EDIT_A), Reply.ok(undoJson({ keptRows: 2 })));
     api.on('POST', discardPath(EDIT_A), Reply.ok({ edit: { id: EDIT_A, status: 'discarded' } }));
-    const undone = await undoPlanEdit(PROGRAM_ID, EDIT_A, 'undo-1');
+    const undone = await undoPlanEdit(PROGRAM_ID, EDIT_A, 'is', 'undo-1');
     expect(undone.keptRows).toBe(2);
     expect(undone.edit.status).toBe('undone');
     expect(api.sent(undoPath(EDIT_A)).rawBody ?? '').toBe('');
     expect(api.sent(undoPath(EDIT_A)).headers['idempotency-key']).toBe('undo-1');
-    const discarded = await discardPlanEdit(PROGRAM_ID, EDIT_A, 'discard-1');
+    expect(api.sent(undoPath(EDIT_A)).query).toEqual({ locale: 'is' });
+    const discarded = await discardPlanEdit(PROGRAM_ID, EDIT_A, 'en', 'discard-1');
+    expect(api.sent(discardPath(EDIT_A)).query).toEqual({ locale: 'en' });
     expect(discarded.edit).toEqual({ id: EDIT_A, status: 'discarded' });
     expect(api.sent(discardPath(EDIT_A)).rawBody ?? '').toBe('');
   });
@@ -198,7 +202,8 @@ describe('OP-59 to OP-62', () => {
 describe('the refusals', () => {
   it.each([
     [409, 'plan_edit_consent_required', {}, 'consentNeeded'],
-    [409, 'health_consent_required', {}, 'consentNeeded'],
+    // Consent gone (withdrawn elsewhere): the full sheet, never the one-tap line.
+    [409, 'health_consent_required', {}, 'healthConsentGone'],
     [422, 'plan_edit_personal_data', {}, 'personalData'],
     [429, 'plan_edit_limit', { reason: 'daily' }, 'limit'],
     [429, 'plan_edit_limit', { reason: 'attempts' }, 'limit'],
@@ -229,7 +234,7 @@ describe('the refusals', () => {
 
   it('keeps the reason of a refusal that is not pending', async () => {
     api.on('POST', applyPath(EDIT_A), Reply.problem(409, 'plan_edit_not_pending', { reason: 'superseded' }));
-    const error = await failureOf(() => applyPlanEdit(PROGRAM_ID, EDIT_A, { confirmCustom: false }, 'k'));
+    const error = await failureOf(() => applyPlanEdit(PROGRAM_ID, EDIT_A, { confirmCustom: false, language: 'en' }, 'k'));
     expect(planEditProblem(error)).toEqual({ kind: 'notPending', reason: 'superseded' });
   });
 

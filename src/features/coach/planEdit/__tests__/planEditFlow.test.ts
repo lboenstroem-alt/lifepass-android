@@ -12,6 +12,7 @@ import { api, Reply, type StubReply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { decodeHealthDay, useHealthStore } from '../../../../health';
+import { attachHealthConsentHost, useHealthConsentPresenter } from '../../../../health/consent/presenter';
 import { lookup, setCurrentLanguage, translate } from '../../../../i18n';
 import { setAnalyticsObserver, type AnalyticsParams } from '../../../../lib/analytics';
 import { useAppStore } from '../../../../stores/appStore';
@@ -373,7 +374,16 @@ describe('the refusals', () => {
 });
 
 describe('the one-tap consent', () => {
+  const STANDING = { version: '2026-09-v3', consentedAt: null, ageSource: 'kennitala' as const };
+  const withStandingConsent = () =>
+    useAppStore.setState({ profile: { health: { consent: STANDING } } } as unknown as Parameters<typeof useAppStore.setState>[0]);
+  afterEach(() => {
+    useAppStore.setState({ profile: null } as unknown as Parameters<typeof useAppStore.setState>[0]);
+    useHealthConsentPresenter.setState({ request: null, visible: false });
+  });
+
   it('grants the plan-change text (v4), then sends the SAME words with the SAME key', async () => {
+    withStandingConsent();
     answerEdits(Reply.problem(409, 'plan_edit_consent_required'), Reply.ok(responseJson()));
     await coach().send('swap bench press for push-ups');
     const consent = messages()[messages().length - 1]!;
@@ -389,6 +399,38 @@ describe('the one-tap consent', () => {
     expect((messages().find((m) => m.id === consent.id)!.payload as PlanEditConsentPayload).status).toBe('granted');
     expect(card().status).toBe('pending');
     expect(messages().filter((m) => m.role === 'user')).toHaveLength(1);
+  });
+
+  it('a health consent withdrawn elsewhere opens the FULL consent sheet, never the one-tap line, then the same words under the same key', async () => {
+    withStandingConsent(); // the cached profile still shows the old consent
+    const detach = attachHealthConsentHost();
+    try {
+      answerEdits(Reply.problem(409, 'health_consent_required'), Reply.ok(responseJson()));
+      await coach().send('swap bench press for push-ups');
+      expect(messages().some((m) => m.kind === PlanEditMessageKind.consent)).toBe(false);
+      const request = useHealthConsentPresenter.getState().request;
+      expect(request?.entry).toBe('coach');
+      expect(grant).not.toHaveBeenCalled();
+      await request!.onGranted!();
+      expect(sentEdits().map((r) => r.headers['idempotency-key'])).toEqual(['key-1', 'key-1']);
+      expect(card().status).toBe('pending');
+    } finally {
+      detach();
+    }
+  });
+
+  it('with no standing consent the bubble hands over to the full sheet, granting nothing itself', async () => {
+    const detach = attachHealthConsentHost();
+    try {
+      answerEdits(Reply.problem(409, 'plan_edit_consent_required'));
+      await coach().send('swap bench press for push-ups');
+      const consent = messages()[messages().length - 1]!;
+      await grantConsentFor(consent.id);
+      expect(grant).not.toHaveBeenCalled();
+      expect(useHealthConsentPresenter.getState().request?.entry).toBe('coach');
+    } finally {
+      detach();
+    }
   });
 
   it('"Not now" sends nothing and says the plan stays as it is', async () => {
@@ -417,6 +459,7 @@ describe('Apply, Cancel, Undo', () => {
     await applyCard(message.id);
     const sent = api.sent(applyPath(EDIT_A));
     expect(sent.body).toEqual({});
+    expect(sent.query).toEqual({ locale: 'en' });
     expect(sent.headers['idempotency-key']).toBe('key-2');
     expect(card()).toMatchObject({ status: 'applied', applied: { editId: EDIT_A, undoable: true } });
     expect(presentToastMock).toHaveBeenCalledWith(en('coach.planEdit.updatedToast'));
@@ -487,6 +530,7 @@ describe('Apply, Cancel, Undo', () => {
     await undoCard(message.id);
     expect(api.sent(undoPath(EDIT_A)).headers['idempotency-key']).toBe('key-3');
     expect(card()).toMatchObject({ status: 'undone', keptRows: 2 });
+    expect(api.sent(undoPath(EDIT_A)).query).toEqual({ locale: 'en' });
     expect(presentToastMock).toHaveBeenLastCalledWith(en('coach.planEdit.undoneToast'));
     expect(events.find((e) => e.event === 'plan_edit_undone')?.params).toEqual({ entry: 'card' });
   });

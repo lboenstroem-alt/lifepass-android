@@ -560,6 +560,23 @@ function handleFailure(problem: PlanEditProblem, error: ApiError | null, request
         payload: { requestId: request.id, status: 'idle', errorKey: null } satisfies PlanEditConsentPayload,
       });
       return true;
+    case 'healthConsentGone': {
+      // The health consent is gone (withdrawn on another device): the FULL
+      // consent sheet, never the one-tap line, then the same words under the
+      // same key.
+      pendingConsentRequestId = request.id;
+      const opened = resets;
+      openHealthConsent({
+        entry: 'coach',
+        onGranted: async () => {
+          if (opened !== resets || pendingConsentRequestId !== request.id) return;
+          pendingConsentRequestId = null;
+          const result = await perform(request);
+          if (result === 'passed') await coachHost().resumeSend(request.typed);
+        },
+      });
+      return true;
+    }
     case 'featureOff':
       // The server stopped offering it since its features were read: the
       // feature hides, and the words go on through the Coach as before.
@@ -801,7 +818,7 @@ export async function applyCard(messageId: string, confirmCustom = false): Promi
   setCard(messageId, (current) => ({ ...current, status: 'applying', errorKey: null }));
   const opened = resets;
   try {
-    const result = await applyPlanEdit(card.programId, variant.editId, { confirmCustom }, key);
+    const result = await applyPlanEdit(card.programId, variant.editId, { confirmCustom, language: coachHost().language() }, key);
     if (opened !== resets) return;
     setCard(messageId, (current) => ({
       ...current,
@@ -911,8 +928,9 @@ export function cancelCard(messageId: string): void {
   setCard(messageId, (current) => ({ ...current, status: 'cancelled', errorKey: null }));
   if (thread?.programId === card.programId) thread.takesWords = false;
   track('plan_edit_cancelled');
+  const language = coachHost().language();
   for (const variant of card.variants) {
-    discardPlanEdit(card.programId, variant.editId, makeKey()).catch(() => undefined);
+    discardPlanEdit(card.programId, variant.editId, language, makeKey()).catch(() => undefined);
   }
 }
 

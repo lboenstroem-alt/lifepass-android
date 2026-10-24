@@ -40,7 +40,7 @@ export async function undoEdit(programId: string, editId: string, entry: 'card' 
   const key = undoKeys.get(editId) ?? makeKey();
   undoKeys.set(editId, key);
   try {
-    const response = await undoPlanEdit(programId, editId, key);
+    const response = await undoPlanEdit(programId, editId, currentLanguage(), key);
     undoKeys.delete(editId);
     track('plan_edit_undone', { entry });
     refreshPlan();
@@ -53,11 +53,12 @@ export async function undoEdit(programId: string, editId: string, entry: 'card' 
 }
 
 /**
- * The Changes list's toast (iOS `PlanEditChangesModel`): "Days you already
- * did stay as they are." when an Undo kept some, else "Change undone".
+ * The Changes list's toast (iOS `PlanEditChangesModel`): "Change undone",
+ * with "Days you already did stay as they are." after it when an Undo kept
+ * some.
  */
 export function announceUndone(keptRows: number): void {
-  presentToast(translate(keptRows > 0 ? 'coach.planEdit.keptRows' : 'coach.planEdit.undoneToast', currentLanguage()));
+  presentToast(translate(keptRows > 0 ? 'coach.planEdit.undoneToastKept' : 'coach.planEdit.undoneToast', currentLanguage()));
 }
 
 /** The server's rule (`undoable`) and its window (`undoUntil`), read now. */

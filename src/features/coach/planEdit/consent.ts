@@ -45,7 +45,10 @@ export async function grantPlanEditConsent(
   grant: PlanEditConsentGrant = livePlanEditConsentGrant,
   now: () => Date = () => new Date(),
 ): Promise<PlanEditConsentOutcome> {
-  const attested = standing?.ageSource === 'attestation';
+  // No standing consent (withdrawn since): only the full sheet, with its own
+  // explanation and the age row, may take it (iOS PlanEditConsentModel).
+  if (standing === null) return { kind: 'needsFullSheet' };
+  const attested = standing.ageSource === 'attestation';
   try {
     const result = await grant(HealthConsentVersion.withPlanEdit, attested, idempotencyKey);
     const recorded = grantedConsent(result);
@@ -54,7 +57,7 @@ export async function grantPlanEditConsent(
       consent: {
         version: recorded?.version ?? HealthConsentVersion.withPlanEdit,
         consentedAt: recorded?.consentedAt ?? now(),
-        ageSource: recorded?.ageSource ?? standing?.ageSource ?? null,
+        ageSource: recorded?.ageSource ?? standing.ageSource ?? null,
       },
     };
   } catch (error) {

@@ -1,7 +1,7 @@
 {
   "name": "plan-edit-router-corpus",
-  "version": 1,
-  "about": "Where the Coach sends typed words when a plan is running, the server advertises plan_edit and nothing is open in the chat. planEdit = POST /health/programs/{id}/edits; program = the programme wizard's offer; dayPlan = the day-plan wizard; venue = the venue wizard; chat = POST /coach. The same bytes live in the monorepo (docs/fixtures/plan-edit-router-corpus.json), the iOS tests and the Android tests; each asserts its sha256 and passes every case. Merged from the iOS and Android drafts of 2026-10-23 (cases each platform authored; one case where the two apps' existing venue routing differs, \"what should I eat after a workout?\", is left out because it says nothing about plan changes).",
+  "version": 2,
+  "about": "Where the Coach sends typed words when a plan is running, the server advertises plan_edit and nothing is open in the chat. planEdit = POST /health/programs/{id}/edits; program = the programme wizard's offer; dayPlan = the day-plan wizard; venue = the venue wizard; chat = POST /coach. The same bytes live in the monorepo (docs/fixtures/plan-edit-router-corpus.json), the iOS tests and the Android tests; each asserts its sha256 and passes every case. Merged from the iOS and Android drafts of 2026-10-23 (cases each platform authored; one case where the two apps' existing venue routing differs, \"what should I eat after a workout?\", is left out because it says nothing about plan changes). Version 2 (2026-10-24) adds the new-plan cases: \"make\" with \"workout\" is an edit only when no new plan is asked for.",
   "vocabulary": [
     "Calisthenics (Handstand, Core & Beine)",
     "Push (Brust & Trizeps)",
@@ -54,6 +54,10 @@
     { "lang": "en", "text": "Plan my day", "expect": "dayPlan" },
     { "lang": "en", "text": "I want a workout plan", "expect": "program" },
     { "lang": "en", "text": "make me a new 8 week plan", "expect": "program" },
+    { "lang": "en", "text": "Make me a new workout plan", "expect": "program" },
+    { "lang": "en", "text": "make me a new training plan for 12 weeks", "expect": "program" },
+    { "lang": "en", "text": "Add a new exercise to my plan", "expect": "planEdit" },
+    { "lang": "is", "text": "Gerðu nýja æfingaáætlun fyrir mig", "expect": "program" },
     { "lang": "is", "text": "Skiptu hnébeygjum út fyrir framstig", "expect": "planEdit" },
     { "lang": "is", "text": "Það er engin kapalvél í ræktinni", "expect": "planEdit" },
     { "lang": "is", "text": "Ég er ekki með handlóð", "expect": "planEdit" },

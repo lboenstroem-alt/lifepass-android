@@ -36,11 +36,18 @@ describe('the plan-change consent', () => {
     const failing = (error: unknown) => async () => {
       throw error;
     };
-    expect(await grantPlanEditConsent(null, 'k', failing(problem(400, 'health_age_attestation_required')))).toEqual({ kind: 'needsFullSheet' });
-    expect((await grantPlanEditConsent(null, 'k', failing(problem(403, 'health_minor_blocked')))).kind).toBe('refused');
-    expect((await grantPlanEditConsent(null, 'k', failing(problem(409, 'account_pending_deletion')))).kind).toBe('refused');
-    expect(await grantPlanEditConsent(null, 'k', failing(problem(429, 'rate_limited')))).toEqual({ kind: 'failed', errorKey: 'health.err.rate_limited' });
-    expect(await grantPlanEditConsent(null, 'k', failing(new Error('boom')))).toEqual({ kind: 'failed', errorKey: 'common.error_body' });
+    const standing = { version: '2026-09-v3', consentedAt: null, ageSource: 'kennitala' as const };
+    expect(await grantPlanEditConsent(standing, 'k', failing(problem(400, 'health_age_attestation_required')))).toEqual({ kind: 'needsFullSheet' });
+    expect((await grantPlanEditConsent(standing, 'k', failing(problem(403, 'health_minor_blocked')))).kind).toBe('refused');
+    expect((await grantPlanEditConsent(standing, 'k', failing(problem(409, 'account_pending_deletion')))).kind).toBe('refused');
+    expect(await grantPlanEditConsent(standing, 'k', failing(problem(429, 'rate_limited')))).toEqual({ kind: 'failed', errorKey: 'health.err.rate_limited' });
+    expect(await grantPlanEditConsent(standing, 'k', failing(new Error('boom')))).toEqual({ kind: 'failed', errorKey: 'common.error_body' });
+  });
+
+  it('with no standing consent (withdrawn since) only the full sheet may take it: nothing is granted with one tap', async () => {
+    const grant = jest.fn(async () => RESULT);
+    expect(await grantPlanEditConsent(null, 'k', grant)).toEqual({ kind: 'needsFullSheet' });
+    expect(grant).not.toHaveBeenCalled();
   });
 });
 
@@ -50,10 +57,13 @@ describe('the v4 consent words', () => {
   // health.consent.ai.never_text) word for word, and v4 keeps v3's warning
   // about chat messages.
   it('are the web text of 2026-09-v4', () => {
-    expect(translate('healthconsent.ai.plan_edit', 'en')).toMatch(
-      /^If you ask the Coach to change your workout plan, your words and the plan .* A change you apply is kept with your plan, and a suggestion you don't apply is deleted within 24 hours\.$/,
+    // Word for word, both languages (the web's health-i18n.test.ts pins the same text).
+    expect(translate('healthconsent.ai.plan_edit', 'en')).toBe(
+      "If you ask the Coach to change your workout plan, your words and the plan (its exercises, sets and rest, and the names and notes you wrote for your own exercises) go to Anthropic only to make the change. Never your safety answers, body measurements or dates, and never your name, email or any account ID. Anthropic may not train on them and deletes them within 30 days, apart from the exceptions in our privacy policy. We don't keep your words. A change you apply is kept with your plan, including the names and notes you wrote for your own exercises, and a suggestion you don't apply is deleted within 24 hours.",
     );
-    expect(translate('healthconsent.ai.plan_edit', 'is')).toMatch(/^Ef þú biður ráðgjafann að breyta æfingaáætluninni fara orðin þín og áætlunin /);
+    expect(translate('healthconsent.ai.plan_edit', 'is')).toBe(
+      "Ef þú biður ráðgjafann að breyta æfingaáætluninni fara orðin þín og áætlunin (æfingar hennar, sett og hvíld, og nöfn og athugasemdir sem þú skrifaðir fyrir eigin æfingar) til Anthropic eingöngu til að gera breytinguna. Aldrei svör þín við öryggisspurningunum, líkamsmælingar eða dagsetningar, og aldrei nafnið þitt, netfang eða auðkenni aðgangs. Anthropic má ekki nota þau til þjálfunar og eyðir þeim innan 30 daga, með þeim undantekningum sem koma fram í persónuverndarstefnunni. Við geymum ekki orðin þín. Breyting sem þú staðfestir er geymd með áætluninni, þar á meðal nöfn og athugasemdir sem þú skrifaðir fyrir eigin æfingar, og tillögu sem þú staðfestir ekki er eytt innan sólarhrings.",
+    );
     expect(translate('healthconsent.ai.never_text_v4', 'en')).toBe(
       'Never notes or anything you type when a plan is made, apart from a change you ask the Coach to make (below). Coach chat messages are sent as you write them, so leave health details out of chat.',
     );

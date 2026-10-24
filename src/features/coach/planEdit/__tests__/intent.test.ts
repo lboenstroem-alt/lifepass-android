@@ -19,7 +19,7 @@ import { venueWizardCategory } from '../../routing/scheduleCue';
 import { planEditIntentMatches, planEditTokens, planVocabularyFrom, vocabularyTokens } from '../intent';
 
 const CORPUS_FILE = path.join(__dirname, 'fixtures', 'plan-edit-router-corpus.json');
-const CORPUS_SHA256 = 'dfae69746a57760023710686d9ce8ad1c08daa05344b6c7455a1cbf28af48c05';
+const CORPUS_SHA256 = '70b2591bfea3a94b49773dd535ea2982f6b8402b118cfea41dd84293022034c0';
 
 type Destination = 'planEdit' | 'program' | 'dayPlan' | 'venue' | 'chat';
 
@@ -51,7 +51,7 @@ describe('the shared router corpus', () => {
   it('is the agreed one, byte for byte', () => {
     expect(bytesToHex(sha256(new Uint8Array(bytes)))).toBe(CORPUS_SHA256);
     expect(corpus.name).toBe('plan-edit-router-corpus');
-    expect(corpus.version).toBe(1);
+    expect(corpus.version).toBe(2);
   });
 
   it('every message routes where it says (100%)', () => {
@@ -141,5 +141,19 @@ describe("the plan's words", () => {
     expect(planVocabularyFrom(day)).toEqual(['Pull (Rücken & Arme)', 'Lat pulldown', 'Calisthenics', 'Push (Brust & Trizeps)']);
     expect(planVocabularyFrom(decodeHealthDay({ date: '2026-10-23', program: { id: 'p1', status: 'completed' } }))).toEqual([]);
     expect(planVocabularyFrom(null)).toEqual([]);
+  });
+});
+
+describe('a new plan', () => {
+  // "make" with "workout" is an edit ("make the workout shorter"), but not when
+  // the member asks for a NEW plan: that is the programme offer (iOS
+  // PlanEditRouterTests.testANewPlanIsTheProgrammeOfferNotAChange).
+  it('is the programme offer, not a change', () => {
+    expect(planEditIntentMatches('Make me a new workout plan')).toBe(false);
+    expect(planEditIntentMatches('Gerðu nýja æfingaáætlun fyrir mig')).toBe(false);
+    expect(planEditIntentMatches('Mach mir einen neuen Trainingsplan')).toBe(false);
+    expect(destination('Make me a new workout plan', true, [])).toBe('program');
+    expect(planEditIntentMatches('Add a new exercise to my plan')).toBe(true);
+    expect(planEditIntentMatches('make the workout shorter')).toBe(true);
   });
 });

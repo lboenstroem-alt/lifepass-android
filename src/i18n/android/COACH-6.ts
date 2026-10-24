@@ -52,6 +52,7 @@ export default definePack({
     'coach.planEdit.undone': 'Undone',
     'coach.planEdit.updatedToast': 'Your plan is updated',
     'coach.planEdit.undoneToast': 'Change undone',
+    'coach.planEdit.undoneToastKept': 'Change undone. Days you already did stay as they are.',
     'coach.planEdit.keptRows': 'Days you already did stay as they are.',
     'coach.planEdit.runnerOpen': "Finish or close today's workout first.",
     'coach.planEdit.noChange': "I couldn't change anything with that request.",
@@ -90,7 +91,7 @@ export default definePack({
 
     // The consent text, 2026-09-v4
     'healthconsent.ai.plan_edit':
-      "If you ask the Coach to change your workout plan, your words and the plan (its exercises, sets and rest, and the names and notes you wrote for your own exercises) go to Anthropic only to make the change. Never your safety answers, body measurements or dates, and never your name, email or any account ID. Anthropic may not train on them and deletes them within 30 days, apart from the exceptions in our privacy policy. We don't keep your words. A change you apply is kept with your plan, and a suggestion you don't apply is deleted within 24 hours.",
+      "If you ask the Coach to change your workout plan, your words and the plan (its exercises, sets and rest, and the names and notes you wrote for your own exercises) go to Anthropic only to make the change. Never your safety answers, body measurements or dates, and never your name, email or any account ID. Anthropic may not train on them and deletes them within 30 days, apart from the exceptions in our privacy policy. We don't keep your words. A change you apply is kept with your plan, including the names and notes you wrote for your own exercises, and a suggestion you don't apply is deleted within 24 hours.",
     'healthconsent.ai.never_text_v4':
       'Never notes or anything you type when a plan is made, apart from a change you ask the Coach to make (below). Coach chat messages are sent as you write them, so leave health details out of chat.',
 
@@ -127,6 +128,7 @@ export default definePack({
     'coach.planEdit.undone': 'Afturkallað',
     'coach.planEdit.updatedToast': 'Áætlunin er uppfærð',
     'coach.planEdit.undoneToast': 'Breytingin var afturkölluð',
+    'coach.planEdit.undoneToastKept': 'Breytingin var afturkölluð. Dagar sem þú hefur lokið haldast óbreyttir.',
     'coach.planEdit.keptRows': 'Dagar sem þú hefur lokið haldast óbreyttir.',
     'coach.planEdit.runnerOpen': 'Ljúktu eða lokaðu æfingu dagsins fyrst.',
     'coach.planEdit.noChange': 'Ég gat engu breytt með þessari beiðni.',
@@ -165,7 +167,7 @@ export default definePack({
 
     // The consent text, 2026-09-v4
     'healthconsent.ai.plan_edit':
-      'Ef þú biður ráðgjafann að breyta æfingaáætluninni fara orðin þín og áætlunin (æfingar hennar, sett og hvíld, og nöfn og athugasemdir sem þú skrifaðir fyrir eigin æfingar) til Anthropic eingöngu til að gera breytinguna. Aldrei svör þín við öryggisspurningunum, líkamsmælingar eða dagsetningar, og aldrei nafnið þitt, netfang eða auðkenni aðgangs. Anthropic má ekki nota þau til þjálfunar og eyðir þeim innan 30 daga, með þeim undantekningum sem koma fram í persónuverndarstefnunni. Við geymum ekki orðin þín. Breyting sem þú staðfestir er geymd með áætluninni og tillögu sem þú staðfestir ekki er eytt innan sólarhrings.',
+      'Ef þú biður ráðgjafann að breyta æfingaáætluninni fara orðin þín og áætlunin (æfingar hennar, sett og hvíld, og nöfn og athugasemdir sem þú skrifaðir fyrir eigin æfingar) til Anthropic eingöngu til að gera breytinguna. Aldrei svör þín við öryggisspurningunum, líkamsmælingar eða dagsetningar, og aldrei nafnið þitt, netfang eða auðkenni aðgangs. Anthropic má ekki nota þau til þjálfunar og eyðir þeim innan 30 daga, með þeim undantekningum sem koma fram í persónuverndarstefnunni. Við geymum ekki orðin þín. Breyting sem þú staðfestir er geymd með áætluninni, þar á meðal nöfn og athugasemdir sem þú skrifaðir fyrir eigin æfingar, og tillögu sem þú staðfestir ekki er eytt innan sólarhrings.',
     'healthconsent.ai.never_text_v4':
       'Aldrei athugasemdir eða neitt sem þú skrifar þegar áætlun er búin til, nema breyting sem þú biður ráðgjafann að gera (sjá hér að neðan). Skilaboð í spjalli við ráðgjafann eru send eins og þú skrifar þau, svo slepptu heilsuupplýsingum þar.',
 

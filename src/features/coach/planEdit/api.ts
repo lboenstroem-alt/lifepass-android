@@ -141,23 +141,29 @@ export function postPlanEdit(programId: string, body: PlanEditRequestBody, idemp
   });
 }
 
-/** OP-59. `confirmCustom` only when the member confirmed that the plan will repeat as a cycle. */
+/**
+ * OP-59. `confirmCustom` only when the member confirmed that the plan will
+ * repeat as a cycle. `language` is the app's: the answer's summary and change
+ * groups come back in it (iOS sends the same `?locale=`).
+ */
 export function applyPlanEdit(
   programId: string,
   editId: string,
-  options: { readonly confirmCustom: boolean },
+  options: { readonly confirmCustom: boolean; readonly language: Lang | string },
   idempotencyKey: string,
 ): Promise<PlanEditApplyResponse> {
   return apiPost(edit(programId, editId, 'apply'), options.confirmCustom ? { confirmCustom: true } : {}, {
+    query: localeQuery(options.language),
     idempotencyKey,
     timeoutMs: HEALTH_SESSION_TIMEOUT_MS,
     decode: decodeApplyResponse,
   });
 }
 
-/** OP-60 (no body). */
-export function undoPlanEdit(programId: string, editId: string, idempotencyKey: string): Promise<PlanEditUndoResponse> {
+/** OP-60 (no body), its answer in the app's `language`. */
+export function undoPlanEdit(programId: string, editId: string, language: Lang | string, idempotencyKey: string): Promise<PlanEditUndoResponse> {
   return apiPost(edit(programId, editId, 'undo'), undefined, {
+    query: localeQuery(language),
     idempotencyKey,
     timeoutMs: HEALTH_SESSION_TIMEOUT_MS,
     decode: decodeUndoResponse,
@@ -165,8 +171,9 @@ export function undoPlanEdit(programId: string, editId: string, idempotencyKey: 
 }
 
 /** OP-61 (no body): Cancel. Idempotent, and a no-op for anything but a pending preview. */
-export function discardPlanEdit(programId: string, editId: string, idempotencyKey: string): Promise<PlanEditDiscardResponse> {
+export function discardPlanEdit(programId: string, editId: string, language: Lang | string, idempotencyKey: string): Promise<PlanEditDiscardResponse> {
   return apiPost(edit(programId, editId, 'discard'), undefined, {
+    query: localeQuery(language),
     idempotencyKey,
     timeoutMs: HEALTH_SESSION_TIMEOUT_MS,
     decode: decodeDiscardResponse,
@@ -190,8 +197,14 @@ export function fetchPlanEdits(programId: string, language: Lang): Promise<reado
  * applies to it.
  */
 export type PlanEditProblem =
-  /** 409 `plan_edit_consent_required` (the v4 text), or consent gone: the one-tap consent, then the same words. */
+  /** 409 `plan_edit_consent_required` (the v4 text): the one-tap consent, then the same words. */
   | { readonly kind: 'consentNeeded' }
+  /**
+   * 409 `health_consent_required`: the health consent itself is gone
+   * (withdrawn on another device). Only the FULL consent sheet may take it
+   * again, never the one-tap line (iOS `healthConsentGone`).
+   */
+  | { readonly kind: 'healthConsentGone' }
   | { readonly kind: 'personalData' }
   /** 429 `plan_edit_limit` (`daily` or `attempts`: the same words). */
   | { readonly kind: 'limit' }
@@ -238,8 +251,9 @@ export function planEditProblem(error: ApiError): PlanEditProblem {
   if (isMissingRoute(error)) return { kind: 'featureOff' };
   switch (error.normalisedCode) {
     case 'plan_edit_consent_required':
-    case 'health_consent_required':
       return { kind: 'consentNeeded' };
+    case 'health_consent_required':
+      return { kind: 'healthConsentGone' };
     case 'plan_edit_personal_data':
       return { kind: 'personalData' };
     case 'plan_edit_limit':
