@@ -8,7 +8,7 @@ packs (`static let en` / `static let \`is\``) in LocalizationHealth*.swift,
 merged base-first with the packs on top (LPHealthStrings.merged).
 
 Usage:
-  python3 scripts/import-ios-strings.py "<path to lifepass-ios>/LifePass 2/Services" [--out DIR]
+  python3 scripts/import-ios-strings.py "<path to lifepass-ios>/LifePass 2/Services" [--out DIR] [--ahead FILE]
 
 Writes, into src/i18n (or DIR):
   strings.en.json, strings.is.json   the merged tables the app reads
@@ -21,6 +21,14 @@ redefines a base key other than the intentional override: the inputs the iOS
 DEBUG build traps on. Re-run it whenever iOS adds or changes copy; never
 hand-edit the JSON. Strings Android needs that iOS does not have go in the
 owning package's pack, src/i18n/android/<package-id>.ts.
+
+AHEAD OF iOS. An iOS copy change Android ships before the iOS sources the
+tables come from have it is written in src/i18n/ahead-of-ios.json (or FILE),
+never typed into the JSON: the iOS text it replaces and the Android text.
+The generator applies a change while iOS still has the old text, so a
+re-import (or the CI drift check) cannot quietly undo it; says so when iOS has
+landed it (delete the entry then); and exits non-zero, writing nothing, when
+iOS has anything else, so a different iOS key or word is seen before a build.
 """
 import json
 import os
@@ -28,6 +36,11 @@ import re
 import sys
 
 SRC = os.path.join(os.path.dirname(__file__), "..", "src", "i18n")
+
+# The copy changes Android ships ahead of the iOS sources (see AHEAD OF iOS).
+AHEAD = os.path.join(SRC, "ahead-of-ios.json")
+
+LANGS = ("en", "is")
 
 # The one key a pack deliberately replaces in the base dictionary
 # (LPHealthStrings.intentionalOverrides). Any other collision is a mistake.
@@ -174,6 +187,89 @@ def merge(base: dict, packs: list, lang: str) -> dict:
     return result
 
 
+class AheadError(ValueError):
+    """An ahead-of-iOS change that does not fit the iOS sources (or a
+    malformed ahead-of-ios.json): the generator refuses to guess."""
+
+
+def load_ahead(path: str) -> list:
+    """The changes in an ahead-of-ios.json, checked for shape."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except OSError as error:
+        raise AheadError("cannot read %s: %s" % (path, error.strerror or error))
+    except ValueError as error:
+        raise AheadError("%s is not JSON: %s" % (path, error))
+    changes = data.get("changes") if isinstance(data, dict) else None
+    if not isinstance(changes, list):
+        raise AheadError('%s needs a "changes" list' % path)
+    for change in changes:
+        name = change.get("change") if isinstance(change, dict) else None
+        if not isinstance(name, str) or not name:
+            raise AheadError('%s: every change needs a "change" description' % path)
+        if not isinstance(change.get("dictionary"), str):
+            raise AheadError('%s: "%s" needs a "dictionary" (base or a pack name)' % (path, name))
+        sides = [change.get("ios"), change.get("android")]
+        for side in sides:
+            if not isinstance(side, dict) or not set(side) <= set(LANGS) or not all(
+                isinstance(values, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in values.items())
+                for values in side.values()
+            ):
+                raise AheadError('%s: "%s" needs "ios" and "android" as {"en"|"is": {key: text}}' % (path, name))
+        if all(change["ios"].get(lang, {}) == change["android"].get(lang, {}) for lang in LANGS):
+            raise AheadError('%s: "%s" changes nothing' % (path, name))
+    return changes
+
+
+def ahead_state(values: dict, old: dict, new: dict) -> str:
+    """'landed' when iOS already has the Android text, 'pending' when it still
+    has the text the change replaces, 'other' when it has neither."""
+    if all(values.get(k) == v for k, v in new.items()) and not any(k in values for k in set(old) - set(new)):
+        return "landed"
+    if all(values.get(k) == v for k, v in old.items()) and not any(k in values for k in set(new) - set(old)):
+        return "pending"
+    return "other"
+
+
+def apply_ahead(sources: dict, changes: list):
+    """Apply each pending change to the parsed iOS dictionaries, in place.
+
+    `sources` maps a dictionary name to {"en": {...}, "is": {...}}. Returns
+    (the changes applied, the changes iOS has landed). Raises AheadError, so
+    nothing is written, when iOS has something else for a change's keys.
+    """
+    applied, landed = [], []
+    for change in changes:
+        name = change["change"]
+        dictionary = sources.get(change["dictionary"])
+        if dictionary is None:
+            raise AheadError('"%s": no iOS dictionary named %s' % (name, change["dictionary"]))
+        langs = [lang for lang in LANGS if change["ios"].get(lang, {}) != change["android"].get(lang, {})]
+        states = {
+            lang: ahead_state(dictionary[lang], change["ios"].get(lang, {}), change["android"].get(lang, {}))
+            for lang in langs
+        }
+        if all(state == "landed" for state in states.values()):
+            landed.append(name)
+            continue
+        if all(state == "pending" for state in states.values()):
+            for lang in langs:
+                for key in change["ios"].get(lang, {}):
+                    del dictionary[lang][key]
+                dictionary[lang].update(change["android"].get(lang, {}))
+            applied.append(name)
+            continue
+        keys = sorted({k for lang in langs for side in ("ios", "android") for k in change[side].get(lang, {})})
+        found = {lang: {k: dictionary[lang].get(k) for k in keys} for lang in langs}
+        raise AheadError(
+            '"%s": iOS has %s, neither the text it replaces nor the Android text. '
+            "Update src/i18n/ahead-of-ios.json (and the code that reads the key) to what iOS has now."
+            % (name, json.dumps(found, ensure_ascii=False, sort_keys=True))
+        )
+    return applied, landed
+
+
 def manifest_entry(name: str, en: dict, is_: dict) -> dict:
     """One dictionary's keys: those in both languages, then any in one only."""
     return {
@@ -190,18 +286,25 @@ def write_json(path: str, value) -> None:
         f.write("\n")
 
 
+def take_option(args: list, flag: str, default):
+    """Remove `flag VALUE` from args and return VALUE (default when absent),
+    or None when the flag has no value after it."""
+    if flag not in args:
+        return default
+    index = args.index(flag)
+    if index + 1 >= len(args):
+        return None
+    value = args[index + 1]
+    del args[index:index + 2]
+    return value
+
+
 def main(argv):
     args = list(argv)
-    out = SRC
-    if "--out" in args:
-        index = args.index("--out")
-        if index + 1 >= len(args):
-            # "--out" with no directory after it: say how to call, no traceback.
-            print(__doc__, file=sys.stderr)
-            return 2
-        out = args[index + 1]
-        del args[index:index + 2]
-    if len(args) != 1:
+    out = take_option(args, "--out", SRC)
+    ahead_path = take_option(args, "--ahead", AHEAD)
+    if out is None or ahead_path is None or len(args) != 1:
+        # A flag with nothing after it, or no sources: say how to call, no traceback.
         print(__doc__, file=sys.stderr)
         return 2
     services = args[0]
@@ -211,14 +314,20 @@ def main(argv):
         "en": parse_dict(base_text, r"private static let baseEN"),
         "is": parse_dict(base_text, r"private static let baseIS"),
     }
-    packs = {"en": [], "is": []}
+    sources = {"base": base}
     for name, filename in PACKS:
         text = open(os.path.join(services, filename), encoding="utf-8").read()
-        packs["en"].append((name, parse_dict(text, r"static let en")))
-        packs["is"].append((name, parse_dict(text, r"static let `is`")))
+        sources[name] = {"en": parse_dict(text, r"static let en"), "is": parse_dict(text, r"static let `is`")}
 
     try:
-        tables = {lang: merge(base[lang], packs[lang], lang) for lang in ("en", "is")}
+        applied, landed = apply_ahead(sources, load_ahead(ahead_path))
+    except AheadError as error:
+        print("error: %s" % error, file=sys.stderr)
+        return 1
+
+    packs = {lang: [(name, sources[name][lang]) for name, _ in PACKS] for lang in LANGS}
+    try:
+        tables = {lang: merge(base[lang], packs[lang], lang) for lang in LANGS}
     except MergeError as error:
         print("error: %s" % error, file=sys.stderr)
         return 1
@@ -226,16 +335,15 @@ def main(argv):
     manifest = {
         "about": "Generated by scripts/import-ios-strings.py from the iOS dictionaries. Do not edit.",
         "intentionalOverrides": sorted(INTENTIONAL_OVERRIDES),
+        # The ahead-of-ios.json changes these tables carry that iOS does not have yet.
+        "aheadOfIos": applied,
         "dictionaries": [manifest_entry("base", base["en"], base["is"])]
-        + [
-            manifest_entry(name, en_values, is_values)
-            for (name, en_values), (_, is_values) in zip(packs["en"], packs["is"])
-        ],
-        "counts": {lang: len(tables[lang]) for lang in ("en", "is")},
+        + [manifest_entry(name, sources[name]["en"], sources[name]["is"]) for name, _ in PACKS],
+        "counts": {lang: len(tables[lang]) for lang in LANGS},
     }
 
     os.makedirs(out, exist_ok=True)
-    for lang in ("en", "is"):
+    for lang in LANGS:
         write_json(os.path.join(out, "strings.%s.json" % lang), dict(sorted(tables[lang].items())))
     write_json(os.path.join(out, "strings.manifest.json"), manifest)
 
@@ -245,6 +353,13 @@ def main(argv):
             % (entry["name"], len(entry["keys"]), len(entry["enOnly"]), len(entry["isOnly"]))
         )
     print("merged: en %d keys, is %d keys" % (len(tables["en"]), len(tables["is"])))
+    for name in applied:
+        print("ahead of iOS: %s" % name)
+    for name in landed:
+        print(
+            "note: iOS has landed \"%s\"; delete it from src/i18n/ahead-of-ios.json" % name,
+            file=sys.stderr,
+        )
     return 0
 
 

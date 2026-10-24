@@ -18,7 +18,8 @@
 //   placeholder of its `.many`, since Icelandic 21 is singular, and adds none
 //   that neither English form has);
 // - never a key the generated iOS tables already have (pick a new key; the
-//   iOS copy is changed in iOS and regenerated, not overridden here).
+//   iOS copy is changed in iOS and regenerated, not overridden here, or,
+//   when Android ships the iOS change first, in src/i18n/ahead-of-ios.json).
 
 /** One language's strings in a pack. */
 export type PackTable = Readonly<Record<string, string>>;

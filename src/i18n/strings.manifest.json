@@ -3,6 +3,9 @@
  "intentionalOverrides": [
   "coach.greeting"
  ],
+ "aheadOfIos": [
+  "Booking confirm card (IS): the service row says Þjónusta, not Tími, the Time row's word (lifepass-ios: the feat/booking-layout-update-prompt follow-up)"
+ ],
  "dictionaries": [
   {
    "name": "base",
