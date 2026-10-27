@@ -4,7 +4,7 @@
 //
 //   the wordmark
 //   Add chat                a new chat (the one on screen is saved first)
-//   Saved                   the saved venues (Profile, Saved half)
+//   Saved                   the Saved sheet (saved venues and classes, For you)
 //   RECENTS                 the last three chats, or "No recent chats yet"
 //   New Chat                the same as Add chat, as a button at the foot
 //
@@ -25,7 +25,7 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   onNewChat: () => void;
-  /** The saved venues. */
+  /** The Saved sheet. */
   onSaved: () => void;
   /** A recent chat. */
   onSelectRecent: (chatId: string) => void;
