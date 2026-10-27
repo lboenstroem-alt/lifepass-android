@@ -3,12 +3,20 @@
  * `CoachViewModel`'s session persistence (ViewModels/CoachViewModel.swift).
  *
  * WHAT IS KEPT. Up to three chats, newest first, each `{ id, title, date,
- * messages: [{ id, role, text }] }`. TEXT ONLY: no question bubbles, no
- * category strips, no venue cards (a card reply keeps its intro), and no
- * health turn ever (privacy policy 2.A, ruling 2). A chat made only of
- * health turns is not saved at all, and a health turn never titles one. The
- * first build kept four chats with their venue cards and every Q&A answer;
- * what it saved is read back the new way (text only, three at most).
+ * messages: [{ id, role, text, classCards? }] }`. TEXT, plus a class answer's
+ * cards: no question bubbles, no category strips, no venue cards (a card
+ * reply keeps its intro), and no health turn ever (privacy policy 2.A,
+ * ruling 2). A chat made only of health turns is not saved at all, and a
+ * health turn never titles one. The first build kept four chats with their
+ * venue cards and every Q&A answer; what it saved is read back the new way
+ * (text only, three at most).
+ *
+ * CLASS CARDS (API 0.36.0) are kept with their reply, in the server's own
+ * shape, so a reopened chat's "Tap one to book" still has its list under it
+ * and the same fail-soft decoder reads them back: a card this build cannot
+ * read is dropped on its own, never costing the message or the chats around
+ * it. They are the generic timetable rows, nothing of the member's own. A
+ * chat saved by a build without cards simply has none.
  *
  * WHOSE THEY ARE. The chats are one member's typed words, so they never
  * outlive that member's session on this phone and are never shown to, or
@@ -22,6 +30,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 
+import type { CoachPlanClass } from '../../classes/sheet';
+import { decodeClassCards, encodePlanClass } from '../dayPlan/decode';
 import { isConversationTurn, type CoachMessage, type CoachRole } from '../store/messages';
 import { characterCount, prefixCharacters } from '../chat/text';
 
@@ -39,6 +49,8 @@ export interface PersistedMessage {
   readonly id: string;
   readonly role: CoachRole;
   readonly text: string;
+  /** A class answer's cards (never empty when present); written in the server's shape. */
+  readonly classCards?: readonly CoachPlanClass[];
 }
 
 export interface ChatSession {
@@ -76,7 +88,15 @@ function readMessage(value: unknown): PersistedMessage | null {
   if (typeof id !== 'string' || typeof text !== 'string') return null;
   if (role !== 'user' && role !== 'assistant') return null;
   if (value.categoryPicker === true || value.isHealth === true) return null;
-  return { id, role, text };
+  // FAIL SOFT: cards this build cannot read back are dropped one by one.
+  const classCards = decodeClassCards(value.classCards);
+  return classCards.length > 0 ? { id, role, text, classCards } : { id, role, text };
+}
+
+/** A message as it is written: its class cards in the server's shape. */
+function storedMessage(message: PersistedMessage): Record<string, unknown> {
+  const { classCards, ...rest } = message;
+  return classCards && classCards.length > 0 ? { ...rest, classCards: classCards.map(encodePlanClass) } : rest;
 }
 
 function readSession(value: unknown): ChatSession | null {
@@ -110,7 +130,8 @@ export async function loadSavedSessions(): Promise<ChatSession[]> {
 /** Writes the list (best effort: a failed write only costs the recents). */
 export async function writeSavedSessions(sessions: readonly ChatSession[]): Promise<void> {
   try {
-    await AsyncStorage.setItem(COACH_SESSIONS_KEY, JSON.stringify(sessions));
+    const stored = sessions.map((session) => ({ ...session, messages: session.messages.map(storedMessage) }));
+    await AsyncStorage.setItem(COACH_SESSIONS_KEY, JSON.stringify(stored));
   } catch {
     // Nothing to tell the member: the chat on screen is untouched.
   }
@@ -161,9 +182,12 @@ export function buildSession(
     id: id ?? newSessionId(),
     title,
     date: now.toISOString(),
-    messages: messages
-      .filter(isConversationTurn)
-      .map((message) => ({ id: message.id, role: message.role, text: message.text })),
+    messages: messages.filter(isConversationTurn).map((message) => {
+      const cards = message.role === 'assistant' ? message.classCards : undefined;
+      return cards && cards.length > 0
+        ? { id: message.id, role: message.role, text: message.text, classCards: cards }
+        : { id: message.id, role: message.role, text: message.text };
+    }),
   };
 }
 
@@ -172,9 +196,13 @@ export function upsertSession(sessions: readonly ChatSession[], session: ChatSes
   return [session, ...sessions.filter((existing) => existing.id !== session.id)].slice(0, MAX_SESSIONS);
 }
 
-/** A saved session back as chat messages (text only). */
+/** A saved session back as chat messages: the text, and a reply's class cards (open). */
 export function messagesFromSession(session: ChatSession): CoachMessage[] {
-  return session.messages.map((message) => ({ id: message.id, role: message.role, text: message.text }));
+  return session.messages.map((message) =>
+    message.role !== 'user' && message.classCards && message.classCards.length > 0
+      ? { id: message.id, role: message.role, text: message.text, classCards: message.classCards }
+      : { id: message.id, role: message.role, text: message.text },
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 /**
  * The Coach's saved chats on disk (iOS `CoachViewModel` session persistence):
- * three at most, text only, no health turn ever, owned by one member.
+ * three at most, text and a class answer's cards, no health turn ever, owned
+ * by one member.
  *
  * The store-level cases of CoachPersistenceTests (a chat saved by New chat)
  * are in ../../store/__tests__/coachStore.test.ts; the sign-in and sign-out
@@ -10,6 +11,8 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { CARDS_EN, dataOf } from '../../chat/__tests__/classCardFixtures';
+import { decodeCoachChatReply } from '../../chat/coachApi';
 import type { CoachMessage } from '../../store/messages';
 import {
   buildSession,
@@ -170,6 +173,79 @@ describe('on disk', () => {
       { id: '1', role: 'user', text: 'Gyms near me' },
       { id: '2', role: 'assistant', text: 'Here are some gyms.' },
     ]);
+  });
+
+  it("keeps a reply's class cards in the server's shape, and reads them back card for card", async () => {
+    const cards = decodeCoachChatReply(dataOf(CARDS_EN)).classes;
+    const built = buildSession(
+      [
+        message('1', 'user', 'Are there any classes in Akureyri today?'),
+        message('2', 'assistant', 'Here are classes in Akureyri today. Tap one to book.', {
+          classCards: cards,
+          classCardsHidden: true,
+          anchorTop: true,
+        }),
+      ],
+      'saved-1',
+    )!;
+    // The member's own turn never carries cards; the closed state is not kept.
+    expect(built.messages[0]).toEqual({ id: '1', role: 'user', text: 'Are there any classes in Akureyri today?' });
+    expect(built.messages[1]!.classCards).toEqual(cards);
+    expect(built.messages[1]).not.toHaveProperty('classCardsHidden');
+
+    await writeSavedSessions([built]);
+    const raw = JSON.parse((await AsyncStorage.getItem(COACH_SESSIONS_KEY))!) as {
+      messages: { classCards?: Record<string, unknown>[] }[];
+    }[];
+    const stored = raw[0]!.messages[1]!.classCards!;
+    expect(stored[0]!.startsAt).toBe('2026-10-13T12:10:00.000Z');
+    expect(stored[3]!.booking).toEqual({
+      kind: 'slot',
+      activityId: 'd9b7a1c3-6e2f-4a8d-b5c4-3e1f7a9d0c88',
+      startsAt: '2026-10-13T19:30:00.000Z',
+      endsAt: '2026-10-13T20:00:00.000Z',
+    });
+
+    const [loaded] = await loadSavedSessions();
+    expect(loaded!.messages[1]!.classCards).toEqual(cards);
+    const restored = messagesFromSession(loaded!);
+    expect(restored[1]!.classCards).toEqual(cards);
+    expect(restored[1]!.classCards![3]!.booking?.slotEndsAt).toEqual(new Date('2026-10-13T20:00:00Z'));
+    expect(restored[0]!.classCards).toBeUndefined();
+  });
+
+  it('chats without cards, or with cards this build cannot read, still load (testSavedChatsWithoutOrWithUnreadableCardsStillLoad)', async () => {
+    const card = {
+      id: 'cls_1',
+      title: 'HOT FIT',
+      startsAt: '2026-10-13T12:10:00.000Z',
+      endsAt: '2026-10-13T13:10:00.000Z',
+      venueSlug: 'nordur-akureyri',
+      venueName: 'Nordur Akureyri',
+      booking: { kind: 'class', activityId: '6b1f0c52-3a7e-4d19-8f2a-0c9d4e5b7a11', eventId: 7 },
+    };
+    await AsyncStorage.setItem(
+      COACH_SESSIONS_KEY,
+      JSON.stringify([
+        {
+          id: 's1',
+          title: 'classes',
+          date: '1970-01-01T00:00:00.000Z',
+          messages: [
+            { id: '1', role: 'user', text: 'classes?' },
+            { id: '2', role: 'assistant', text: 'Old reply' },
+            { id: '3', role: 'assistant', text: 'New reply', classCards: [{ id: 'x' }, 42, card] },
+            { id: '4', role: 'assistant', text: 'Garbled', classCards: 'nope' },
+          ],
+        },
+      ]),
+    );
+    const [loaded] = await loadSavedSessions();
+    expect(loaded!.messages.map((entry) => entry.text)).toEqual(['classes?', 'Old reply', 'New reply', 'Garbled']);
+    expect(loaded!.messages[1]!.classCards).toBeUndefined();
+    // The bad cards dropped, the good one kept.
+    expect(loaded!.messages[2]!.classCards?.map((entry) => entry.id)).toEqual(['cls_1']);
+    expect(loaded!.messages[3]!.classCards).toBeUndefined();
   });
 
   it('an unreadable store reads as no chats', async () => {
