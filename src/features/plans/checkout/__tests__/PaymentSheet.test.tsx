@@ -177,11 +177,11 @@ describe('the payment sheet', () => {
     answerAndReturn(Reply.problem(409, 'order_create_failed'));
     await renderPlans();
     await fireEvent.press(continueButton());
-    await fireEvent.changeText(codeBox(), ' frimann pass\n');
+    await fireEvent.changeText(codeBox(), ' sample code10\n');
     await fireEvent.press(payButton());
     await waitFor(() => expect(checkouts()).toHaveLength(1));
     expect(checkoutBody()).not.toHaveProperty('saveCard');
-    expect(checkoutBody().promotionCode).toBe('FRIMANNPASS');
+    expect(checkoutBody().promotionCode).toBe('SAMPLECODE10');
   });
 
   it('closes by back when nothing is in flight, and nothing is sent', async () => {
@@ -489,7 +489,7 @@ describe('after the sheet', () => {
     api.on('GET', '/profile', Reply.ok(profileJSON({ kennitalaVerified: false })));
     await renderPlans();
     await fireEvent.press(continueButton());
-    await fireEvent.changeText(codeBox(), 'frimannpass');
+    await fireEvent.changeText(codeBox(), 'samplecode10');
     await fireEvent.press(payButton());
     await waitFor(() => expect(openKenni).toHaveBeenCalledTimes(1));
     expect(sheetFor('plan-plus')).toBeNull();
@@ -500,7 +500,7 @@ describe('after the sheet', () => {
     const options: KenniSheetOptions = openKenni.mock.calls[0][0];
     await act(async () => options.onClose());
     await waitFor(() => expect(sheetFor('plan-plus')).toBeOnTheScreen());
-    expect(codeBox()).toHaveProp('value', 'frimannpass');
+    expect(codeBox()).toHaveProp('value', 'samplecode10');
     expect(checkouts()).toHaveLength(1);
   });
 

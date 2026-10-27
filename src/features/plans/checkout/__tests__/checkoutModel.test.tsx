@@ -157,16 +157,16 @@ describe('what is sent (PlansDiscountCodeTests)', () => {
   it('a membership still sends its coupon, normalised, with no save-card flag (testAMembershipStillSendsItsCoupon)', async () => {
     answerCheckout(OPENED);
     const vm = model();
-    await vm.purchasePlan(plus, { promotionCode: ' frimannpass ' });
+    await vm.purchasePlan(plus, { promotionCode: ' samplecode10 ' });
     const body = checkouts()[0].body as Record<string, unknown>;
     expect(body.productSlug).toBe('plan-plus');
-    expect(body.promotionCode).toBe('FRIMANNPASS');
+    expect(body.promotionCode).toBe('SAMPLECODE10');
     expect(body).not.toHaveProperty('saveCard');
     expect(vm.checkoutUrl).toBe('https://pay.kling.is/c/cs_1');
 
     const web = model(false);
-    await web.purchasePlan(plus, { promotionCode: 'frimannpass' });
-    expect(query(web.checkoutUrl)).toEqual({ completePurchase: 'plan-plus', promo: 'FRIMANNPASS' });
+    await web.purchasePlan(plus, { promotionCode: 'samplecode10' });
+    expect(query(web.checkoutUrl)).toEqual({ completePurchase: 'plan-plus', promo: 'SAMPLECODE10' });
   });
 });
 
@@ -336,7 +336,7 @@ describe('Continue (PlansDiscountCodeTests)', () => {
 
 describe('the rule itself (PlansDiscountCodeTests)', () => {
   it('normalises as the server does (testNormalisationMatchesTheServer)', () => {
-    expect(normaliseDiscountCode(' fri mann\tpass\n')).toBe('FRIMANNPASS');
+    expect(normaliseDiscountCode(' sam ple\tcode10\n')).toBe('SAMPLECODE10');
     expect(normaliseDiscountCode('﻿partner-10_b')).toBe('PARTNER-10_B');
     // No-break and thin spaces too.
     expect(normaliseDiscountCode(' abc ')).toBe('ABC');
