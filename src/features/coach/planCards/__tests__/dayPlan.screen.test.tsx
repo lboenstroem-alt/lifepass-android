@@ -32,6 +32,7 @@ jest.mock('expo-speech-recognition', () => ({
 }));
 jest.mock('../../../favourites', () => ({
   useFavourite: () => ({ isFavourite: false, loading: false, toggle: async () => undefined }),
+  useSavedAttraction: () => ({ saved: false, toggling: false, loading: false, toggle: async () => 'added' }),
 }));
 /* eslint-enable @typescript-eslint/no-require-imports */
 

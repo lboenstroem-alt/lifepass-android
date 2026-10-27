@@ -10,7 +10,7 @@
  * components only draw what it allows.
  */
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import type { ComponentProps } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -61,6 +61,7 @@ import {
   sourceLink,
   wholeDistanceM,
 } from '../model';
+import SightHeart from '../SightHeart';
 import SightImage from './SightImage';
 import SightMap from './SightMap';
 
@@ -330,6 +331,30 @@ export function RouteSection({ detail }: { readonly detail: AttractionDetail }) 
 
 // MARK: - Walk links
 
+/**
+ * A row that opens another place, with that place's heart beside it (API
+ * 0.45.0): outside the row's button, so TalkBack reaches "open" and "save"
+ * one by one, as on the venue rows.
+ */
+function LinkRowWithHeart({
+  slug,
+  name,
+  testID,
+  children,
+}: {
+  readonly slug: string;
+  readonly name: string;
+  readonly testID: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <View style={styles.linkRow}>
+      {children}
+      <SightHeart slug={slug} name={name} testID={`${testID}.heart`} />
+    </View>
+  );
+}
+
 function TrailLinkRow({
   link,
   isTrailhead,
@@ -343,26 +368,28 @@ function TrailLinkRow({
   const name = sightDisplayName(link, language);
   const facts = trailFacts(link, t);
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={facts ? `${name}, ${facts}` : name}
-      style={({ pressed }) => [styles.linkRow, pressed && styles.pressed]}
-      testID={`attraction.trail.${link.slug}`}
-    >
-      <AttractionRing isTrailhead={isTrailhead} frame={28} />
-      <View style={[styles.flex, styles.gap3]}>
-        <LPText size={15} weight="semibold" color={colors.paper} numberOfLines={2}>
-          {name}
-        </LPText>
-        {facts ? (
-          <LPText size={10} color={colors.paper3} tracking={1.1} style={MONO}>
-            {facts}
+    <LinkRowWithHeart slug={link.slug} name={name} testID={`attraction.trail.${link.slug}`}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={facts ? `${name}, ${facts}` : name}
+        style={({ pressed }) => [styles.linkOpen, pressed && styles.pressed]}
+        testID={`attraction.trail.${link.slug}`}
+      >
+        <AttractionRing isTrailhead={isTrailhead} frame={28} />
+        <View style={[styles.flex, styles.gap3]}>
+          <LPText size={15} weight="semibold" color={colors.paper} numberOfLines={2}>
+            {name}
           </LPText>
-        ) : null}
-      </View>
-      <Chevron />
-    </Pressable>
+          {facts ? (
+            <LPText size={10} color={colors.paper3} tracking={1.1} style={MONO}>
+              {facts}
+            </LPText>
+          ) : null}
+        </View>
+        <Chevron />
+      </Pressable>
+    </LinkRowWithHeart>
   );
 }
 
@@ -570,46 +597,48 @@ function NearbySightRow({ item, onPress }: { readonly item: AttractionNearby; re
       : null;
   const ring = <AttractionRing isTrailhead={isHike(item)} testID={`attraction.nearby.${item.slug}.ring`} />;
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      // The whole row, as VoiceOver reads iOS's NavigationLink: the photo's
-      // credit too while the photo shows (CC BY-SA wants it reachable).
-      accessibilityLabel={[name, credit, distance].filter(Boolean).join(', ')}
-      style={({ pressed }) => [styles.linkRow, pressed && styles.pressed]}
-      testID={`attraction.nearby.${item.slug}`}
-    >
-      <View style={styles.thumb}>
-        {showsPhoto ? (
-          <SightImage
-            uri={thumb}
-            contentFit="cover"
-            style={StyleSheet.absoluteFill}
-            placeholder={(phase) => (phase === 'failed' ? ring : null)}
-            onFailed={() => setPhotoFailed(true)}
-            testID={`attraction.nearby.${item.slug}.photo`}
-          />
-        ) : (
-          ring
-        )}
-      </View>
-      <View style={[styles.flex, styles.gap3]}>
-        <LPText size={15} weight="semibold" color={colors.paper} numberOfLines={2}>
-          {name}
-        </LPText>
-        {credit ? (
-          <LPText size={11} color={colors.paper3} testID={`attraction.nearby.${item.slug}.credit`}>
-            {credit}
+    <LinkRowWithHeart slug={item.slug} name={name} testID={`attraction.nearby.${item.slug}`}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        // The whole row, as VoiceOver reads iOS's NavigationLink: the photo's
+        // credit too while the photo shows (CC BY-SA wants it reachable).
+        accessibilityLabel={[name, credit, distance].filter(Boolean).join(', ')}
+        style={({ pressed }) => [styles.linkOpen, pressed && styles.pressed]}
+        testID={`attraction.nearby.${item.slug}`}
+      >
+        <View style={styles.thumb}>
+          {showsPhoto ? (
+            <SightImage
+              uri={thumb}
+              contentFit="cover"
+              style={StyleSheet.absoluteFill}
+              placeholder={(phase) => (phase === 'failed' ? ring : null)}
+              onFailed={() => setPhotoFailed(true)}
+              testID={`attraction.nearby.${item.slug}.photo`}
+            />
+          ) : (
+            ring
+          )}
+        </View>
+        <View style={[styles.flex, styles.gap3]}>
+          <LPText size={15} weight="semibold" color={colors.paper} numberOfLines={2}>
+            {name}
+          </LPText>
+          {credit ? (
+            <LPText size={11} color={colors.paper3} testID={`attraction.nearby.${item.slug}.credit`}>
+              {credit}
+            </LPText>
+          ) : null}
+        </View>
+        {distance ? (
+          <LPText size={10} color={colors.paper3} tracking={1.1} style={MONO} testID={`attraction.nearby.${item.slug}.distance`}>
+            {distance}
           </LPText>
         ) : null}
-      </View>
-      {distance ? (
-        <LPText size={10} color={colors.paper3} tracking={1.1} style={MONO} testID={`attraction.nearby.${item.slug}.distance`}>
-          {distance}
-        </LPText>
-      ) : null}
-      <Chevron />
-    </Pressable>
+        <Chevron />
+      </Pressable>
+    </LinkRowWithHeart>
   );
 }
 
@@ -737,10 +766,16 @@ const styles = StyleSheet.create({
   linkRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 10,
+    gap: 10,
     borderTopWidth: hairline,
     borderTopColor: colors.line,
+  },
+  linkOpen: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
   },
   thumb: {
     width: 56,

@@ -26,7 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
 
 import { fetchVenues } from '../../../api/venues';
-import { favouritesStore, type FavouriteActivity, type FavouriteVenue } from '../../favourites';
+import { favouritesStore, type FavouriteActivity, type FavouriteAttraction, type FavouriteVenue } from '../../favourites';
 import type { Venue } from '../../../types/venue';
 
 export interface SavedLoad {
@@ -34,6 +34,8 @@ export interface SavedLoad {
   readonly venues: readonly FavouriteVenue[];
   /** The saved classes. */
   readonly activities: readonly FavouriteActivity[];
+  /** The saved hikes and sights (API 0.45.0), less any just unsaved. */
+  readonly attractions: readonly FavouriteAttraction[];
   /** `GET /venues`, the suggestions' pool. */
   readonly allVenues: readonly Venue[];
   readonly isLoading: boolean;
@@ -50,6 +52,7 @@ const defaultDeps: SavedLoadDeps = { fetchVenues: () => fetchVenues() };
 export function useSavedLoad(deps: SavedLoadDeps = defaultDeps): SavedLoad {
   const venues = useStore(favouritesStore, (s) => s.venues);
   const activities = useStore(favouritesStore, (s) => s.activities);
+  const attractions = useStore(favouritesStore, (s) => s.attractions);
   const [allVenues, setAllVenues] = useState<readonly Venue[]>([]);
   const [isLoading, setLoading] = useState(false);
   const mounted = useRef(true);
@@ -84,6 +87,7 @@ export function useSavedLoad(deps: SavedLoadDeps = defaultDeps): SavedLoad {
   return {
     venues,
     activities,
+    attractions,
     allVenues,
     isLoading,
     load,

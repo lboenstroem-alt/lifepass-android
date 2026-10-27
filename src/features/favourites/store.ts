@@ -33,21 +33,41 @@
  * SIGN-OUT. The list is the member's own: `reset()` (a sign-out cleaner,
  * ./register.ts) forgets it, and an answer still on its way for the member
  * who left is dropped (the generation check).
+ *
+ * HIKES AND SIGHTS (API 0.45.0; docs/05 "Saved hikes and sights"). The same
+ * read carries the saved places (`include=attractions`, in the app's
+ * language), and every place's heart is drawn from the set of saved slugs
+ * (`savedSlugs`): there is no per-place probe. The heart follows the venue
+ * heart's rules above (at once, one request at a time per place, the same
+ * meeting of taps and reads), keyed by slug, with the contract's words:
+ *   - a refused write (anything but a 200) puts that one heart back and says
+ *     "Could not save favourite. Please try again." (or the "remove" twin);
+ *   - a write refused because the session has ended says nothing: the app is
+ *     already on its way to sign-in (`NotAuthenticatedError`), as a call the
+ *     app cancelled says nothing;
+ *   - (a) the set is the member's: `reset()` forgets it with the rest;
+ *   - (b) a heart pressed before the list has arrived is a guess, so the list
+ *     is read again after that write, whether it was accepted or refused.
+ * A save then reads the list again too, as a venue's does, so the place's row
+ * (name, picture, labels) reaches the Favourites screen.
  */
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
-import { errorMessage, isCancellation } from '../../api';
+import { errorMessage, isCancellation, NotAuthenticatedError } from '../../api';
 // The dialog module itself, not the UI kit's barrel: the barrel pulls in the
 // icon fonts, and this store loads with the sign-out cleaners (./register.ts).
 import { showDialog } from '../../components/ui/Dialog';
 import { t } from '../../i18n';
 import {
   addFavouriteActivity,
+  addFavouriteAttraction,
   addFavouriteVenue,
   fetchFavourites,
   removeFavouriteActivity,
+  removeFavouriteAttraction,
   removeFavouriteVenue,
   type FavouriteActivity,
+  type FavouriteAttraction,
   type FavouriteVenue,
   type FavouritesPayload,
 } from './api';
@@ -85,6 +105,20 @@ export interface FavouritesStoreState {
   /** The last read's failure in the language on screen, or null. */
   readonly error: string | null;
 
+  /** The last read's saved hikes and sights, exactly as the server listed them. */
+  readonly attractionRows: readonly FavouriteAttraction[];
+  /** The saved places to show: `attractionRows` less any the member has just unsaved. */
+  readonly attractions: readonly FavouriteAttraction[];
+  /**
+   * Every place slug that reads as saved right now: the last read with the
+   * member's unconfirmed taps applied. Every place's heart reads this set.
+   */
+  readonly savedSlugs: readonly string[];
+  /** Place slugs with a write in flight (the heart ignores taps on these). */
+  readonly attractionInFlight: Readonly<Record<string, true>>;
+  /** The member's taps on places that no read has confirmed yet: slug → saved. */
+  readonly attractionOverrides: Readonly<Record<string, boolean>>;
+
   /**
    * Reads `GET /favourites`. Joins a read already on its way unless `force`
    * (a write that just landed must read after itself).
@@ -104,6 +138,13 @@ export interface FavouritesStoreState {
   addActivity(activityId: string): Promise<void>;
   /** Unsaves a class, then reads the list again. Throws on failure; the caller words it. */
   removeActivity(activityId: string): Promise<void>;
+  /** Whether a hike or sight reads as saved (its heart is filled). */
+  isAttractionSaved(slug: string): boolean;
+  isAttractionToggling(slug: string): boolean;
+  /** Saves or unsaves a hike or sight, optimistically (see HIKES AND SIGHTS). */
+  toggleAttraction(slug: string, options?: FavouriteToggleOptions): Promise<FavouriteToggleResult>;
+  /** Unsaves a hike or sight (the Favourites row's button); nothing is sent when it reads as not saved. */
+  removeAttraction(slug: string, options?: FavouriteToggleOptions): Promise<FavouriteToggleResult>;
   /** Forgets everything (sign-out). */
   reset(): void;
 }
@@ -116,6 +157,8 @@ export interface FavouritesApi {
   readonly removeVenue: (venueId: string) => Promise<void>;
   readonly addActivity: (activityId: string) => Promise<void>;
   readonly removeActivity: (activityId: string) => Promise<void>;
+  readonly addAttraction: (slug: string) => Promise<void>;
+  readonly removeAttraction: (slug: string) => Promise<void>;
 }
 
 export interface FavouritesStoreOptions {
@@ -125,11 +168,14 @@ export interface FavouritesStoreOptions {
 }
 
 const defaultApi: FavouritesApi = {
+  // In the language on screen when the read starts.
   fetch: () => fetchFavourites(),
   addVenue: addFavouriteVenue,
   removeVenue: removeFavouriteVenue,
   addActivity: addFavouriteActivity,
   removeActivity: removeFavouriteActivity,
+  addAttraction: addFavouriteAttraction,
+  removeAttraction: removeFavouriteAttraction,
 };
 
 /** iOS `.alert(appState.t("common.heads_up"))` with its OK button. */
@@ -148,6 +194,27 @@ function computeSavedIds(rows: readonly FavouriteVenue[], overrides: Readonly<Re
   return ids;
 }
 
+/** The place slugs that read as saved: the rows' slugs with the overrides applied. */
+function computeSavedSlugs(
+  rows: readonly FavouriteAttraction[],
+  overrides: Readonly<Record<string, boolean>>,
+): string[] {
+  const slugs = rows.map((a) => a.slug).filter((slug) => overrides[slug] !== false);
+  for (const [slug, saved] of Object.entries(overrides)) {
+    if (saved && !slugs.includes(slug)) slugs.push(slug);
+  }
+  return slugs;
+}
+
+/**
+ * Whether a refused write is worth telling the member about: not a call the
+ * app cancelled (a sign-out on the way), and not one refused because the
+ * session has ended, which already takes the member to sign-in.
+ */
+function tellsMember(error: unknown): boolean {
+  return !isCancellation(error) && !(error instanceof NotAuthenticatedError);
+}
+
 function without<T>(record: Readonly<Record<string, T>>, id: string): Record<string, T> {
   const next = { ...record };
   delete next[id];
@@ -164,6 +231,11 @@ const EMPTY = {
   status: 'idle',
   loaded: false,
   error: null,
+  attractionRows: [],
+  attractions: [],
+  savedSlugs: [],
+  attractionInFlight: {},
+  attractionOverrides: {},
 } as const satisfies Partial<FavouritesStoreState>;
 
 export function createFavouritesStore(options: FavouritesStoreOptions = {}): FavouritesStore {
@@ -178,17 +250,47 @@ export function createFavouritesStore(options: FavouritesStoreOptions = {}): Fav
   /** Counts confirmed writes; `confirmedAt[id]` is the count when that venue's last write was confirmed. */
   let confirmations = 0;
   let confirmedAt: Record<string, number> = {};
+  /** The same, for the places, by slug. */
+  let attractionConfirmedAt: Record<string, number> = {};
 
   return createStore<FavouritesStoreState>()((set, get) => {
     /** Applies new rows and/or overrides, recomputing what reads as saved. */
     const commit = (
-      patch: Partial<Pick<FavouritesStoreState, 'rows' | 'overrides' | 'inFlight' | 'activities' | 'status' | 'loaded' | 'error'>>,
+      patch: Partial<
+        Pick<
+          FavouritesStoreState,
+          | 'rows'
+          | 'overrides'
+          | 'inFlight'
+          | 'activities'
+          | 'status'
+          | 'loaded'
+          | 'error'
+          | 'attractionRows'
+          | 'attractionOverrides'
+          | 'attractionInFlight'
+        >
+      >,
     ) => {
       const state = get();
       const rows = patch.rows ?? state.rows;
       const overrides = patch.overrides ?? state.overrides;
+      // The places' lists change only when their rows or taps do, so a venue's
+      // heart never hands the places' screens a new list.
+      const places =
+        patch.attractionRows !== undefined || patch.attractionOverrides !== undefined
+          ? (() => {
+              const attractionRows = patch.attractionRows ?? state.attractionRows;
+              const attractionOverrides = patch.attractionOverrides ?? state.attractionOverrides;
+              return {
+                attractions: attractionRows.filter((a) => attractionOverrides[a.slug] !== false),
+                savedSlugs: computeSavedSlugs(attractionRows, attractionOverrides),
+              };
+            })()
+          : {};
       set({
         ...patch,
+        ...places,
         venues: rows.filter((v) => overrides[v.venueId] !== false),
         savedIds: computeSavedIds(rows, overrides),
       });
@@ -214,10 +316,22 @@ export function createFavouritesStore(options: FavouritesStoreOptions = {}): Fav
             delete confirmedAt[id];
           }
         }
+        // The places' taps meet the read by the same rule.
+        const attractionOverrides: Record<string, boolean> = {};
+        for (const [slug, saved] of Object.entries(state.attractionOverrides)) {
+          const confirmed = attractionConfirmedAt[slug];
+          if (state.attractionInFlight[slug] || confirmed === undefined || confirmed > confirmationsAtStart) {
+            attractionOverrides[slug] = saved;
+          } else {
+            delete attractionConfirmedAt[slug];
+          }
+        }
         commit({
           rows: payload.venues,
           overrides,
           activities: payload.activities,
+          attractionRows: payload.attractions,
+          attractionOverrides,
           status: 'loaded',
           loaded: true,
           error: null,
@@ -256,6 +370,61 @@ export function createFavouritesStore(options: FavouritesStoreOptions = {}): Fav
       // An add has no row yet (name, photo, slug for Saved and the Coach): read it.
       if (target) void get().load({ force: true });
       return target ? 'added' : 'removed';
+    };
+
+    /** A place's save or unsave (see HIKES AND SIGHTS in the file comment). */
+    const writeAttraction = async (
+      slug: string,
+      target: boolean,
+      opts: FavouriteToggleOptions | undefined,
+    ): Promise<FavouriteToggleResult> => {
+      const state = get();
+      const gen = generation;
+      // (b) Pressed before any read has answered: the heart was a guess.
+      const guessed = !state.loaded;
+      const previous = Object.prototype.hasOwnProperty.call(state.attractionOverrides, slug)
+        ? state.attractionOverrides[slug]
+        : undefined;
+      commit({
+        attractionOverrides: { ...state.attractionOverrides, [slug]: target },
+        attractionInFlight: { ...state.attractionInFlight, [slug]: true },
+      });
+      try {
+        await (target ? api.addAttraction(slug) : api.removeAttraction(slug));
+      } catch (error) {
+        if (gen !== generation) return 'failed';
+        const now = get();
+        // Back to what the heart showed before the tap.
+        const attractionOverrides =
+          previous === undefined ? without(now.attractionOverrides, slug) : { ...now.attractionOverrides, [slug]: previous };
+        commit({ attractionOverrides, attractionInFlight: without(now.attractionInFlight, slug) });
+        if ((opts?.alert ?? true) && tellsMember(error)) {
+          alert(t(target ? 'favourites.heart.saveFailed' : 'favourites.heart.removeFailed'));
+        }
+        if (guessed) void get().load({ force: true });
+        return 'failed';
+      }
+      if (gen !== generation) return target ? 'added' : 'removed';
+      confirmations += 1;
+      attractionConfirmedAt[slug] = confirmations;
+      commit({ attractionInFlight: without(get().attractionInFlight, slug) });
+      // A save has no row yet (name, picture, labels for Favourites); a guess
+      // must be checked against the list (b).
+      if (target || guessed) void get().load({ force: true });
+      return target ? 'added' : 'removed';
+    };
+
+    /** Runs a place's write unless it already has one in flight. */
+    const guardedAttraction = (
+      slug: string,
+      decide: (savedNow: boolean) => boolean | null,
+      opts?: FavouriteToggleOptions,
+    ): Promise<FavouriteToggleResult> => {
+      if (!slug || get().attractionInFlight[slug]) return Promise.resolve<FavouriteToggleResult>('ignored');
+      const savedNow = get().savedSlugs.includes(slug);
+      const target = decide(savedNow);
+      if (target === null) return Promise.resolve<FavouriteToggleResult>(savedNow ? 'added' : 'removed');
+      return writeAttraction(slug, target, opts);
     };
 
     /** Runs a write unless this venue already has one in flight. */
@@ -318,12 +487,29 @@ export function createFavouritesStore(options: FavouritesStoreOptions = {}): Fav
         if (gen === generation) await get().load({ force: true });
       },
 
+      isAttractionSaved(slug) {
+        return get().savedSlugs.includes(slug);
+      },
+
+      isAttractionToggling(slug) {
+        return get().attractionInFlight[slug] === true;
+      },
+
+      toggleAttraction(slug, opts) {
+        return guardedAttraction(slug, (savedNow) => !savedNow, opts);
+      },
+
+      removeAttraction(slug, opts) {
+        return guardedAttraction(slug, (savedNow) => (savedNow ? false : null), opts);
+      },
+
       reset() {
         generation += 1;
         latestRead += 1;
         pendingRead = null;
         confirmations = 0;
         confirmedAt = {};
+        attractionConfirmedAt = {};
         set({ ...EMPTY });
       },
     };

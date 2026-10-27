@@ -26,7 +26,7 @@ function row(venueId: string, name = 'Venue'): FavouriteVenue {
   };
 }
 
-const payload = (...venueIds: string[]): FavouritesPayload => ({ venues: venueIds.map((id) => row(id)), activities: [] });
+const payload = (...venueIds: string[]): FavouritesPayload => ({ venues: venueIds.map((id) => row(id)), activities: [], attractions: [] });
 
 /** A promise the test settles by hand. */
 function deferred<T = void>() {

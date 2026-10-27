@@ -17,6 +17,9 @@
  *                venue", which closes the sheet and switches to Explore
  *   classes      "Saved classes", only when there are any: photo, name, the
  *                venue's name; a row opens that venue's page (by its slug)
+ *   places       "Hikes & sights" (API 0.45.0, ./SavedSightsSection.tsx):
+ *                the places saved with a sight's heart, or its empty state;
+ *                a row opens the place's card, like a venue (a trip)
  *   For you      "Based on where you've been": the first three venues not
  *                saved, each with its reason (./savedModel.ts), opening the
  *                venue; the heart saves it (a spinner meanwhile, one at a
@@ -67,6 +70,7 @@ import { colors, hairline } from '../../../theme';
 import { favouritesStore, isPremiumFavourite, type FavouriteActivity, type FavouriteVenue } from '../../favourites';
 
 import { savedVenueIds, suggestionReason, suggestionsFor } from './savedModel';
+import SavedSightsSection from './SavedSightsSection';
 import { useSavedLoad } from './useSavedLoad';
 
 export interface SavedSheetProps {
@@ -161,6 +165,13 @@ export default function SavedSheet({ visible, onClose }: SavedSheetProps) {
       if (!openSharedRoute(navigation, 'VenueDetail', { slug })) trip.current = 'none';
     });
 
+  /** A saved place's card: a trip like a venue's, so back lands on the sheet again. */
+  const openSight = (slug: string) =>
+    leaveThen(() => {
+      trip.current = 'opening';
+      if (!openSharedRoute(navigation, 'AttractionDetail', { slug })) trip.current = 'none';
+    });
+
   const addSuggestion = async (venue: Venue) => {
     if (adding.current !== null) return;
     adding.current = venue.id;
@@ -227,6 +238,8 @@ export default function SavedSheet({ visible, onClose }: SavedSheetProps) {
             </View>
           </View>
         ) : null}
+
+        <SavedSightsSection attractions={saved.attractions} onOpenSight={openSight} testID="saved.sights" />
 
         <View style={styles.shelf} testID="saved.suggestions">
           <LinearGradient

@@ -18,6 +18,10 @@
  *
  * The suggestion heart fails silently, as iOS's `try?` does: the half reloads
  * either way and the venue simply stays a suggestion.
+ *
+ * HIKES AND SIGHTS (API 0.45.0): under the venues, Favourites' third section
+ * (./SavedSightsSection.tsx), the places saved with a sight's heart; a row
+ * opens the place's card.
  */
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -29,18 +33,21 @@ import { favouritesStore, type FavouriteVenue } from '../../favourites';
 import { colors, hairline } from '../../../theme';
 
 import { savedVenueIds, suggestionCategory, suggestionsFor } from './savedModel';
+import SavedSightsSection from './SavedSightsSection';
 import type { SavedLoad } from './useSavedLoad';
 
 export interface SavedTabProps {
   readonly saved: SavedLoad;
   readonly onOpenVenue: (slug: string) => void;
+  /** Opens a saved hike's or sight's card. */
+  readonly onOpenSight: (slug: string) => void;
   /** Leave Profile, then switch to Explore ("Find venues"). */
   readonly onFindVenues: () => void;
   /** Room under the list for the floating tab bar. */
   readonly bottomSpace: number;
 }
 
-export default function SavedTab({ saved, onOpenVenue, onFindVenues, bottomSpace }: SavedTabProps) {
+export default function SavedTab({ saved, onOpenVenue, onOpenSight, onFindVenues, bottomSpace }: SavedTabProps) {
   const { t } = useT();
   const suggestions = saved.allVenues.length > 0 ? suggestionsFor(saved.allVenues, savedVenueIds(saved)) : [];
 
@@ -86,6 +93,8 @@ export default function SavedTab({ saved, onOpenVenue, onFindVenues, bottomSpace
           ))}
         </View>
       )}
+
+      <SavedSightsSection attractions={saved.attractions} onOpenSight={onOpenSight} testID="library.sights" />
 
       {suggestions.length > 0 ? (
         <View style={styles.shelf} testID="library.suggestions">

@@ -115,6 +115,33 @@ export function favouriteJSON(venueId: string, extra: Record<string, unknown> = 
   };
 }
 
+/** A `GET /favourites?include=attractions` place row (API 0.45.0 `FavouriteAttraction`). */
+export function favouriteAttractionJSON(slug: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: `fav-${slug}`,
+    attractionId: '33333333-3333-4333-8333-333333333333',
+    slug,
+    name: slug.charAt(0).toUpperCase() + slug.slice(1),
+    localName: slug.charAt(0).toUpperCase() + slug.slice(1),
+    kind: 'waterfall',
+    kindLabel: 'Waterfall',
+    region: 'south',
+    regionLabel: 'South Iceland',
+    lengthM: null,
+    durationMinutes: null,
+    difficulty: null,
+    difficultyLabel: null,
+    outAndBack: false,
+    imageUrl: `https://www.lifepass.is/api/v1/attractions/plate/${slug}`,
+    imageAlt: slug,
+    imageIsMapPlate: true,
+    imageCredit: null,
+    imageLicense: null,
+    createdAt: '2026-10-27T12:00:00.000Z',
+    ...extra,
+  };
+}
+
 /** A `GET /favourites` class row. */
 export function favouriteActivityJSON(activityId: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {

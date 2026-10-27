@@ -21,6 +21,7 @@ import {
   bookingJSON,
   bookingsPage,
   favouriteActivityJSON,
+  favouriteAttractionJSON,
   favouriteJSON,
   LANES,
   profileJSON,
@@ -70,8 +71,8 @@ function answerBookings(upcoming: unknown[], past: unknown[] = []) {
   api.on('GET', '/bookings', (request) => Reply.ok(bookingsPage(request.query.range === 'upcoming' ? upcoming : past)));
 }
 
-function answerSaved(venues: unknown[] = [], activities: unknown[] = [], all: unknown[] = []) {
-  api.on('GET', '/favourites', Reply.ok({ venues, activities }));
+function answerSaved(venues: unknown[] = [], activities: unknown[] = [], all: unknown[] = [], attractions: unknown[] = []) {
+  api.on('GET', '/favourites', Reply.ok({ venues, activities, attractions }));
   api.on('GET', '/venues', Reply.ok({ data: all, pagination: { nextCursor: null, hasMore: false, limit: 100 } }));
 }
 
@@ -394,5 +395,55 @@ describe('the Saved half', () => {
     answerSaved([favouriteJSON(SAVED_A)], [favouriteActivityJSON('cccccccc-0000-4000-8000-000000000001')]);
     await renderProfile('saved');
     expect(screen.queryByText('Hot Yoga')).toBeNull();
+  });
+});
+
+describe('the Saved half: hikes and sights (API 0.45.0)', () => {
+  it('asks for the places in the account language, and lists them under "Hikes & sights"', async () => {
+    answerSaved([], [], [], [
+      favouriteAttractionJSON('skogafoss', { name: 'Skógafoss' }),
+      favouriteAttractionJSON('glymur', { name: 'Glymur', kind: 'hike', kindLabel: 'Hike', regionLabel: 'West Iceland', lengthM: 7100, durationMinutes: 180, outAndBack: true }),
+    ]);
+    await renderProfile('saved');
+    expect(api.requests.find((r) => r.method === 'GET' && r.path === '/favourites')?.query).toEqual({ include: 'attractions', locale: 'en' });
+    const section = within(screen.getByTestId('library.sights'));
+    expect(section.getByText('HIKES & SIGHTS')).toBeOnTheScreen();
+    expect(section.getByText('Skógafoss')).toBeOnTheScreen();
+    expect(section.getByText('Hike · West Iceland')).toBeOnTheScreen();
+    expect(section.getByText('7.1 km one way · 3 h there and back')).toBeOnTheScreen();
+    // The tab counts everything on the half; "{count} saved" stays the venues.
+    expect(screen.getByRole('tab', { name: 'Saved, 2' })).toBeOnTheScreen();
+    expect(screen.getByTestId('library.saved.count')).toHaveTextContent('0 SAVED');
+  });
+
+  it('a row opens the place’s card by its slug', async () => {
+    answerSaved([], [], [], [favouriteAttractionJSON('skogafoss', { name: 'Skógafoss' })]);
+    await renderProfile('saved');
+    await fireEvent.press(screen.getByTestId('library.sights.row.skogafoss.open'));
+    expect(currentRoute()).toBe('AttractionDetail');
+    expect(screen.getByTestId('params.AttractionDetail')).toHaveTextContent(JSON.stringify({ slug: 'skogafoss' }));
+  });
+
+  it('the remove button takes the place off at once, by its slug', async () => {
+    answerSaved([], [], [], [favouriteAttractionJSON('skogafoss', { name: 'Skógafoss' }), favouriteAttractionJSON('glymur')]);
+    api.on('DELETE', '/favourites', Reply.ok({ ok: true }));
+    await renderProfile('saved');
+    await fireEvent.press(screen.getByRole('button', { name: 'Remove Skógafoss from favourites' }));
+    expect(screen.queryByTestId('library.sights.row.skogafoss')).toBeNull();
+    expect(screen.getByTestId('library.sights.row.glymur')).toBeOnTheScreen();
+    await waitFor(() => expect(api.sent('/favourites', 'DELETE').query).toEqual({ attractionSlug: 'skogafoss' }));
+  });
+
+  it('none saved: the empty state in its own words, in both languages', async () => {
+    await renderProfile('saved');
+    expect(within(screen.getByTestId('library.sights.empty')).getByText('No saved hikes or sights yet')).toBeOnTheScreen();
+    expect(screen.getByText('Tap the heart on a hike, a waterfall or any other sight to keep it here.')).toBeOnTheScreen();
+    screen.unmount();
+    favouritesStore.getState().reset();
+    setCurrentLanguage('is');
+    await renderProfile('saved');
+    expect(screen.getByText('ÚTIVIST')).toBeOnTheScreen();
+    expect(screen.getByText('Ekkert vistað hér enn')).toBeOnTheScreen();
+    expect(screen.getByText('Gönguleiðir og áhugaverðir staðir sem þú vistar með hjartanu birtast hér.')).toBeOnTheScreen();
   });
 });

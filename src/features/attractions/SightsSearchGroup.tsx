@@ -15,7 +15,8 @@
  *     then the score).
  *   - Each row: the sight's ring, its name (Icelandic in Icelandic, else the
  *     English exonym where there is one), "Waterfall · South Iceland · Top
- *     pick", and a chevron.
+ *     pick", a chevron, and beside the row the place's heart (API 0.45.0,
+ *     ./SightHeart.tsx).
  *   - The rows scroll inside at most 30 % of the space below the search row
  *     (between 72 and 180 points): while a name is typed the keyboard takes
  *     half a small phone, and five full rows would leave the map a sliver.
@@ -48,6 +49,7 @@ import { sightDetailLine } from './map/words';
 import { attractionMarkersStore, useAttractionMarkers } from './markersStore';
 import { isHike, sightDisplayName } from './model';
 import { matchSights, rankedForMap } from './rules';
+import SightHeart from './SightHeart';
 
 /** The most sights the group lists. */
 export const MAX_SIGHT_MATCHES = 5;
@@ -187,25 +189,28 @@ interface SightRowProps {
 
 const SightRow = memo(function SightRow({ sight, name, detail, divided, onOpen }: SightRowProps) {
   return (
-    <Pressable
-      onPress={() => onOpen(sight)}
-      accessibilityRole="button"
-      accessibilityLabel={`${name}, ${detail}`}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-      testID={`explore.sights.row.${sight.slug}`}
-    >
+    <View style={styles.rowWrap}>
       {divided ? <View style={styles.divider} {...hiddenFromAccessibility} /> : null}
-      <AttractionRing tier={sight.tier} isTrailhead={isHike(sight)} frame={28} />
-      <View style={styles.words}>
-        <LPText size={14} weight="semibold" color={colors.paper} numberOfLines={1}>
-          {name}
-        </LPText>
-        <LPText size={11.5} color={colors.paper3} numberOfLines={1}>
-          {detail}
-        </LPText>
-      </View>
-      <Ionicons name="chevron-forward" size={12} color={colors.paper3} {...hiddenFromAccessibility} />
-    </Pressable>
+      <Pressable
+        onPress={() => onOpen(sight)}
+        accessibilityRole="button"
+        accessibilityLabel={`${name}, ${detail}`}
+        style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+        testID={`explore.sights.row.${sight.slug}`}
+      >
+        <AttractionRing tier={sight.tier} isTrailhead={isHike(sight)} frame={28} />
+        <View style={styles.words}>
+          <LPText size={14} weight="semibold" color={colors.paper} numberOfLines={1}>
+            {name}
+          </LPText>
+          <LPText size={11.5} color={colors.paper3} numberOfLines={1}>
+            {detail}
+          </LPText>
+        </View>
+        <Ionicons name="chevron-forward" size={12} color={colors.paper3} {...hiddenFromAccessibility} />
+      </Pressable>
+      <SightHeart slug={sight.slug} name={name} testID={`explore.sights.heart.${sight.slug}`} />
+    </View>
   );
 });
 
@@ -221,11 +226,14 @@ const styles = StyleSheet.create({
   },
   heading: { paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4 },
   rows: { flexGrow: 0 },
+  rowWrap: { flexDirection: 'row', alignItems: 'center', paddingRight: 10 },
   row: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingHorizontal: 14,
+    paddingLeft: 14,
+    paddingRight: 8,
     paddingVertical: 8,
     // Android's touch target; iOS rows are 44.
     minHeight: 48,

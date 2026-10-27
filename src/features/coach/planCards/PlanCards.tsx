@@ -25,6 +25,7 @@ import { venueWithRoom } from '../../../copy/classRoom';
 import { useT } from '../../../i18n';
 import { colors } from '../../../theme';
 import { AttractionRing, kindRegionLine, PLATE_PAPER } from '../../attractions';
+import SightHeart from '../../attractions/SightHeart';
 import type { CoachPlanClass } from '../../classes/sheet';
 import type { CoachPlanDistance, CoachPlanSight, CoachPlanVenue } from '../dayPlan/decode';
 import { coachPalette } from '../theme/palette';
@@ -254,7 +255,8 @@ export function PlanClassCard({
 /**
  * A sight step: the photo (credited), the plate (a map, shown whole) or the
  * ring; the credit; the name; "Waterfall · South Iceland"; how to get there;
- * "See the place". The whole card opens the sight's card.
+ * "See the place". The whole card opens the sight's card; the place's heart
+ * (API 0.45.0) floats over the picture's corner, a control of its own.
  */
 export function PlanSightCard({
   sight,
@@ -279,48 +281,53 @@ export function PlanSightCard({
   const ring = <AttractionRing tier="top" isTrailhead={sight.kind === 'hike'} frame={34} />;
 
   return (
-    <Pressable
-      onPress={onOpen}
-      style={({ pressed }) => [styles.card, { width }, pressed && styles.pressed]}
-      accessibilityRole="button"
-      testID={`coach.plan.sight.${sight.slug}`}
-    >
-      <View style={[styles.sightBand, { width, backgroundColor: plate ? PLATE_PAPER : coachPalette.tile }]}>
-        {imageUrl !== null && !photoFailed ? (
-          <PlanCardImage
-            uri={imageUrl}
-            contentFit={plate ? 'contain' : 'cover'}
-            fallback={ring}
-            onFailed={onPhotoFailed}
-            testID={`coach.plan.sight.${sight.slug}.image`}
-          />
-        ) : (
-          <View style={styles.ringBox} testID={`coach.plan.sight.${sight.slug}.ring`}>
-            {ring}
-          </View>
-        )}
-      </View>
-      <View style={styles.sightInfo}>
-        {credit ? (
-          <LPText size={10} color={coachPalette.textMeta} numberOfLines={1} testID={`coach.plan.sight.${sight.slug}.credit`}>
-            {credit}
-          </LPText>
-        ) : null}
-        <LPText size={14} weight="semibold" color="#FFFFFF" numberOfLines={2}>
-          {sight.name}
-        </LPText>
-        <LPText size={12} color={coachPalette.textMeta} numberOfLines={1}>
-          {kindRegionLine(sight, (key) => t(key))}
-        </LPText>
-        {travel ? <TravelLineView text={travel.text} icon={travel.icon} testID={`coach.plan.sight.${sight.slug}.travel`} /> : null}
-        <View style={[styles.iconRow, styles.openRow]}>
-          <LPText size={12} weight="semibold" color={colors.aurora}>
-            {t('coach.plan.sight.open')}
-          </LPText>
-          <Ionicons name="chevron-forward" size={11} color={colors.aurora} {...hiddenFromAccessibility} />
+    <View style={{ width }}>
+      <Pressable
+        onPress={onOpen}
+        style={({ pressed }) => [styles.card, { width }, pressed && styles.pressed]}
+        accessibilityRole="button"
+        testID={`coach.plan.sight.${sight.slug}`}
+      >
+        <View style={[styles.sightBand, { width, backgroundColor: plate ? PLATE_PAPER : coachPalette.tile }]}>
+          {imageUrl !== null && !photoFailed ? (
+            <PlanCardImage
+              uri={imageUrl}
+              contentFit={plate ? 'contain' : 'cover'}
+              fallback={ring}
+              onFailed={onPhotoFailed}
+              testID={`coach.plan.sight.${sight.slug}.image`}
+            />
+          ) : (
+            <View style={styles.ringBox} testID={`coach.plan.sight.${sight.slug}.ring`}>
+              {ring}
+            </View>
+          )}
         </View>
+        <View style={styles.sightInfo}>
+          {credit ? (
+            <LPText size={10} color={coachPalette.textMeta} numberOfLines={1} testID={`coach.plan.sight.${sight.slug}.credit`}>
+              {credit}
+            </LPText>
+          ) : null}
+          <LPText size={14} weight="semibold" color="#FFFFFF" numberOfLines={2}>
+            {sight.name}
+          </LPText>
+          <LPText size={12} color={coachPalette.textMeta} numberOfLines={1}>
+            {kindRegionLine(sight, (key) => t(key))}
+          </LPText>
+          {travel ? <TravelLineView text={travel.text} icon={travel.icon} testID={`coach.plan.sight.${sight.slug}.travel`} /> : null}
+          <View style={[styles.iconRow, styles.openRow]}>
+            <LPText size={12} weight="semibold" color={colors.aurora}>
+              {t('coach.plan.sight.open')}
+            </LPText>
+            <Ionicons name="chevron-forward" size={11} color={colors.aurora} {...hiddenFromAccessibility} />
+          </View>
+        </View>
+      </Pressable>
+      <View style={styles.sightHeart}>
+        <SightHeart slug={sight.slug} name={sight.name} variant="float" testID={`coach.plan.sight.${sight.slug}.heart`} />
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -360,6 +367,7 @@ const styles = StyleSheet.create({
   travel: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   flexShrink: { flexShrink: 1 },
   sightBand: { height: 120, overflow: 'hidden' },
+  sightHeart: { position: 'absolute', top: 8, right: 8 },
   ringBox: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   sightInfo: { padding: 10, gap: 4, alignItems: 'flex-start' },
   openRow: { gap: 4, marginTop: 2 },

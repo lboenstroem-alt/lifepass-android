@@ -88,6 +88,7 @@ export default function ProfileScreen({ navigation, route }: SharedRouteProps<'P
   }, [navigation]);
 
   const openVenue = useCallback((slug: string) => openSharedRoute(navigation, 'VenueDetail', { slug }), [navigation]);
+  const openSight = useCallback((slug: string) => openSharedRoute(navigation, 'AttractionDetail', { slug }), [navigation]);
 
   return (
     <View style={styles.root} testID="library.screen">
@@ -118,7 +119,8 @@ export default function ProfileScreen({ navigation, route }: SharedRouteProps<'P
         />
         <TopTabButton
           title={t('library.tab.saved')}
-          count={saved.venues.length}
+          // Everything on the half: venues and, since API 0.45.0, hikes and sights.
+          count={saved.venues.length + saved.attractions.length}
           active={topTab === 'saved'}
           onPress={() => setTopTab('saved')}
           testID="library.tab.saved"
@@ -132,7 +134,13 @@ export default function ProfileScreen({ navigation, route }: SharedRouteProps<'P
           <LoadingSpinner />
         </View>
       ) : (
-        <SavedTab saved={saved} onOpenVenue={openVenue} onFindVenues={leaveForExplore} bottomSpace={bottomSpace} />
+        <SavedTab
+          saved={saved}
+          onOpenVenue={openVenue}
+          onOpenSight={openSight}
+          onFindVenues={leaveForExplore}
+          bottomSpace={bottomSpace}
+        />
       )}
     </View>
   );

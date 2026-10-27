@@ -31,6 +31,7 @@ function routeStandIn(name: string): ComponentType {
 const Start = routeStandIn('Start');
 const Account = routeStandIn('Account');
 const VenueDetail = routeStandIn('VenueDetail');
+const AttractionDetail = routeStandIn('AttractionDetail');
 const Plans = routeStandIn('Plans');
 
 export function ProfileHarness({ initialTab = 'bookings' }: { readonly initialTab?: ProfileTab }) {
@@ -44,6 +45,7 @@ export function ProfileHarness({ initialTab = 'bookings' }: { readonly initialTa
         <Stack.Screen name="Profile" component={ProfileScreen as unknown as ComponentType} />
         <Stack.Screen name="Account" component={Account} />
         <Stack.Screen name="VenueDetail" component={VenueDetail} />
+        <Stack.Screen name="AttractionDetail" component={AttractionDetail} />
         <Stack.Screen name="Plans" component={Plans} />
       </Stack.Navigator>
     </NavigationContainer>

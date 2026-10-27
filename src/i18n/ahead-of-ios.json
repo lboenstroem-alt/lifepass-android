@@ -66,6 +66,31 @@
      "venue.ratings.cleanliness": "Hreinlæti"
     }
    }
+  },
+  {
+   "change": "Save hikes and sights: the heart's name, its failures, and Favourites' third section Hikes & sights / Útivist (favourites.heart.save, .saveFailed, .removeFailed, favourites.tabs.outdoors, favourites.empty.outdoors.title/.body, favourites.card.removeNamed) (API 0.45.0; lifepass-ios feat/member-feedback, the app version after 3.1.0)",
+   "dictionary": "base",
+   "ios": {},
+   "android": {
+    "en": {
+     "favourites.heart.save": "Save {name} to favourites",
+     "favourites.heart.saveFailed": "Could not save favourite. Please try again.",
+     "favourites.heart.removeFailed": "Could not remove favourite. Please try again.",
+     "favourites.tabs.outdoors": "Hikes & sights",
+     "favourites.empty.outdoors.title": "No saved hikes or sights yet",
+     "favourites.empty.outdoors.body": "Tap the heart on a hike, a waterfall or any other sight to keep it here.",
+     "favourites.card.removeNamed": "Remove {name} from favourites"
+    },
+    "is": {
+     "favourites.heart.save": "Vista í uppáhalds: {name}",
+     "favourites.heart.saveFailed": "Ekki tókst að vista uppáhald. Reyndu aftur.",
+     "favourites.heart.removeFailed": "Ekki tókst að fjarlægja uppáhald. Reyndu aftur.",
+     "favourites.tabs.outdoors": "Útivist",
+     "favourites.empty.outdoors.title": "Ekkert vistað hér enn",
+     "favourites.empty.outdoors.body": "Gönguleiðir og áhugaverðir staðir sem þú vistar með hjartanu birtast hér.",
+     "favourites.card.removeNamed": "Fjarlægja úr uppáhalds: {name}"
+    }
+   }
   }
  ]
 }

@@ -336,6 +336,17 @@ describe('taps', () => {
     expect(onSeeAllOnMap).toHaveBeenCalledTimes(1);
   });
 
+  it('each pick has its own heart beside the row (API 0.45.0), named for the place, not a part of the row', async () => {
+    serveFeed();
+    await renderCard();
+    await screen.findByTestId('home.outside');
+    const heart = screen.getByTestId('home.outside.heart.glymur');
+    expect(heart.props.accessibilityRole).toBe('togglebutton');
+    expect(heart.props.accessibilityLabel).toBe('Save Glymur to favourites');
+    expect(within(screen.getByTestId('home.outside.pick.glymur')).queryByTestId('home.outside.heart.glymur')).toBeNull();
+    expect(screen.getAllByTestId(/^home\.outside\.heart\.[a-z-]+$/)).toHaveLength(4);
+  });
+
   it('names each row to TalkBack with its kind, region and distance', async () => {
     grantFix(REYKJAVIK);
     serveFeed();

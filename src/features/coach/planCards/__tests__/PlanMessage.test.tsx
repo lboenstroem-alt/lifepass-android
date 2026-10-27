@@ -23,6 +23,7 @@ jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset')
 // The hearts are VENUE-2's store; here a heart only has to draw.
 jest.mock('../../../favourites', () => ({
   useFavourite: () => ({ isFavourite: false, loading: false, toggle: async () => undefined }),
+  useSavedAttraction: () => ({ saved: false, toggling: false, loading: false, toggle: async () => 'added' }),
 }));
 // The window the cards are drawn in: a 390 dp phone unless a test narrows it.
 const mockWindow = { width: 390, height: 844, scale: 3, fontScale: 1 };

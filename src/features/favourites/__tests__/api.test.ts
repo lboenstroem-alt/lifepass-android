@@ -7,13 +7,16 @@ import { api, Reply } from '@test/server';
 
 import { DecodingError } from '../../../api';
 import { expectSentToMatchContract, replyFromContract, stubApiClientPerTest } from '../../../api/testing';
+import { setCurrentLanguage } from '../../../i18n';
 import {
   addFavouriteActivity,
+  addFavouriteAttraction,
   addFavouriteVenue,
   decodeFavourites,
   fetchFavourites,
   isPremiumFavourite,
   removeFavouriteActivity,
+  removeFavouriteAttraction,
   removeFavouriteVenue,
 } from '../api';
 
@@ -103,5 +106,107 @@ describe('the writes', () => {
     expect(expectSentToMatchContract('DELETE', '/favourites').query).toEqual({ venueId: VENUE.toLowerCase() });
     await removeFavouriteActivity(ACTIVITY);
     expect(expectSentToMatchContract('DELETE', '/favourites').query).toEqual({ activityId: ACTIVITY });
+  });
+});
+
+/** A saved place as the server lists it (API 0.45.0 `FavouriteAttraction`, every key present). */
+const placeRow = (overrides: Record<string, unknown> = {}) => ({
+  id: '22222222-2222-4222-8222-222222222222',
+  attractionId: '33333333-3333-4333-8333-333333333333',
+  slug: 'skogafoss',
+  name: 'Skógafoss',
+  localName: 'Skógafoss',
+  kind: 'waterfall',
+  kindLabel: 'Waterfall',
+  region: 'south',
+  regionLabel: 'South Iceland',
+  lengthM: null,
+  durationMinutes: null,
+  difficulty: null,
+  difficultyLabel: null,
+  outAndBack: false,
+  imageUrl: 'https://upload.example/skogafoss-640.jpg',
+  imageAlt: 'Skógafoss',
+  imageIsMapPlate: false,
+  imageCredit: 'Jane Doe',
+  imageLicense: 'CC BY-SA 4.0',
+  createdAt: '2026-10-27T12:00:00.000Z',
+  ...overrides,
+});
+
+describe('saved hikes and sights (API 0.45.0)', () => {
+  it('asks for the places in the language on screen, and reads the contract sample', async () => {
+    setCurrentLanguage('is');
+    api.on('GET', '/favourites', replyFromContract('GET', '/favourites', 200, 'full'));
+    const payload = await fetchFavourites();
+    const sent = expectSentToMatchContract('GET', '/favourites');
+    expect(sent.query).toEqual({ include: 'attractions', locale: 'is' });
+    expect(payload.attractions.length).toBeGreaterThan(0);
+    expect(payload.attractions[0].slug).toEqual(expect.any(String));
+    setCurrentLanguage('en');
+    await fetchFavourites();
+    expect(expectSentToMatchContract('GET', '/favourites').query).toEqual({ include: 'attractions', locale: 'en' });
+  });
+
+  it('reads a place, every field', () => {
+    const [place] = decodeFavourites({ venues: [], activities: [], attractions: [placeRow({ lengthM: 7100, durationMinutes: 180, outAndBack: true, kind: 'hike' })] }).attractions;
+    expect(place).toEqual({
+      id: '22222222-2222-4222-8222-222222222222',
+      attractionId: '33333333-3333-4333-8333-333333333333',
+      slug: 'skogafoss',
+      name: 'Skógafoss',
+      localName: 'Skógafoss',
+      kind: 'hike',
+      kindLabel: 'Waterfall',
+      region: 'south',
+      regionLabel: 'South Iceland',
+      lengthM: 7100,
+      durationMinutes: 180,
+      difficulty: null,
+      difficultyLabel: null,
+      outAndBack: true,
+      imageUrl: 'https://upload.example/skogafoss-640.jpg',
+      imageAlt: 'Skógafoss',
+      imageIsMapPlate: false,
+      imageCredit: 'Jane Doe',
+      imageLicense: 'CC BY-SA 4.0',
+      createdAt: new Date('2026-10-27T12:00:00.000Z'),
+    });
+  });
+
+  it('a server that sends no places (or an answer without the key) is an empty list', () => {
+    expect(decodeFavourites({ venues: [], activities: [] }).attractions).toEqual([]);
+    expect(decodeFavourites({ venues: [], activities: [], attractions: 'none' }).attractions).toEqual([]);
+  });
+
+  it('drops a place it cannot show and keeps the rest, and never costs the venue hearts', () => {
+    const payload = decodeFavourites({
+      venues: [venueRow()],
+      activities: [],
+      attractions: [placeRow({ slug: null }), placeRow({ slug: 'glymur', name: '' }), placeRow({ slug: 'glymur', lengthM: 'far' }), 3],
+    });
+    expect(payload.venues).toHaveLength(1);
+    expect(payload.attractions.map((p) => [p.slug, p.lengthM])).toEqual([['glymur', null]]);
+  });
+
+  it('lists a place once, whatever the server repeats', () => {
+    const payload = decodeFavourites({ venues: [], activities: [], attractions: [placeRow(), placeRow({ id: 'again' })] });
+    expect(payload.attractions).toHaveLength(1);
+  });
+
+  it('saves with { attractionSlug } and no Idempotency-Key, and removes by ?attractionSlug=', async () => {
+    api.on('POST', '/favourites', replyFromContract('POST', '/favourites'));
+    await addFavouriteAttraction('skogafoss');
+    const saved = expectSentToMatchContract('POST', '/favourites');
+    expect(saved.body).toEqual({ attractionSlug: 'skogafoss' });
+    expect(saved.headers['idempotency-key']).toBeUndefined();
+    api.on('DELETE', '/favourites', replyFromContract('DELETE', '/favourites'));
+    await removeFavouriteAttraction('skogafoss');
+    expect(expectSentToMatchContract('DELETE', '/favourites').query).toEqual({ attractionSlug: 'skogafoss' });
+  });
+
+  it('a refused save is thrown for the store to undo (404: an unpublished place)', async () => {
+    api.on('POST', '/favourites', Reply.problem(404, 'favourite_target_not_found'));
+    await expect(addFavouriteAttraction('gone')).rejects.toMatchObject({ status: 404 });
   });
 });

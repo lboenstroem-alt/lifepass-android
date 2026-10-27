@@ -1,7 +1,9 @@
 /**
  * What other features may use of the sights (the feature-boundaries lint
  * rule lets them in through this file, or the published slots
- * ./HomeOutsideCard.tsx, ./SightsSearchGroup.tsx and ./map/SightsLayer.tsx).
+ * ./HomeOutsideCard.tsx, ./SightsSearchGroup.tsx, ./map/SightsLayer.tsx and
+ * ./SightHeart.tsx, a place's heart, which draws icons and so stays out of
+ * this file that non-screen code imports).
  *
  * The sight card itself is the shared route `AttractionDetail { slug }`:
  * open it as any shared route (`navigation.navigate('AttractionDetail', {
@@ -23,7 +25,9 @@
  *     `resolveAttractionAsset`: the plate rule (a map, shown whole on its
  *     paper, never credited as a photo), a photo only with its credit, and
  *     where an image URL points;
- *   - `sightDuration`: the card's own "1 h 20 min" wording;
+ *   - `sightDuration`: the card's own "1 h 20 min" wording; `trailFacts`, a
+ *     walk's "7.1 km one way · 3 h there and back"; `creditLine`, a photo's
+ *     "Photo: {credit} · {license}";
  *   - `ATTRACTION_CREDITS_URL`: the credits page the Plan and Body and goals
  *     footers link to.
  */
@@ -44,7 +48,7 @@ export {
   roadKilometres,
   sightDisplayName,
 } from './model';
-export { driveKilometres, sightDistance, sightDuration } from './format';
+export { creditLine, driveKilometres, sightDistance, sightDuration, trailFacts } from './format';
 export {
   httpsLink,
   parseAttractionDrive,

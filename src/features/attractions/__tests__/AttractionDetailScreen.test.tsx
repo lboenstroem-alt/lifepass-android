@@ -13,6 +13,7 @@ import { Linking } from 'react-native';
 import { stubApiClientPerTest } from '../../../api/testing';
 import { dismissAllDialogs } from '../../../components/ui';
 import { setCurrentLanguage, translate } from '../../../i18n';
+import { favouritesStore } from '../../favourites';
 import AttractionDetailScreen, { pushedFromSight, sightRunLength } from '../AttractionDetailScreen';
 import { detailJson } from './fixtures';
 
@@ -416,6 +417,50 @@ describe('loading and failing', () => {
     await waitFor(() => expect(api.sentAll('/attractions/by-slug/seljalandsfoss')).toHaveLength(2));
     expect(screen.getByTestId('attraction.content')).toBeOnTheScreen();
     expect(screen.queryByTestId('attraction.failed')).toBeNull();
+  });
+});
+
+describe('the heart (API 0.45.0)', () => {
+  /** The member's saved places on the server, which a save adds to, as the real API does. */
+  function serveSaved(initial: string[]) {
+    let saved = [...initial];
+    api.on('GET', '/favourites', () => Reply.ok({ venues: [], activities: [], attractions: saved.map((slug) => ({ slug, name: slug })) }));
+    api.on('POST', '/favourites', (request) => {
+      saved = [(request.body as { attractionSlug: string }).attractionSlug, ...saved];
+      return Reply.ok({ ok: true });
+    });
+  }
+
+  beforeEach(() => favouritesStore.getState().reset());
+
+  it('sits beside Done once the card has loaded, named for the place, and saves it by its slug', async () => {
+    serve();
+    serveSaved([]);
+    await renderCard();
+    const heart = screen.getByTestId('attraction.heart');
+    expect(heart.props.accessibilityRole).toBe('togglebutton');
+    expect(heart.props.accessibilityLabel).toBe('Save Seljalandsfoss to favourites');
+    await waitFor(() => expect(heart.props.accessibilityState).toMatchObject({ checked: false }));
+    await fireEvent.press(heart);
+    expect(screen.getByTestId('attraction.heart').props.accessibilityState).toMatchObject({ checked: true });
+    await waitFor(() => expect(api.sent('/favourites', 'POST').body).toEqual({ attractionSlug: 'seljalandsfoss' }));
+  });
+
+  it('is filled for a saved place, and every nearby place has its own', async () => {
+    serve();
+    serveSaved(['seljalandsfoss', 'gljufrabui']);
+    await renderCard();
+    await waitFor(() => expect(screen.getByTestId('attraction.heart').props.accessibilityState).toMatchObject({ checked: true }));
+    const nearby = screen.getByTestId('attraction.nearby.gljufrabui.heart');
+    expect(nearby.props.accessibilityState).toMatchObject({ checked: true });
+    expect(nearby.props.accessibilityLabel).toBe('Save Gljufrafoss to favourites');
+  });
+
+  it('is not drawn while the card loads, nor on a card that failed', async () => {
+    api.on('GET', '/attractions/by-slug/:slug', Reply.problem(503, 'service-unavailable'));
+    serveSaved([]);
+    await renderCard();
+    expect(screen.queryByTestId('attraction.heart')).toBeNull();
   });
 });
 

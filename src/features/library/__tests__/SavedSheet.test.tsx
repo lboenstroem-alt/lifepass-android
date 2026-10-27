@@ -23,7 +23,7 @@ import { useIntentStore } from '../../../stores/intentStore';
 import { favouritesStore } from '../../favourites';
 import { SavedSheet } from '..';
 
-import { favouriteActivityJSON, favouriteJSON, venueJSON } from './fixtures';
+import { favouriteActivityJSON, favouriteAttractionJSON, favouriteJSON, venueJSON } from './fixtures';
 import { settle } from './harness';
 
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -67,6 +67,7 @@ function Coach() {
 }
 
 const VenueDetail = standIn('VenueDetail');
+const AttractionDetail = standIn('AttractionDetail');
 const Profile = standIn('Profile');
 
 function CoachStack() {
@@ -74,6 +75,7 @@ function CoachStack() {
     <Stack.Navigator screenOptions={{ headerShown: false, animation: 'none' }}>
       <Stack.Screen name="Coach" component={Coach} />
       <Stack.Screen name="VenueDetail" component={VenueDetail} />
+      <Stack.Screen name="AttractionDetail" component={AttractionDetail} />
       <Stack.Screen name="Profile" component={Profile} />
     </Stack.Navigator>
   );
@@ -115,8 +117,8 @@ async function openSavedVenue() {
   expect(screen.queryByTestId('saved.sheet')).toBeNull();
 }
 
-function answerSaved(venues: unknown[] = [], activities: unknown[] = [], all: unknown[] = []) {
-  api.on('GET', '/favourites', Reply.ok({ venues, activities }));
+function answerSaved(venues: unknown[] = [], activities: unknown[] = [], all: unknown[] = [], attractions: unknown[] = []) {
+  api.on('GET', '/favourites', Reply.ok({ venues, activities, attractions }));
   api.on('GET', '/venues', Reply.ok({ data: all, pagination: { nextCursor: null, hasMore: false, limit: 100 } }));
 }
 
@@ -129,6 +131,38 @@ beforeEach(() => {
   favouritesStore.getState().reset();
   useIntentStore.setState({ pendingTab: null });
   answerSaved();
+});
+
+describe('the Saved sheet: hikes and sights (API 0.45.0)', () => {
+  it('lists the saved places under "Hikes & sights"; one closes the sheet, then opens its card', async () => {
+    answerSaved([favouriteJSON(SAVED_A)], [], [], [favouriteAttractionJSON('skogafoss', { name: 'Skógafoss' })]);
+    await renderSheet();
+    expect(screen.getByText('HIKES & SIGHTS')).toBeOnTheScreen();
+    expect(screen.getByText('Skógafoss')).toBeOnTheScreen();
+    await fireEvent.press(screen.getByTestId('saved.sights.row.skogafoss.open'));
+    await settle();
+    expect(route()).toBe('AttractionDetail');
+    expect(screen.getByTestId('params.AttractionDetail')).toHaveTextContent(JSON.stringify({ slug: 'skogafoss' }));
+    expect(screen.queryByTestId('saved.sheet')).toBeNull();
+  });
+
+  it('with none saved: the empty state', async () => {
+    await renderSheet();
+    expect(screen.getByTestId('saved.sights.empty')).toBeOnTheScreen();
+    expect(screen.getByText('No saved hikes or sights yet')).toBeOnTheScreen();
+  });
+
+  it('back from a place brings the sheet up again, as from a venue', async () => {
+    answerSaved([], [], [], [favouriteAttractionJSON('glymur')]);
+    await renderSheet();
+    await fireEvent.press(screen.getByTestId('saved.sights.row.glymur.open'));
+    await settle();
+    expect(route()).toBe('AttractionDetail');
+    await act(async () => navigationRef.goBack());
+    await settle();
+    expect(route()).toBe('Coach');
+    expect(screen.getByTestId('saved.sheet')).toBeOnTheScreen();
+  });
 });
 
 describe('the Saved sheet', () => {

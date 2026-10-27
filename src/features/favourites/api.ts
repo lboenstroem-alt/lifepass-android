@@ -1,15 +1,24 @@
 /**
- * Saved venues and saved classes, backed by the LifePass API: the Android port
- * of iOS `FavouritesService` (Services/FavouritesService.swift) and its models
- * (Models/Favourite.swift).
+ * Saved venues, saved classes and saved hikes and sights, backed by the
+ * LifePass API: the Android port of iOS `FavouritesService`
+ * (Services/FavouritesService.swift) and its models (Models/Favourite.swift).
  *
- *   GET    /favourites                    { venues: [...], activities: [...] }
- *   POST   /favourites                    { venueId } or { activityId }
- *   DELETE /favourites?venueId=…          (or ?activityId=…)
+ *   GET    /favourites?include=attractions&locale=   { venues, activities, attractions }
+ *   POST   /favourites                    { venueId }, { activityId } or { attractionSlug }
+ *   DELETE /favourites?venueId=…          (or ?activityId=…, ?attractionSlug=…)
  *
- * `GET /favourites` returns both kinds in one call, so one read fills the
- * whole store. The API has no per-venue "is this saved" probe: a heart reads
- * the list, as iOS `isFavourite(venueId:)` does.
+ * `GET /favourites` returns every kind in one call, so one read fills the
+ * whole store. The API has no per-venue or per-place "is this saved" probe: a
+ * heart reads the list, as iOS `isFavourite(venueId:)` does.
+ *
+ * HIKES AND SIGHTS (API 0.45.0). A place is saved and unsaved by its slug,
+ * which every attractions payload carries and which never changes. The list
+ * carries the saved places only when asked (`include=attractions`; without it
+ * the answer is exactly the 0.43.0 one), with their labels in the asked
+ * language (`locale`, the app's). Their decode is LOSSY per item (a malformed
+ * place is dropped, the rest kept) and a missing `attractions` key is an empty
+ * list: the places came later, and one odd place must never cost the member
+ * their venue hearts.
  *
  * Add and remove are low-risk preference writes: no Idempotency-Key (the
  * mobile contract, iOS FavouritesService). The server answers an add of a
@@ -24,6 +33,7 @@
  * Android store compares strings.
  */
 import { apiDelete, apiGet, apiPost, parseIsoDate, wireId, type RequestOptions } from '../../api';
+import { currentLanguage, type Lang } from '../../i18n';
 
 /** A saved venue as `GET /favourites` returns it (iOS `FavouriteVenue`). */
 export interface FavouriteVenue {
@@ -61,10 +71,50 @@ export interface FavouriteActivity {
   readonly createdAt: Date | null;
 }
 
+/**
+ * A saved hike or sight as `GET /favourites?include=attractions` returns it
+ * (API 0.45.0, `FavouriteAttraction`): published places only, newest first,
+ * the words already in the asked language.
+ */
+export interface FavouriteAttraction {
+  /** The favourite row's id. */
+  readonly id: string;
+  readonly attractionId: string | null;
+  /** What the heart keys on, and what opens the place's card (`AttractionDetail { slug }`). */
+  readonly slug: string;
+  /** In the asked language (the English exonym on `en` where one exists). */
+  readonly name: string;
+  /** The Icelandic name. */
+  readonly localName: string | null;
+  readonly kind: string;
+  /** "Waterfall", "Hike": the server's words. */
+  readonly kindLabel: string | null;
+  readonly region: string;
+  /** "South Iceland": the server's words. */
+  readonly regionLabel: string | null;
+  readonly lengthM: number | null;
+  readonly durationMinutes: number | null;
+  readonly difficulty: string | null;
+  readonly difficultyLabel: string | null;
+  /** `lengthM` is one way, and `durationMinutes` already covers there and back. */
+  readonly outAndBack: boolean;
+  /** An absolute 640-wide photograph, or the location plate. */
+  readonly imageUrl: string | null;
+  readonly imageAlt: string | null;
+  /** The plate: a map, shown whole and never called a photo. */
+  readonly imageIsMapPlate: boolean;
+  /** A photograph's author and licence; both null for the plate. */
+  readonly imageCredit: string | null;
+  readonly imageLicense: string | null;
+  readonly createdAt: Date | null;
+}
+
 /** The whole `GET /favourites` answer. */
 export interface FavouritesPayload {
   readonly venues: readonly FavouriteVenue[];
   readonly activities: readonly FavouriteActivity[];
+  /** The saved hikes and sights (API 0.45.0); empty from a server that sends none. */
+  readonly attractions: readonly FavouriteAttraction[];
 }
 
 /**
@@ -78,9 +128,32 @@ export function isPremiumFavourite(venue: Pick<FavouriteVenue, 'inBundle'>): boo
 
 type CallOptions = Pick<RequestOptions, 'signal'>;
 
-/** `GET /favourites`: one round-trip for both kinds. */
-export function fetchFavourites(options: CallOptions = {}): Promise<FavouritesPayload> {
-  return apiGet<FavouritesPayload>('/favourites', undefined, { ...options, decode: decodeFavourites });
+/**
+ * `GET /favourites?include=attractions&locale=`: one round-trip for every
+ * kind, the places' words in `locale` (default: the language on screen).
+ */
+export function fetchFavourites(locale: Lang = currentLanguage(), options: CallOptions = {}): Promise<FavouritesPayload> {
+  return apiGet<FavouritesPayload>(
+    '/favourites',
+    { include: 'attractions', locale },
+    { ...options, decode: decodeFavourites },
+  );
+}
+
+/**
+ * `POST /favourites { attractionSlug }` (API 0.45.0). Saving a place that is
+ * already saved succeeds; an unknown or unpublished one is a 404.
+ */
+export async function addFavouriteAttraction(slug: string): Promise<void> {
+  await apiPost('/favourites', { attractionSlug: slug });
+}
+
+/**
+ * `DELETE /favourites?attractionSlug=` (API 0.45.0). Always succeeds for the
+ * member, saved or not, published or not.
+ */
+export async function removeFavouriteAttraction(slug: string): Promise<void> {
+  await apiDelete('/favourites', { attractionSlug: slug });
 }
 
 /** `POST /favourites { venueId }`. Saving a venue that is already saved succeeds. */
@@ -221,7 +294,71 @@ export function decodeFavouriteActivity(value: unknown, path = 'activity'): Favo
   };
 }
 
-/** The `data` of `GET /favourites`: both lists are required, all or nothing. */
+/** A string with something in it, else null. */
+function softText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+/** A whole number of 0 or more, else null. */
+function softWhole(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+/**
+ * One saved place, or null when it cannot be shown: it needs its slug (what
+ * the heart and the card key on) and a name. Everything else is read softly.
+ */
+export function decodeFavouriteAttraction(value: unknown): FavouriteAttraction | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const json = value as Json;
+  const slug = softText(json.slug);
+  const name = softText(json.name);
+  if (slug === null || name === null) return null;
+  const createdAt = typeof json.createdAt === 'string' ? parseIsoDate(json.createdAt) : null;
+  return {
+    id: softText(json.id) ?? slug,
+    attractionId: softText(json.attractionId),
+    slug,
+    name,
+    localName: softText(json.localName),
+    kind: softText(json.kind) ?? 'other',
+    kindLabel: softText(json.kindLabel),
+    region: softText(json.region) ?? '',
+    regionLabel: softText(json.regionLabel),
+    lengthM: softWhole(json.lengthM),
+    durationMinutes: softWhole(json.durationMinutes),
+    difficulty: softText(json.difficulty),
+    difficultyLabel: softText(json.difficultyLabel),
+    outAndBack: json.outAndBack === true,
+    imageUrl: softText(json.imageUrl),
+    imageAlt: softText(json.imageAlt),
+    imageIsMapPlate: json.imageIsMapPlate === true,
+    imageCredit: softText(json.imageCredit),
+    imageLicense: softText(json.imageLicense),
+    createdAt,
+  };
+}
+
+/** The saved places: lossy per item, and none when the key is missing (see the file comment). */
+export function decodeFavouriteAttractions(value: unknown): FavouriteAttraction[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const places: FavouriteAttraction[] = [];
+  for (const item of value) {
+    const place = decodeFavouriteAttraction(item);
+    // One row per place: a heart keys on the slug.
+    if (place && !seen.has(place.slug)) {
+      seen.add(place.slug);
+      places.push(place);
+    }
+  }
+  return places;
+}
+
+/**
+ * The `data` of `GET /favourites`: the venue and class lists are required,
+ * all or nothing (as iOS reads them); the places are read lossily.
+ */
 export function decodeFavourites(data: unknown): FavouritesPayload {
   const json = object(data, 'favourites');
   return {
@@ -229,5 +366,6 @@ export function decodeFavourites(data: unknown): FavouritesPayload {
     activities: array(json.activities, 'favourites.activities').map((a, i) =>
       decodeFavouriteActivity(a, `favourites.activities[${i}]`),
     ),
+    attractions: decodeFavouriteAttractions(json.attractions),
   };
 }

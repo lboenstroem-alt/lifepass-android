@@ -31,7 +31,9 @@
  * that they are straight lines: a bare "40 km" reads as a drive.
  *
  * Where a tap goes is Home's: `onOpenSight` opens the sight's card,
- * `onSeeAllOnMap` parks the sights intent and switches to Explore.
+ * `onSeeAllOnMap` parks the sights intent and switches to Explore. Each pick
+ * also carries its heart (./SightHeart.tsx, API 0.45.0), beside the row
+ * rather than inside it, so TalkBack reaches "open" and "save" one by one.
  */
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEffect, useMemo } from 'react';
@@ -49,6 +51,7 @@ import { homeDistanceLabel } from './format';
 import { loadAttractionMarkers, useAttractionMarkers } from './markersStore';
 import { isHike, sightDisplayName } from './model';
 import { isAroundIceland, kindRegionLine, picksForHome } from './rules';
+import SightHeart from './SightHeart';
 
 export interface HomeOutsideCardProps {
   /** Open a sight's card (`AttractionDetail`). */
@@ -156,29 +159,32 @@ function PickRow({
   const detail = kindRegionLine(pick, t);
   const distance = origin ? homeDistanceLabel(distanceMeters(origin, pick)) : null;
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={[name, detail, distance].filter(Boolean).join(', ')}
-      style={({ pressed }) => [styles.row, divided && styles.divided, pressed && styles.pressed]}
-      testID={`home.outside.pick.${pick.slug}`}
-    >
-      <AttractionRing tier="top" isTrailhead={isHike(pick)} frame={32} />
-      <View style={styles.texts}>
-        <LPText size={15} weight="semibold" color={colors.paper} numberOfLines={1}>
-          {name}
-        </LPText>
-        <LPText size={12} color={colors.paper3} numberOfLines={1}>
-          {detail}
-        </LPText>
-      </View>
-      {distance ? (
-        <LPText size={10} color={colors.paper3} tracking={1.1} style={MONO} testID={`home.outside.distance.${pick.slug}`}>
-          {distance}
-        </LPText>
-      ) : null}
-      <Ionicons name="chevron-forward" size={13} color={colors.paper3} />
-    </Pressable>
+    <View style={[styles.pickRow, divided && styles.divided]}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={[name, detail, distance].filter(Boolean).join(', ')}
+        style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+        testID={`home.outside.pick.${pick.slug}`}
+      >
+        <AttractionRing tier="top" isTrailhead={isHike(pick)} frame={32} />
+        <View style={styles.texts}>
+          <LPText size={15} weight="semibold" color={colors.paper} numberOfLines={1}>
+            {name}
+          </LPText>
+          <LPText size={12} color={colors.paper3} numberOfLines={1}>
+            {detail}
+          </LPText>
+        </View>
+        {distance ? (
+          <LPText size={10} color={colors.paper3} tracking={1.1} style={MONO} testID={`home.outside.distance.${pick.slug}`}>
+            {distance}
+          </LPText>
+        ) : null}
+        <Ionicons name="chevron-forward" size={13} color={colors.paper3} />
+      </Pressable>
+      <SightHeart slug={pick.slug} name={name} testID={`home.outside.heart.${pick.slug}`} />
+    </View>
   );
 }
 
@@ -193,11 +199,14 @@ const styles = StyleSheet.create({
     borderColor: colors.line,
     overflow: 'hidden',
   },
+  pickRow: { flexDirection: 'row', alignItems: 'center', paddingRight: 12 },
   row: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingHorizontal: 14,
+    paddingLeft: 14,
+    paddingRight: 10,
     paddingVertical: 12,
   },
   divided: { borderTopWidth: hairline, borderTopColor: colors.line },

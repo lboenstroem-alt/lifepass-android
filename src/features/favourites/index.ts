@@ -28,6 +28,24 @@
 //   - `useFavourites` reads once if nothing has been read; a screen that iOS
 //     reloads on every appearance (Saved) calls `refresh()` on focus.
 //   - A failed read just means "not saved" (iOS VenueDetailViewModel).
+//
+// HIKES AND SIGHTS (API 0.45.0), from the same store and the same read:
+//
+//   const heart = useSavedAttraction(sight.slug);       // a place's heart
+//   heart.saved / heart.toggling / heart.toggle()
+//
+//   const saved = useFavourites();                      // Favourites' "Hikes & sights"
+//   saved.attractions / saved.removeAttraction(slug)
+//
+//   - The heart reads the set of saved slugs, read once (`GET /favourites
+//     ?include=attractions`, in the app's language) when the first heart or
+//     Saved list mounts; reads on their way are joined.
+//   - A tap flips it at once; a refused write flips it back and says so
+//     ("Could not save favourite. Please try again."), except when the session
+//     has ended, where the app is already going to sign-in.
+//   - A tap made before the list arrived is checked against it afterwards.
+//   - The app is behind sign-in, so a signed-out member never sees a heart:
+//     no sign-in prompt is needed here (the venue heart has none either).
 import { useCallback, useEffect, useMemo } from 'react';
 import { useStore } from 'zustand';
 
@@ -36,11 +54,12 @@ import {
   type FavouriteToggleOptions,
   type FavouriteToggleResult,
 } from './store';
-import type { FavouriteActivity, FavouriteVenue } from './api';
+import type { FavouriteActivity, FavouriteAttraction, FavouriteVenue } from './api';
 
 export {
   isPremiumFavourite,
   type FavouriteActivity,
+  type FavouriteAttraction,
   type FavouriteVenue,
   type FavouritesPayload,
 } from './api';
@@ -62,6 +81,8 @@ export interface FavouritesState {
   readonly venues: readonly FavouriteVenue[];
   /** The saved classes (the Saved sheet's "Saved classes"). */
   readonly activities: readonly FavouriteActivity[];
+  /** The saved hikes and sights, less any just unsaved (Favourites' "Hikes & sights"). */
+  readonly attractions: readonly FavouriteAttraction[];
   /** True until the first read has answered. */
   readonly loading: boolean;
   /** The last read failed (a failed toggle raises its own alert). */
@@ -75,6 +96,8 @@ export interface FavouritesState {
   toggle(venueId: string, options?: FavouriteToggleOptions): Promise<void>;
   /** Saves `venueId` (the Saved suggestions' heart). */
   add(venueId: string, options?: FavouriteToggleOptions): Promise<FavouriteToggleResult>;
+  /** Unsaves a hike or sight (its Favourites row's button). */
+  removeAttraction(slug: string, options?: FavouriteToggleOptions): Promise<FavouriteToggleResult>;
   /** Reads the list again. */
   refresh(): void;
 }
@@ -94,6 +117,8 @@ const toggle = async (venueId: string, options?: FavouriteToggleOptions) => {
   await favouritesStore.getState().toggle(venueId, options);
 };
 const add = (venueId: string, options?: FavouriteToggleOptions) => favouritesStore.getState().add(venueId, options);
+const removeAttraction = (slug: string, options?: FavouriteToggleOptions) =>
+  favouritesStore.getState().removeAttraction(slug, options);
 const refresh = () => {
   void favouritesStore.getState().load();
 };
@@ -103,6 +128,7 @@ export function useFavourites(): FavouritesState {
   const venueIds = useStore(favouritesStore, (s) => s.savedIds);
   const venues = useStore(favouritesStore, (s) => s.venues);
   const activities = useStore(favouritesStore, (s) => s.activities);
+  const attractions = useStore(favouritesStore, (s) => s.attractions);
   const loaded = useStore(favouritesStore, (s) => s.loaded);
   const status = useStore(favouritesStore, (s) => s.status);
   const error = useStore(favouritesStore, (s) => s.error);
@@ -119,6 +145,7 @@ export function useFavourites(): FavouritesState {
       venueIds,
       venues,
       activities,
+      attractions,
       loading: !loaded && !failed,
       failed,
       error,
@@ -126,9 +153,10 @@ export function useFavourites(): FavouritesState {
       isToggling,
       toggle,
       add,
+      removeAttraction,
       refresh,
     }),
-    [venueIds, venues, activities, loaded, failed, error],
+    [venueIds, venues, activities, attractions, loaded, failed, error],
   );
 }
 
@@ -160,4 +188,35 @@ export function useFavourite(venueId: string, options: UseFavouriteOptions = {})
     () => ({ isFavourite: saved, loading, toggling, toggle: toggleThis }),
     [saved, loading, toggling, toggleThis],
   );
+}
+
+export interface SavedAttractionState {
+  /** The place is in the saved set: its heart is filled. */
+  readonly saved: boolean;
+  /** Its save or unsave is in flight; taps meanwhile are ignored. */
+  readonly toggling: boolean;
+  /** True until the first read has answered (until then the heart is a guess). */
+  readonly loading: boolean;
+  /** Saves or unsaves this place (see HIKES AND SIGHTS above). */
+  toggle(options?: FavouriteToggleOptions): Promise<FavouriteToggleResult>;
+}
+
+/**
+ * One hike's or sight's heart, by the place's slug. Reads the list once if
+ * nothing has read it yet (a read on its way is joined).
+ */
+export function useSavedAttraction(slug: string): SavedAttractionState {
+  const saved = useStore(favouritesStore, (s) => s.savedSlugs.includes(slug));
+  const toggling = useStore(favouritesStore, (s) => s.attractionInFlight[slug] === true);
+  const loading = useStore(favouritesStore, (s) => !s.loaded && s.status !== 'failed');
+
+  useEffect(() => {
+    if (slug) void favouritesStore.getState().ensureLoaded();
+  }, [slug]);
+
+  const toggleThis = useCallback(
+    (options?: FavouriteToggleOptions) => favouritesStore.getState().toggleAttraction(slug, options),
+    [slug],
+  );
+  return useMemo(() => ({ saved, toggling, loading, toggle: toggleThis }), [saved, toggling, loading, toggleThis]);
 }

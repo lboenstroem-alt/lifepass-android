@@ -29,6 +29,10 @@
  * on top) reads it again quietly, as iOS's `.task` does on reappear, keeping
  * the card on screen; the card holds nothing a restart must restore.
  *
+ * THE HEART (API 0.45.0). Beside Done, once the card has loaded: saves the
+ * place to the member's Favourites ("Hikes & sights"), for every place, hikes
+ * and sights alike (./SightHeart.tsx).
+ *
  * Directions offers Google Maps and "another app" (a `geo:` pin): there is no
  * Apple Maps on Android (plan 5.6). `mapsLinks.apple` is not used. Both
  * answers are the venue page's own words (F1's shared `venue.maps_other`), as
@@ -62,6 +66,7 @@ import {
 } from './detail/sections';
 import { useAttractionDetail } from './detail/useAttractionDetail';
 import { geoUrl, googleMapsUrl } from './model';
+import SightHeart from './SightHeart';
 
 /** The route name, as the run of sight cards is found by it. */
 const ROUTE = 'AttractionDetail';
@@ -200,18 +205,21 @@ export default function AttractionDetailScreen({ navigation, route }: SharedRout
           ) : (
             <View />
           )}
-          <Pressable
-            onPress={done}
-            accessibilityRole="button"
-            accessibilityLabel={t('common.done')}
-            hitSlop={10}
-            style={({ pressed }) => [styles.done, pressed && styles.pressed]}
-            testID="attraction.done"
-          >
-            <LPText size={17} weight="semibold" color={colors.rust}>
-              {t('common.done')}
-            </LPText>
-          </Pressable>
+          <View style={styles.barTrailing}>
+            {detail ? <SightHeart slug={detail.slug} name={detail.name} variant="bar" testID="attraction.heart" /> : null}
+            <Pressable
+              onPress={done}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.done')}
+              hitSlop={10}
+              style={({ pressed }) => [styles.done, pressed && styles.pressed]}
+              testID="attraction.done"
+            >
+              <LPText size={17} weight="semibold" color={colors.rust}>
+                {t('common.done')}
+              </LPText>
+            </Pressable>
+          </View>
         </View>
       </View>
 
@@ -334,6 +342,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  barTrailing: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   done: { minHeight: 36, justifyContent: 'center' },
   pressed: { opacity: 0.7 },
   scroll: { flex: 1 },

@@ -163,6 +163,10 @@ const PUBLISHED_SLOTS = new Set([
   'attractions/SightsSearchGroup',
   'attractions/map/SightsLayer',
   'attractions/HomeOutsideCard',
+  // A place's heart (API 0.45.0): the Coach's plan sights draw it too.
+  'attractions/SightHeart',
+  // A saved place's row on the Saved lists (API 0.45.0): the sights' picture rules.
+  'attractions/SavedSightRow',
   'plan/HomeTodayRow',
   'plan/proposal/ProgramProposalCard',
   'explore/map/ExploreMap',
