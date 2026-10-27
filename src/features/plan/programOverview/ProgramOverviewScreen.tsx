@@ -135,6 +135,16 @@ export default function ProgramOverviewScreen({ route, navigation }: SharedRoute
     void load();
   }, [load]);
 
+  // A change applied or undone in the Coach changed these rows (iOS
+  // `.onReceive(.healthPlanChanged)`): read again, without the skeleton.
+  const planChanged = useHealthStore((s) => s.planChangedNonce);
+  const seenPlanChange = useRef(planChanged);
+  useEffect(() => {
+    if (planChanged === seenPlanChange.current) return;
+    seenPlanChange.current = planChanged;
+    void load();
+  }, [planChanged, load]);
+
   const program = detail?.program ?? null;
   const weeks = sortedWeeks(detail);
   const shown = shownWeek(weeks, selectedWeek);

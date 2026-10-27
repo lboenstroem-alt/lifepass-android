@@ -25,7 +25,7 @@ import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { isApiError } from '../../../api';
 import { Card, Kicker, LPText } from '../../../components/ui';
-import type { ProgramSummary } from '../../../health';
+import { useHealthStore, type ProgramSummary } from '../../../health';
 import { useT } from '../../../i18n';
 import { shortDay } from '../../../i18n/format';
 import { colors, hairline } from '../../../theme';
@@ -91,9 +91,13 @@ export default function PlanEditChanges({
     }
   }, [program.id, language]);
 
+  // Read again on a new change, and whenever a change was applied or undone
+  // in the Coach (iOS `.onReceive(.healthPlanChanged)`), whose new row and
+  // Undo belong here at once.
+  const planChanged = useHealthStore((s) => s.planChangedNonce);
   useEffect(() => {
     if (shows) void load();
-  }, [shows, load, program.lastEdit?.editId]);
+  }, [shows, load, program.lastEdit?.editId, planChanged]);
 
   const undo = async (edit: PlanEditView) => {
     if (undoingId !== null || edit.status !== 'applied' || !isUndoable(edit)) return;

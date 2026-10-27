@@ -538,6 +538,29 @@ describe('changes made in chat (COACH-6)', () => {
     expect(screen.queryByText(en('coach.planEdit.changesList').toUpperCase())).toBeNull();
   });
 
+  it('a change applied in the Coach while the weeks are open: the rows and the Changes list read again at once', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', editsPath, Reply.ok({ edits: [] }));
+    await renderOverview('live');
+    expect(screen.getByLabelText('Wed, Upper body, 35 min, planned')).toBeOnTheScreen();
+    expect(screen.queryByText(en('coach.planEdit.changesList').toUpperCase())).toBeNull();
+
+    // The Coach applies "lunges instead of squats", reads the plan again and
+    // says so (coach/planEdit refreshPlan; its own test pins that it does).
+    const changed = JSON.parse(JSON.stringify(detailJSON()).replace('"Upper body"', '"Lunges and press"')) as Record<string, unknown>;
+    api.on('GET', programPath, Reply.ok({ program: { ...changed, lastEdit: { editId: EDIT, undoUntil: '2099-10-28T10:00:00.000Z', undoable: true } } }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit()] }));
+    await act(async () => {
+      useHealthStore.getState().notePlanChanged();
+      await settle();
+    });
+
+    expect(await screen.findByLabelText('Wed, Lunges and press, 35 min, planned')).toBeOnTheScreen();
+    expect(screen.getByTestId('programOverview.week.2').props.accessibilityState.selected).toBe(true);
+    expect(await screen.findByTestId(`programOverview.change.${EDIT}.undo`)).toBeOnTheScreen();
+  });
+
   it('a plan that carries a change is read even after the feature was turned off, so it can still be undone', async () => {
     useAppStore.setState({ serverFeatures: [] });
     api.on('GET', programPath, Reply.ok({ program: detailJSON({ lastEdit: { editId: EDIT, undoUntil: '2099-10-28T10:00:00.000Z', undoable: true } }) }));

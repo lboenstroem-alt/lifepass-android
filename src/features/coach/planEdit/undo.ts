@@ -19,13 +19,20 @@ import { presentToast } from './platform';
 const undoKeys = new Map<string, string>();
 let makeKey: () => string = newIdempotencyKey;
 
-/** The plan, the week strip, the preview and the reminders read again. */
+/**
+ * The plan, the week strip, the preview and the reminders read again; then
+ * every screen holding its own copy of the programme (the overview's weeks
+ * and its Changes list) is told to read it again too (iOS posts
+ * `.healthPlanChanged` once the read is done).
+ */
 export function refreshPlan(): void {
   void (async () => {
     try {
       await useHealthStore.getState().load({ force: true });
     } catch {
       // The next appearance reads again.
+    } finally {
+      useHealthStore.getState().notePlanChanged();
     }
   })();
 }

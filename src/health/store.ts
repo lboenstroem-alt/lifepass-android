@@ -105,6 +105,13 @@ export interface HealthStoreState {
   readonly toastKey: string | null;
   /** Whose data is cached. Set on every load and reconcile, used by the wipe. */
   readonly profileId: string | null;
+  /**
+   * Bumped once a change to the plan made elsewhere (applied or undone in
+   * the Coach) has been read again: a screen holding its own copy of the
+   * programme (the overview's weeks, its Changes list) reads it again too.
+   * iOS posts `.healthPlanChanged` for this.
+   */
+  readonly planChangedNonce: number;
 }
 
 export interface HealthStoreActions {
@@ -124,6 +131,8 @@ export interface HealthStoreActions {
   wipeLocal(options: { profileId?: string | null; reason: HealthWipeReason }): Promise<void>;
   setSelectedDate(date: string): void;
   setToast(key: string | null): void;
+  /** The plan changed elsewhere: screens with their own copy read it again (`planChangedNonce`). */
+  notePlanChanged(): void;
 }
 
 export type HealthStore = HealthStoreState & HealthStoreActions;
@@ -255,6 +264,7 @@ function initialState(): HealthStoreState {
     lastError: null,
     toastKey: null,
     profileId: null,
+    planChangedNonce: 0,
   };
 }
 
@@ -568,6 +578,10 @@ export const useHealthStore = create<HealthStore>()((set, get) => {
 
     setSelectedDate(date) {
       set({ selectedDate: date });
+    },
+
+    notePlanChanged() {
+      set({ planChangedNonce: get().planChangedNonce + 1 });
     },
 
     setToast(key) {
