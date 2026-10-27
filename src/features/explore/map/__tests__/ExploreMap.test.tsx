@@ -384,6 +384,15 @@ describe('the card', () => {
     expect(screen.getByLabelText('Loka')).toBeTruthy();
   });
 
+  it('in Icelandic: the first sentence of the Icelandic description staff wrote', async () => {
+    setCurrentLanguage('is');
+    const laugarIs = { ...laugar, descriptionIs: 'Líkamsrækt og sundlaug í Laugardal. Opið snemma alla daga.' };
+    await renderMap({ venues: [laugarIs, sky, threk, nowhere] });
+    await tapPin('v1');
+    expect(screen.getByTestId('explore.venueCard.summary')).toHaveTextContent('Líkamsrækt og sundlaug í Laugardal.');
+    expect(screen.queryByText(/Laugardalur/)).toBeNull();
+  });
+
   it('slides away when closed, taking no touch on its way, then is gone', async () => {
     jest.useFakeTimers();
     await renderMap();

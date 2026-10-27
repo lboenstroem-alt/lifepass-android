@@ -3,7 +3,10 @@
 // (src/features/coach/store/coachStore.ts, the port of CoachViewModel).
 //
 //   the photo, under the 2.5.4 ink scrim
-//   the wordmark ABOVE the burger (the drawer: new chat, saved, recents)
+//   the wordmark ABOVE the burger (the drawer: new chat, saved, recents);
+//   the drawer's Saved presents the Saved sheet (iOS `FavouritesView` in a
+//   `.sheet`), kept mounted with this screen so it can open its page after it
+//   has gone and come back after a venue
 //   before the member says anything: the heading and the chips;
 //   after: the chat (bubbles, question chips, venue cards, the flows' cards)
 //   the free tier's count line or membership card
@@ -14,7 +17,7 @@
 // On every appearance (iOS `onAppear`): the profile's coach block is applied
 // (the newer reading wins), and whatever another tab parked for the Coach (a
 // prompt, a programme entry) is taken and run once. An entry parked while
-// this tab has a page pushed (a venue from Book it, Saved, Account) first
+// this tab has a page pushed (a venue from Book it or Saved, Account) first
 // takes the tab back to the chat: iOS rebuilds the tab on a switch, so its
 // Coach always appears and sends at once. The conversation lives in the
 // store, so it survives tab switches. Location is NOT asked for here: the
@@ -58,6 +61,7 @@ import {
 } from '../../features/coach/store/coachStore';
 import { usePlanEditOffered } from '../../features/coach/planEdit';
 import { coachPalette, LOCKED_INPUT_OPACITY } from '../../features/coach/theme/palette';
+import { SavedSheet } from '../../features/library';
 import { selectHasLiveProgram, useHealthStore } from '../../health';
 import { useT } from '../../i18n';
 import { openSharedRoute } from '../../navigation/sharedSheet';
@@ -113,6 +117,7 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
   const tabBarHeight = useContext(BottomTabBarHeightContext);
   const keyboard = useKeyboardCoverage();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [savedOpen, setSavedOpen] = useState(false);
 
   // The input's text is NOT read here (./CoachInputBar below): a keystroke or
   // a dictation partial re-renders the bar, not every row of the chat.
@@ -424,8 +429,9 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
         onClose={() => setDrawerOpen(false)}
         onNewChat={() => coach().resetChat()}
         onSaved={() => {
+          // iOS closes the drawer and presents FavouritesView as a sheet.
           setDrawerOpen(false);
-          openSharedRoute(nav, 'Profile', { initialTab: 'saved' });
+          setSavedOpen(true);
         }}
         recentChats={recentChats}
         onSelectRecent={(id) => {
@@ -433,6 +439,8 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
           setDrawerOpen(false);
         }}
       />
+
+      <SavedSheet visible={savedOpen} onClose={() => setSavedOpen(false)} />
     </View>
   );
 }

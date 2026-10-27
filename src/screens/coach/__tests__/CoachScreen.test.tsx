@@ -1,7 +1,7 @@
 /**
  * The Coach tab on screen (iOS CoachView.swift): the empty state and its
  * chips' gating, the free tier's line and card, the locking input, the
- * drawer, venue cards' "Book it" by slug, parked prompts consumed on every
+ * drawer (its Saved presenting the Saved sheet), venue cards' "Book it" by slug, parked prompts consumed on every
  * appearance, and dictation (en-US, on the phone where it can, stopped when
  * the tab loses focus, never while locked).
  *
@@ -21,12 +21,14 @@ import { stubApiClientPerTest } from '../../../api/testing';
 import { decodeProfile } from '../../../api/profile';
 import { decodeVenue, venueToApi } from '../../../api/venues';
 import { UiKitProvider, dismissAllDialogs } from '../../../components/ui';
+import { bottomSheetMock } from '../../../components/ui/testing/bottomSheetMock';
 import {
   pendingCoachSaves,
   resetCoachStoreForTests,
   useCoachStore,
 } from '../../../features/coach/store/coachStore';
 import { claimCoachForMember } from '../../../features/coach/register';
+import { favouritesStore } from '../../../features/favourites';
 import { lookup, translatePlural } from '../../../i18n';
 import { runSignInHooks } from '../../../app/signOut';
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
@@ -40,8 +42,12 @@ import { fakeSpeech } from './fakeSpeech';
 // nested under expo/ where Jest's resolver cannot see it; Metro resolves it.
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 jest.mock('expo-speech-recognition', () => ({ ExpoSpeechRecognitionModule: require('./fakeSpeech').fakeSpeech }));
-// The hearts are VENUE-2's store; here a heart only has to draw.
+// The sheets as the library draws them (the Saved sheet's portal and dismissal).
+jest.mock('@gorhom/bottom-sheet', () => require('../../../components/ui/testing/bottomSheetMock').bottomSheetModule);
+// The hearts are VENUE-2's store; here a heart only has to draw. The Saved
+// sheet reads the real store.
 jest.mock('../../../features/favourites', () => ({
+  ...jest.requireActual('../../../features/favourites'),
   useFavourite: () => ({ isFavourite: false, loading: false, toggle: async () => undefined }),
 }));
 /* eslint-enable @typescript-eslint/no-require-imports */
@@ -118,6 +124,8 @@ async function settle() {
 }
 
 beforeEach(async () => {
+  bottomSheetMock.reset();
+  favouritesStore.getState().reset();
   resetAppStoreForTests();
   resetIntentStoreForTests();
   resetCoachStoreForTests();
@@ -453,12 +461,60 @@ describe('the drawer', () => {
     expect(screen.queryByRole('button', { name: "A's question" })).toBeNull();
   });
 
-  it('"Saved" opens the saved venues', async () => {
+  it('"Saved" closes the drawer and presents the Saved sheet, saved classes and all', async () => {
+    api.on(
+      'GET',
+      '/favourites',
+      Reply.ok({
+        venues: [
+          {
+            id: 'faaaaaaa-0000-4000-8000-000000000001',
+            venueId: 'aaaaaaaa-0000-4000-8000-000000000001',
+            slug: 'laugar',
+            name: 'Laugar',
+            description: null,
+            city: 'Reykjavík',
+            address: null,
+            inBundle: false,
+            imageUrl: null,
+            categories: ['spa'],
+            createdAt: '2026-10-02T14:00:00.000Z',
+          },
+        ],
+        activities: [
+          {
+            id: 'accccccc-0000-4000-8000-000000000001',
+            activityId: 'cccccccc-0000-4000-8000-000000000001',
+            name: 'Hot Yoga',
+            description: null,
+            durationMinutes: 60,
+            imageUrl: null,
+            venueId: '1b9c6d2e-3f40-4a51-8b62-7c83d94e05f1',
+            venueSlug: 'yoga-shala',
+            venueName: 'Yoga Shala',
+            createdAt: '2026-10-02T14:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    api.on('GET', '/venues', Reply.ok({ data: [], pagination: { nextCursor: null, hasMore: false, limit: 100 } }));
     await renderCoach();
     await fireEvent.press(screen.getByRole('button', { name: en('coach.android.a11y.menu') }));
     await fireEvent.press(screen.getByTestId('coach.drawer.saved'));
     await settle();
-    expect(screen.getByText('Profile {"initialTab":"saved"}')).toBeOnTheScreen();
+
+    expect(screen.getByTestId('saved.sheet')).toBeOnTheScreen();
+    expect(navigation.getCurrentRoute()?.name).toBe('CoachMain');
+    expect(screen.getByText('Laugar')).toBeOnTheScreen();
+    expect(screen.getByTestId('saved.venue.aaaaaaaa-0000-4000-8000-000000000001.premium')).toBeOnTheScreen();
+    expect(screen.getByText(en('saved.classes').toUpperCase())).toBeOnTheScreen();
+    expect(screen.getByText('Hot Yoga')).toBeOnTheScreen();
+
+    // A saved class opens its venue's page, the sheet gone first.
+    await fireEvent.press(screen.getByTestId('saved.class.cccccccc-0000-4000-8000-000000000001'));
+    await settle();
+    expect(screen.getByText('VenueDetail {"slug":"yoga-shala"}')).toBeOnTheScreen();
+    expect(screen.queryByTestId('saved.sheet')).toBeNull();
   });
 });
 

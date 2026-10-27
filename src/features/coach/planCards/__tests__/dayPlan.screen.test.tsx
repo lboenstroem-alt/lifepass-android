@@ -30,7 +30,9 @@ jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset')
 jest.mock('expo-speech-recognition', () => ({
   ExpoSpeechRecognitionModule: require('../../../../screens/coach/__tests__/fakeSpeech').fakeSpeech,
 }));
+// The Coach mounts the Saved sheet, which reads the real store (closed here).
 jest.mock('../../../favourites', () => ({
+  ...jest.requireActual('../../../favourites'),
   useFavourite: () => ({ isFavourite: false, loading: false, toggle: async () => undefined }),
 }));
 /* eslint-enable @typescript-eslint/no-require-imports */

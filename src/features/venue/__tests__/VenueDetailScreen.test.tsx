@@ -19,11 +19,18 @@ import { CLASSES, previewJson, REVIEW_A, REVIEW_B, REVIEW_C, reviewsJson, VENUE_
 // The icons' font loader needs expo-asset, which Jest only finds under expo.
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 
-// The shared favourites store is VENUE-2's: the page only reads one heart and toggles it.
+// The shared favourites store is VENUE-2's: the page only reads one heart,
+// toggles it, and asks the store to read the list again.
 const mockToggle = jest.fn(async () => undefined);
+const mockFavouritesLoad = jest.fn(async () => undefined);
 const mockFavourite = { isFavourite: false };
+const mockFavouriteOptions: unknown[] = [];
 jest.mock('../../favourites', () => ({
-  useFavourite: () => ({ isFavourite: mockFavourite.isFavourite, loading: false, toggle: mockToggle }),
+  useFavourite: (_venueId: string, options?: unknown) => {
+    mockFavouriteOptions.push(options);
+    return { isFavourite: mockFavourite.isFavourite, loading: false, toggle: mockToggle };
+  },
+  favouritesStore: { getState: () => ({ load: mockFavouritesLoad }) },
 }));
 
 stubApiClientPerTest();
@@ -93,6 +100,8 @@ beforeEach(() => {
   setTestFontScale(1);
   navigation = fakeNavigation();
   mockFavourite.isFavourite = false;
+  mockFavouriteOptions.length = 0;
+  mockFavouritesLoad.mockClear();
   resetVenuesStore();
   openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
   share = jest.spyOn(Share, 'share').mockResolvedValue({ action: Share.sharedAction });
@@ -395,6 +404,20 @@ describe('share and the heart', () => {
     expect(heart.props.accessibilityState).toEqual({ checked: true });
     await fireEvent.press(heart);
     expect(mockToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('the heart reads the saved list on arrival and again on every return (iOS load)', async () => {
+    serve();
+    await renderPage();
+    // On arrival: the heart asks for a fresh read, not one per session.
+    expect(mockFavouriteOptions.length).toBeGreaterThan(0);
+    expect(mockFavouriteOptions.every((options) => (options as { refresh?: boolean })?.refresh === true)).toBe(true);
+    // Arriving is not a return.
+    await act(async () => navigation.emit('focus'));
+    expect(mockFavouritesLoad).not.toHaveBeenCalled();
+
+    await leaveAndReturn();
+    expect(mockFavouritesLoad).toHaveBeenCalledTimes(1);
   });
 });
 
