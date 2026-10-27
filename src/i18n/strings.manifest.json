@@ -6,7 +6,8 @@
  "aheadOfIos": [
   "Booking confirm card (IS): the service row says Þjónusta, not Tími, the Time row's word (lifepass-ios: the feat/booking-layout-update-prompt follow-up)",
   "Venue hours kicker: Usual hours / Almennur opnunartími, not This week / Þessa viku, key venue.hours_this_week to venue.hours_usual (lifepass-ios feat/venue-usual-hours-is-description bb92f16)",
-  "Class room row: Room / Salur, key booking.room.label (API 0.44.0; lifepass-ios feat/member-feedback, the app version after 3.1.0)"
+  "Class room row: Room / Salur, key booking.room.label (API 0.44.0; lifepass-ios feat/member-feedback, the app version after 3.1.0)",
+  "Venue rating numbers: the stars' count is every rating, 4.6 · 23 ratings / 4,6 · 23 einkunnir (venue.ratings.count.one/.many), and the Equipment / Cleanliness averages, Tækjabúnaður / Hreinlæti (venue.ratings.equipment, venue.ratings.cleanliness) (API 0.46.0; lifepass-ios feat/member-feedback, the app version after 3.1.0)"
  ],
  "dictionaries": [
   {
@@ -1082,6 +1083,10 @@
     "venue.price.limited",
     "venue.price.see_venue",
     "venue.price.topup_from",
+    "venue.ratings.cleanliness",
+    "venue.ratings.count.many",
+    "venue.ratings.count.one",
+    "venue.ratings.equipment",
     "venue.review_comments",
     "venue.review_empty",
     "venue.review_err_comment",
@@ -2422,7 +2427,7 @@
   }
  ],
  "counts": {
-  "en": 2361,
-  "is": 2361
+  "en": 2365,
+  "is": 2365
  }
 }

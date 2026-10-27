@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { hiddenFromAccessibility, LPText } from '../../../components/ui';
 import { useT } from '../../../i18n';
 import { colors, hairline, radius } from '../../../theme';
+import SubRatings from '../components/SubRatings';
 import {
   averageText,
   distributionRatio,
@@ -153,21 +154,40 @@ export function WriteReviewPrompt({ venueName, onPress }: { readonly venueName: 
   );
 }
 
-/** The reviews page's summary card (iOS `reviewSummary` and `ratingBar`). */
+/**
+ * The reviews page's summary card (iOS `reviewSummary` and `ratingBar`): the
+ * average with its stars and "23 ratings" (every rating since API 0.46.0, a
+ * quick visit rating included; an older server's rows read "12 reviews"), the
+ * Equipment and Cleanliness averages when the server sends them, and a bar per
+ * star.
+ */
 export function ReviewSummaryCard({ summary }: { readonly summary: ReviewSummary }) {
-  const { t } = useT();
-  const average = averageText(summary.average);
+  const { t, tp, language } = useT();
+  const average = averageText(summary.average, language);
+  const count =
+    summary.counts === 'ratings'
+      ? tp('venue.ratings.count', summary.count)
+      : summary.count === 1
+        ? t('venue.reviews_one')
+        : t('venue.reviews_many', { count: summary.count });
   return (
     <View style={styles.summary} testID="reviews-summary">
       <View style={styles.summaryLeft}>
         {/* Said once, by the stars below, with its meaning. */}
-        <LPText serif size={36} tracking={-1} {...hiddenFromAccessibility}>
+        <LPText serif size={36} tracking={-1} {...hiddenFromAccessibility} testID="reviews-summary-average">
           {average}
         </LPText>
         <StarRow kinds={summaryStars(summary.average)} size={12} label={t('venue2.a11y.average', { average })} />
-        <LPText size={11} color={colors.paper3}>
-          {summary.count === 1 ? t('venue.reviews_one') : t('venue.reviews_many', { count: summary.count })}
+        <LPText size={11} color={colors.paper3} testID="reviews-summary-count">
+          {count}
         </LPText>
+        <SubRatings
+          equipment={summary.equipment}
+          cleanliness={summary.cleanliness}
+          align="center"
+          style={styles.subRatings}
+          testID="reviews-summary-subratings"
+        />
       </View>
       <View style={styles.bars}>
         {STARS_DESCENDING.map((star) => (
@@ -299,7 +319,8 @@ const styles = StyleSheet.create({
     borderWidth: hairline,
     borderColor: colors.line,
   },
-  summaryLeft: { alignItems: 'center', gap: 6 },
+  summaryLeft: { alignItems: 'center', gap: 6, flexShrink: 1 },
+  subRatings: { marginTop: 4 },
   bars: { flex: 1, maxWidth: 180, marginLeft: 'auto', gap: 5 },
   barRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   barStar: { width: 10 },

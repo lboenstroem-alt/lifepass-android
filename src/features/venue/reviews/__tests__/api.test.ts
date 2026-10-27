@@ -51,9 +51,70 @@ describe('GET /venues/{venueId}/reviews', () => {
       authorInitial: 'J',
       createdAt: new Date('2026-10-02T14:00:00.000Z'),
       reviewerProfileId: 'cccccccc-0000-4000-8000-000000000003',
+      // An older server: no kind is a written review, and no sub-stars.
+      kind: 'written',
+      equipmentRating: null,
+      cleanlinessRating: null,
     });
     expect(page.ownReviewId).toBe(REVIEW);
     expect(page.canWriteReview).toBe(false);
+    // And no summary in this answer.
+    expect(page.summary).toBeNull();
+  });
+
+  it('reads a row\'s kind and sub-stars (API 0.46.0) softly: an unknown kind is written, a bad star none', () => {
+    const page = decodeVenueReviews({
+      rows: [
+        row({ kind: 'quick', equipmentRating: 5, cleanlinessRating: null }),
+        row({ kind: 'imported', equipmentRating: 7, cleanlinessRating: '4' }),
+        row({ kind: 'written', equipmentRating: 3, cleanlinessRating: 4 }),
+      ],
+    });
+    expect(page.reviews.map((r) => [r.kind, r.equipmentRating, r.cleanlinessRating])).toEqual([
+      ['quick', 5, null],
+      ['written', null, null],
+      ['written', 3, 4],
+    ]);
+  });
+
+  it('reads the summary of every rating (API 0.46.0), with the sub-scores sent from 3 ratings up', () => {
+    const page = decodeVenueReviews({
+      rows: [row()],
+      summary: {
+        averageRating: 4.5,
+        totalReviews: 1,
+        totalRatings: 8,
+        equipmentRating: { average: 4.67, count: 3 },
+        cleanlinessRating: null,
+        distribution: { 1: 0, 2: 0, 3: 1, 4: 2, 5: 5 },
+      },
+    });
+    expect(page.summary).toEqual({
+      averageRating: 4.5,
+      totalRatings: 8,
+      distribution: { 1: 0, 2: 0, 3: 1, 4: 2, 5: 5 },
+      equipmentRating: { average: 4.67, count: 3 },
+      cleanlinessRating: null,
+    });
+  });
+
+  it('an older summary counts its reviews as its ratings; one that does not read is none, never a failed page', () => {
+    const older = decodeVenueReviews({
+      rows: [row()],
+      summary: { averageRating: 4, totalReviews: 1, distribution: { 1: 0, 2: 0, 3: 0, 4: 1, 5: 0 } },
+    });
+    expect(older.summary?.totalRatings).toBe(1);
+    for (const summary of [
+      'none',
+      { averageRating: '4', totalRatings: 1, distribution: { 1: 0, 2: 0, 3: 0, 4: 1, 5: 0 } },
+      { averageRating: 4, distribution: { 1: 0, 2: 0, 3: 0, 4: 1, 5: 0 } },
+      { averageRating: 4, totalRatings: 1, distribution: { 4: 1 } },
+      { averageRating: 4, totalRatings: 1 },
+    ]) {
+      const page = decodeVenueReviews({ rows: [row()], summary });
+      expect(page.summary).toBeNull();
+      expect(page.reviews).toHaveLength(1);
+    }
   });
 
   it('reads a missing comment, own review and write flag as absent', () => {

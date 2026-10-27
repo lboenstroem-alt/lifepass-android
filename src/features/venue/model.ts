@@ -13,7 +13,7 @@
  *   hasDirections       whether there is anywhere to give directions to
  *   showsGettingThere   whether "Getting there" is drawn at all
  *   hourText            one weekday's hours
- *   ratingLine          the meta row's rating words
+ *   ratingLine          the meta row's rating words (ratingCount, ratingText)
  *   statusBarBandOpacity the band behind the status bar, by scroll offset
  *   venueShareUrl / venueShareMessage / venuePhoneUrl
  *
@@ -21,8 +21,9 @@
  * `resolvedSurchargePrice`, `topupPrice`, ...), it never works one out. The
  * label rules themselves are F6's (src/types/venue.ts, iOS `Venue.priceLabel`).
  */
-import { printfFixed } from '../../i18n/format';
+import { translate, translatePlural, type Lang } from '../../i18n';
 import type { BookableActivity } from '../../api/walkInPreview';
+import { averageText } from './reviews/model';
 import {
   iskPrefix,
   isBoutique,
@@ -83,23 +84,47 @@ export function venueShareMessage(venue: Pick<Venue, 'slug' | 'name'>, t: Transl
 // MARK: - Meta row
 
 /**
- * The rating words beside the star: "4.6" and "· 12 reviews" when rated,
- * otherwise "No reviews yet". The count reads `venue.reviews_many` whatever
- * the count, as iOS's meta row does (it never picks `reviews_one` there).
+ * How many ratings the stars stand for (API 0.46.0): `totalRatings`, every
+ * rating behind the average, quick visit ratings included. An older server
+ * sends only `totalReviews`, which then counted every rating (each had text).
+ * Null for none or zero: the count is hidden, never "0 ratings". Reading
+ * `totalReviews` alone once showed "★ 4.5 · 0 reviews" for a venue whose
+ * ratings were all quick ones.
+ */
+export function ratingCount(venue: Pick<Venue, 'totalRatings' | 'totalReviews'>): number | null {
+  const count = venue.totalRatings ?? venue.totalReviews;
+  return count !== null && count > 0 ? count : null;
+}
+
+/**
+ * An average as the stars' words write it: one decimal, rounded as printf
+ * rounds, with the decimal comma in Icelandic as the app writes every other
+ * decimal there (distances, weights): "4.6" / "4,6".
+ */
+export function ratingText(average: number, lang: Lang): string {
+  // One rule for the meta row, the reviews page and the sub-scores.
+  return averageText(average, lang);
+}
+
+/**
+ * The rating words beside the star: "4.6" and "· 23 ratings" ("4,6" and
+ * "· 23 einkunnir") when rated, the count left out when there is none;
+ * otherwise "No reviews yet". The count reads `venue.ratings.count` through
+ * the plural rule ("1 rating", Icelandic "21 einkunn").
  */
 export function ratingLine(
-  venue: Pick<Venue, 'averageRating' | 'totalReviews'>,
-  t: Translate,
+  venue: Pick<Venue, 'averageRating' | 'totalRatings' | 'totalReviews'>,
+  lang: Lang,
 ): { readonly rating: string; readonly count: string | null } | { readonly empty: string } {
   const rating = venue.averageRating;
   if (rating !== null && rating > 0) {
-    const total = venue.totalReviews;
+    const count = ratingCount(venue);
     return {
-      rating: printfFixed(rating, 1),
-      count: total !== null && total > 0 ? `· ${t('venue.reviews_many', { count: total })}` : null,
+      rating: ratingText(rating, lang),
+      count: count !== null ? `· ${translatePlural('venue.ratings.count', count, lang)}` : null,
     };
   }
-  return { empty: t('venue.no_reviews') };
+  return { empty: translate('venue.no_reviews', lang) };
 }
 
 /**

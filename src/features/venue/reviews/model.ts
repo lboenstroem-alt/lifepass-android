@@ -8,6 +8,7 @@ import Graphemer from 'graphemer';
 
 import { formatDateTemplate, printfFixed } from '../../../i18n/format';
 import type { Lang } from '../../../i18n';
+import type { SubRating } from '../../../types/venue';
 
 /** A review as the screens consume it (iOS `VenueReview`, adapted from the API's `VenueReviewRow`). */
 export interface VenueReview {
@@ -24,6 +25,28 @@ export interface VenueReview {
    * to keep "Report review" off the member's own review.
    */
   readonly reviewerProfileId: string | null;
+  /**
+   * `written`, or `quick`: a visit rating with a comment (API 0.46.0). An
+   * unknown kind reads as written. The list shows both the same way.
+   */
+  readonly kind: ReviewKind;
+  /** The row's Equipment stars (1 to 5, API 0.46.0), or null. Not drawn on a card. */
+  readonly equipmentRating: number | null;
+  /** The row's Cleanliness stars (1 to 5, API 0.46.0), or null. Not drawn on a card. */
+  readonly cleanlinessRating: number | null;
+}
+
+/** What wrote a listed rating (API 0.46.0). */
+export type ReviewKind = 'written' | 'quick';
+
+/** A row's `kind`: `quick` when it says so, anything else (and an older server's none) `written`. */
+export function reviewKind(value: unknown): ReviewKind {
+  return value === 'quick' ? 'quick' : 'written';
+}
+
+/** A row's sub-score: a whole number of stars from 1 to 5, anything else none. */
+export function subStars(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5 ? value : null;
 }
 
 // MARK: - The summary (ReviewsPageView.reviewSummary)
@@ -34,16 +57,67 @@ export type StarRating = 1 | 2 | 3 | 4 | 5;
 export const STARS_DESCENDING: readonly StarRating[] = [5, 4, 3, 2, 1];
 
 export interface ReviewSummary {
-  /** The plain mean of the loaded rows' ratings. */
+  /** The mean of the ratings the summary covers. */
   readonly average: number;
+  /** How many ratings it covers. */
   readonly count: number;
-  /** How many loaded rows gave each star. */
+  /** How many gave each star. */
   readonly distribution: Readonly<Record<StarRating, number>>;
+  /**
+   * What `count` counts: `ratings` (the server's summary, every rating, quick
+   * visit ratings included: "23 ratings"), or `reviews` (the loaded rows, from
+   * a server older than 0.46.0, when every rating had text: "12 reviews").
+   */
+  readonly counts: 'ratings' | 'reviews';
+  /** The Equipment average, only from the server's summary (sent from 3 ratings up). */
+  readonly equipment: SubRating | null;
+  /** The Cleanliness average, likewise. */
+  readonly cleanliness: SubRating | null;
 }
 
 /**
- * The summary iOS computes on the phone from the rows it loaded (it ignores
- * the API's own `summary`); null with no rows, when iOS draws no summary.
+ * The `summary` of `GET /venues/{venueId}/reviews` (API 0.46.0): the average,
+ * the count and the distribution of EVERY rating (a quick visit rating with
+ * no comment is in them, though no row lists it), and the sub-scores.
+ */
+export interface ServerReviewSummary {
+  readonly averageRating: number;
+  /** Every rating; an older server's `totalReviews` when it sends no `totalRatings`. */
+  readonly totalRatings: number;
+  readonly distribution: Readonly<Record<StarRating, number>>;
+  readonly equipmentRating: SubRating | null;
+  readonly cleanlinessRating: SubRating | null;
+}
+
+/**
+ * What the reviews page's summary shows. Since API 0.46.0 the server's own
+ * summary: the list holds only the ratings with text, so a summary worked out
+ * from the rows would leave out every quick rating, and disagree with the
+ * venue page's "4.6 · 23 ratings". Without one (an older server, a summary
+ * that did not read, or one that counts no rating) the summary iOS computes
+ * from the loaded rows.
+ */
+export function pageSummary(
+  server: ServerReviewSummary | null,
+  reviews: readonly Pick<VenueReview, 'rating'>[],
+): ReviewSummary | null {
+  if (server && server.totalRatings > 0) {
+    return {
+      average: server.averageRating,
+      count: server.totalRatings,
+      distribution: server.distribution,
+      counts: 'ratings',
+      equipment: server.equipmentRating,
+      cleanliness: server.cleanlinessRating,
+    };
+  }
+  return reviewSummary(reviews);
+}
+
+/**
+ * The summary iOS computes on the phone from the rows it loaded; null with
+ * no rows, when iOS draws no summary. Android's fallback for a server that
+ * sends no summary (`pageSummary`).
  */
 export function reviewSummary(reviews: readonly Pick<VenueReview, 'rating'>[]): ReviewSummary | null {
   if (reviews.length === 0) return null;
@@ -57,7 +131,14 @@ export function reviewSummary(reviews: readonly Pick<VenueReview, 'rating'>[]): 
       distribution[review.rating as StarRating] += 1;
     }
   }
-  return { average: total / reviews.length, count: reviews.length, distribution };
+  return {
+    average: total / reviews.length,
+    count: reviews.length,
+    distribution,
+    counts: 'reviews',
+    equipment: null,
+    cleanliness: null,
+  };
 }
 
 /** A bar's fill, 0 to 1 (iOS `ratingBar`: count over all rows). */
@@ -66,11 +147,13 @@ export function distributionRatio(summary: ReviewSummary, star: StarRating): num
 }
 
 /**
- * The average as iOS prints it, `String(format: "%.1f", avg)`: one decimal
- * with a POINT in both languages ("4.5"), rounded as printf rounds.
+ * The average as the stars' words write it (API 0.46.0, "4.6 · 23 ratings" /
+ * "4,6 · 23 einkunnir"): one decimal, rounded as printf rounds, with the
+ * decimal comma in Icelandic, as the venue page's meta row writes it.
  */
-export function averageText(average: number): string {
-  return printfFixed(average, 1);
+export function averageText(average: number, lang: Lang): string {
+  const text = printfFixed(average, 1);
+  return lang === 'is' ? text.replace('.', ',') : text;
 }
 
 export type StarKind = 'full' | 'half' | 'empty';

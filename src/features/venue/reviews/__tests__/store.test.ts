@@ -16,9 +16,12 @@ const review = (id: string, rating = 5): VenueReview => ({
   authorInitial: 'A',
   createdAt: new Date('2026-10-02T14:00:00Z'),
   reviewerProfileId: null,
+  kind: 'written',
+  equipmentRating: null,
+  cleanlinessRating: null,
 });
 
-const page = (...reviews: VenueReview[]): VenueReviewsPage => ({ reviews, ownReviewId: null, canWriteReview: true });
+const page = (...reviews: VenueReview[]): VenueReviewsPage => ({ reviews, ownReviewId: null, canWriteReview: true, summary: null });
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

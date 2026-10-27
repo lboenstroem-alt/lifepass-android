@@ -35,11 +35,13 @@ describe('the summary', () => {
     expect(reviewSummary([])).toBeNull();
   });
 
-  it('prints one decimal with a point in both languages, rounded as printf rounds', () => {
-    expect(averageText(23 / 6)).toBe('3.8');
-    expect(averageText(4.25)).toBe('4.2'); // an exact tie goes to even
-    expect(averageText(4.75)).toBe('4.8');
-    expect(averageText(5)).toBe('5.0');
+  it('prints one decimal, rounded as printf rounds, with the decimal comma in Icelandic', () => {
+    expect(averageText(23 / 6, 'en')).toBe('3.8');
+    expect(averageText(4.25, 'en')).toBe('4.2'); // an exact tie goes to even
+    expect(averageText(4.75, 'en')).toBe('4.8');
+    expect(averageText(5, 'en')).toBe('5.0');
+    expect(averageText(4.6, 'is')).toBe('4,6');
+    expect(averageText(5, 'is')).toBe('5,0');
   });
 
   it('draws half stars: full at i <= avg, half at i - 0.5 <= avg', () => {

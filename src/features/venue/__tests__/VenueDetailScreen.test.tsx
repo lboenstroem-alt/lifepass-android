@@ -113,7 +113,8 @@ describe('a gym with walk-ins and classes, in the plan', () => {
     expect(screen.getByRole('header', { name: 'Hress Reykjavík' })).toBeOnTheScreen();
     expect(screen.getByTestId('venue.kicker')).toHaveTextContent('IN YOUR PLAN');
     expect(screen.getByText('4.6')).toBeOnTheScreen();
-    expect(screen.getByText('· 12 reviews')).toBeOnTheScreen();
+    // The fixture's server sends no totalRatings (before 0.46.0): its 12 reviews are its ratings.
+    expect(screen.getByText('· 12 ratings')).toBeOnTheScreen();
     expect(screen.getByText(/A friendly gym with an open floor/)).toBeOnTheScreen();
     expect(screen.getByText('sauna')).toBeOnTheScreen();
 
@@ -370,6 +371,54 @@ describe('hours, description and reviews', () => {
     await fireEvent.press(screen.getByRole('button', { name: en('venue.write_one') }));
     expect(navigation.navigate).toHaveBeenCalledTimes(2);
     expect(navigation.navigate).toHaveBeenLastCalledWith('VenueReviews', { venueId: VENUE_ID, venueName: 'Hress Reykjavík' });
+  });
+});
+
+describe('the rating numbers (API 0.46.0)', () => {
+  it('the stars count every rating, quick ones too, never "0 reviews"', async () => {
+    serve({ venue: { averageRating: 4.5, totalReviews: null, totalRatings: 3 }, reviews: [] });
+    await renderPage();
+    expect(screen.getByText('4.5')).toBeOnTheScreen();
+    expect(screen.getByText('· 3 ratings')).toBeOnTheScreen();
+    expect(screen.queryByText(/0 reviews/)).toBeNull();
+    expect(screen.getByTestId('venue.meta.rating').props.accessibilityLabel).toBe('4.5 · 3 ratings');
+  });
+
+  it('in Icelandic: "4,6 · 23 einkunnir", and the Equipment and Cleanliness averages in the reviews section', async () => {
+    setCurrentLanguage('is');
+    serve({
+      venue: {
+        averageRating: 4.6,
+        totalReviews: 5,
+        totalRatings: 23,
+        equipmentRating: { average: 4.5, count: 9 },
+        cleanlinessRating: { average: 4.75, count: 12 },
+      },
+    });
+    await renderPage();
+    expect(screen.getByText('4,6')).toBeOnTheScreen();
+    expect(screen.getByText('· 23 einkunnir')).toBeOnTheScreen();
+    const block = within(screen.getByTestId('venue.reviews.subratings'));
+    expect(block.getByText('Tækjabúnaður')).toBeOnTheScreen();
+    expect(block.getByText('4,5')).toBeOnTheScreen();
+    expect(block.getByText('Hreinlæti')).toBeOnTheScreen();
+    expect(block.getByText('4,8')).toBeOnTheScreen();
+    expect(block.getByTestId('venue.reviews.subratings.equipment').props.accessibilityLabel).toBe('Tækjabúnaður, 4,5 af 5 stjörnum');
+  });
+
+  it('under 3 ratings the server sends no sub-score, and the section shows none', async () => {
+    serve({ venue: { averageRating: 4, totalRatings: 2, equipmentRating: null, cleanlinessRating: null } });
+    await renderPage();
+    expect(screen.getByText('· 2 ratings')).toBeOnTheScreen();
+    expect(screen.queryByTestId('venue.reviews.subratings')).toBeNull();
+  });
+
+  it('only one sub-score sent: only that one shows', async () => {
+    serve({ venue: { totalRatings: 4, cleanlinessRating: { average: 4.2, count: 3 } } });
+    await renderPage();
+    expect(screen.queryByTestId('venue.reviews.subratings.equipment')).toBeNull();
+    expect(within(screen.getByTestId('venue.reviews.subratings.cleanliness')).getByText('Cleanliness')).toBeOnTheScreen();
+    expect(within(screen.getByTestId('venue.reviews.subratings.cleanliness')).getByText('4.2')).toBeOnTheScreen();
   });
 });
 

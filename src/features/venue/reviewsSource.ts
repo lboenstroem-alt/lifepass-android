@@ -13,11 +13,13 @@
  * `venueId`, `rating`, `createdAt` and `reviewer.fullNameInitial` must be
  * there with the right type (else the read fails, and the page says so);
  * `comment` may be missing. The summary, `canWriteReview` and `ownReviewId`
- * are not read (iOS ignores them too). Keyed by the venue's UUID, never its
- * slug.
+ * are not read (iOS ignores them too; the page's Equipment and Cleanliness
+ * averages come with the venue row). A row's `kind` and sub-stars (API
+ * 0.46.0) are read softly. Keyed by the venue's UUID, never its slug.
  */
 import { apiGet, type RequestOptions } from '../../api/client';
 import { parseIsoDate, wireId } from '../../api/wire';
+import { reviewKind, subStars, type ReviewKind } from './reviews/model';
 
 /** A review as the page's inline block draws it (iOS `VenueReview`). */
 export interface VenueReviewItem {
@@ -30,6 +32,11 @@ export interface VenueReviewItem {
   /** The reviewer's first initial (the API never names other members). */
   readonly authorInitial: string;
   readonly createdAt: Date;
+  /** `written`, or `quick` (a visit rating with a comment, API 0.46.0); unknown reads as written. */
+  readonly kind: ReviewKind;
+  /** The row's Equipment and Cleanliness stars (API 0.46.0), or null. Not drawn on a card. */
+  readonly equipmentRating: number | null;
+  readonly cleanlinessRating: number | null;
 }
 
 /** Why the answer did not decode; the client turns it into a `DecodingError`. */
@@ -83,6 +90,9 @@ function decodeRow(raw: unknown, path: string): VenueReviewItem {
     comment: typeof comment === 'string' ? comment : null,
     authorInitial: string(reviewer, 'fullNameInitial', `${path}.reviewer`),
     createdAt,
+    kind: reviewKind(row.kind),
+    equipmentRating: subStars(row.equipmentRating),
+    cleanlinessRating: subStars(row.cleanlinessRating),
   };
 }
 

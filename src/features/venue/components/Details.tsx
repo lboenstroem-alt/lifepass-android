@@ -12,7 +12,7 @@ import { hasDirections, ratingLine } from '../model';
 import { DirectionsCapsule } from './shared';
 
 /**
- * The rating (★ 4.6 · 12 reviews, or "No reviews yet"), which opens the
+ * The rating (★ 4.6 · 23 ratings, or "No reviews yet"), which opens the
  * reviews, and the Directions capsule when there is somewhere to go.
  */
 export function MetaRow({
@@ -24,8 +24,8 @@ export function MetaRow({
   readonly onOpenReviews: () => void;
   readonly onDirections: () => void;
 }) {
-  const { t } = useT();
-  const line = ratingLine(venue, t);
+  const { language } = useT();
+  const line = ratingLine(venue, language);
   const spoken = 'empty' in line ? line.empty : [line.rating, line.count].filter(Boolean).join(' ');
   return (
     <View style={styles.meta}>

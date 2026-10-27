@@ -11,9 +11,13 @@
  *     opens the write sheet (root modal `WriteReview`).
  *   - No reviews: a quote, "No reviews yet" and "Share your experience to
  *     help other visitors discover {name}."
- *   - Otherwise the summary iOS computes from the loaded rows (the average to
- *     one decimal with half stars, "1 review" / "{count} reviews", bars from
- *     5 to 1), then every card.
+ *   - Otherwise the summary (the average to one decimal with half stars,
+ *     "{count} ratings", the Equipment and Cleanliness averages when sent,
+ *     bars from 5 to 1), then every card. Since API 0.46.0 the summary is
+ *     the server's, which covers every rating, quick visit ratings without
+ *     text included; from an older server, the one iOS computes from the
+ *     loaded rows ("1 review" / "{count} reviews"). A venue rated only
+ *     without text shows its summary and no cards.
  *   - Android adds "Report review" on each card but the member's own (D5).
  *
  * The rows are the venue page's (the shared reviews store, which the venue
@@ -36,7 +40,7 @@ import type { SharedRouteProps } from '../../../navigation/types';
 import { useAppStore } from '../../../stores/appStore';
 import { colors } from '../../../theme';
 import { QuoteGlyph, ReviewCard, ReviewSummaryCard, ReviewsHeader, WriteReviewPrompt } from './components';
-import { reviewSummary, type VenueReview } from './model';
+import { pageSummary, type VenueReview } from './model';
 import { openReportReview } from './report';
 import { useVenueReviews } from './useVenueReviews';
 
@@ -60,8 +64,8 @@ export default function VenueReviewsScreen({ navigation, route }: SharedRoutePro
   // The tab bar floats over the page; outside the tabs (the shared sheet) it is the system bar.
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? insets.bottom;
   const memberId = useAppStore((s) => s.userId);
-  const { reviews, loaded, status, ownReviewId, reload } = useVenueReviews(venueId, { maxAgeMs: FRESH_FOR_MS });
-  const summary = useMemo(() => reviewSummary(reviews), [reviews]);
+  const { reviews, loaded, status, ownReviewId, summary: server, reload } = useVenueReviews(venueId, { maxAgeMs: FRESH_FOR_MS });
+  const summary = useMemo(() => pageSummary(server, reviews), [server, reviews]);
 
   const writeReview = () => navigation.navigate('WriteReview', { venueId, venueName });
 

@@ -2,9 +2,11 @@
 // The reviews at the foot of the venue page (iOS VenueDetailView
 // `reviewsBlock` and `reviewCardSmall`): "Reviews", with "Nobody's reviewed
 // yet" or "From other members" above it and "Write one" or "See all" beside
-// it; a "Be the first to review" card when there are none, else the two
-// newest. Every action opens the reviews page (VENUE-2's `VenueReviews`),
-// where a review is read in full and written.
+// it; the venue's Equipment and Cleanliness averages under it when the server
+// sends them (API 0.46.0, from 3 ratings up: ./SubRatings.tsx); a "Be the
+// first to review" card when there are none, else the two newest. Every
+// action opens the reviews page (VENUE-2's `VenueReviews`), where a review is
+// read in full and written.
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -12,17 +14,24 @@ import { LPText } from '../../../components/ui';
 import { venueDate } from '../../../i18n/format';
 import { useT } from '../../../i18n';
 import { colors, radius } from '../../../theme';
+import type { SubRating } from '../../../types/venue';
 import type { VenueReviewItem } from '../reviewsSource';
 import { SectionTitle } from './shared';
+import SubRatings from './SubRatings';
 
 /** How many reviews the page shows before "See all". */
 export const INLINE_REVIEWS = 2;
 
 export default function ReviewsBlock({
   reviews,
+  equipment = null,
+  cleanliness = null,
   onOpenReviews,
 }: {
   readonly reviews: readonly VenueReviewItem[];
+  /** The venue row's sub-scores (API 0.46.0); null when the server sends none. */
+  readonly equipment?: SubRating | null;
+  readonly cleanliness?: SubRating | null;
   readonly onOpenReviews: () => void;
 }) {
   const { t } = useT();
@@ -40,6 +49,8 @@ export default function ReviewsBlock({
           </LPText>
         </Pressable>
       </View>
+
+      <SubRatings equipment={equipment} cleanliness={cleanliness} testID="venue.reviews.subratings" />
 
       {empty ? (
         <Pressable

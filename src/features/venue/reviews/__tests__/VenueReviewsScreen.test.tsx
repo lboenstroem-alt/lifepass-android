@@ -38,9 +38,25 @@ const row = (id: string, rating: number, comment: string, profileId = OTHER) => 
   images: [],
 });
 
-const answer = (rows: unknown[], ownReviewId: string | null = null) =>
+/** The server's summary of exactly these rows (every rating had text). */
+function summaryOf(rows: readonly unknown[]) {
+  const ratings = rows.map((r) => (r as { rating: number }).rating);
+  const distribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  for (const rating of ratings) distribution[rating] += 1;
+  return {
+    averageRating: ratings.length ? ratings.reduce((a, b) => a + b, 0) / ratings.length : 0,
+    totalReviews: ratings.length,
+    totalRatings: ratings.length,
+    equipmentRating: null,
+    cleanlinessRating: null,
+    distribution,
+  };
+}
+
+/** `'omit'`: an older server's answer, with no summary at all. */
+const answer = (rows: unknown[], ownReviewId: string | null = null, summary: object | 'omit' = summaryOf(rows)) =>
   Reply.ok({
-    summary: { averageRating: 0, totalReviews: rows.length, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } },
+    ...(summary === 'omit' ? {} : { summary }),
     rows,
     nextCursor: null,
     ownReviewId,
@@ -88,36 +104,114 @@ it('with no reviews: the write prompt, then the empty state with the venue name'
   expect(screen.queryByTestId('reviews-summary')).toBeNull();
 });
 
-it('the summary is computed from the loaded rows: average, half stars, count and bars', async () => {
+const FOUR_ROWS = [
+  row('11111111-0000-4000-8000-000000000001', 5, 'Superb'),
+  row('11111111-0000-4000-8000-000000000002', 4, 'Good'),
+  row('11111111-0000-4000-8000-000000000003', 5, 'Great'),
+  row('11111111-0000-4000-8000-000000000004', 4, 'Fine'),
+];
+
+it("the summary is the server's, which counts every rating (API 0.46.0): average, half stars, count, bars, sub-scores", async () => {
+  // Two rows with text, out of eight ratings: six quick ones carry no text.
   api.on(
     'GET',
     '/venues/:venueId/reviews',
-    answer([
-      row('11111111-0000-4000-8000-000000000001', 5, 'Superb'),
-      row('11111111-0000-4000-8000-000000000002', 4, 'Good'),
-      row('11111111-0000-4000-8000-000000000003', 5, 'Great'),
-      row('11111111-0000-4000-8000-000000000004', 4, 'Fine'),
-    ]),
+    answer(FOUR_ROWS.slice(0, 2), null, {
+      averageRating: 4.5,
+      totalReviews: 2,
+      totalRatings: 8,
+      equipmentRating: { average: 4.67, count: 3 },
+      cleanlinessRating: null,
+      distribution: { 1: 0, 2: 0, 3: 1, 4: 2, 5: 5 },
+    }),
   );
   await renderPage();
   const summary = within(screen.getByTestId('reviews-summary'));
   // The big number is drawn for the eye; TalkBack hears it once, from the stars.
   expect(summary.getByText('4.5', { includeHiddenElements: true })).toBeOnTheScreen();
   expect(summary.getByLabelText('Average rating 4.5 out of 5')).toBeOnTheScreen();
-  expect(summary.getByText('4 reviews')).toBeOnTheScreen();
-  expect(summary.getByLabelText('Rated 5: 2')).toBeOnTheScreen();
+  expect(summary.getByTestId('reviews-summary-count')).toHaveTextContent('8 ratings', { exact: true });
+  expect(summary.getByLabelText('Rated 5: 5')).toBeOnTheScreen();
   expect(summary.getByLabelText('Rated 1: 0')).toBeOnTheScreen();
-  expect(screen.getByTestId('reviews-bar-fill-5')).toHaveStyle({ width: '50%' });
+  expect(screen.getByTestId('reviews-bar-fill-5')).toHaveStyle({ width: '62.5%' });
+  // Equipment from 3 ratings up; no Cleanliness row without one.
+  const equipment = summary.getByTestId('reviews-summary-subratings.equipment');
+  expect(equipment.props.accessibilityLabel).toBe('Equipment, 4.7 out of 5 stars');
+  expect(within(equipment).getByText('Equipment')).toBeOnTheScreen();
+  expect(within(equipment).getByText('4.7')).toBeOnTheScreen();
+  expect(summary.queryByTestId('reviews-summary-subratings.cleanliness')).toBeNull();
   // Every card, the whole comment.
-  expect(screen.getByText('Fine').props.numberOfLines).toBeUndefined();
+  expect(screen.getByText('Good').props.numberOfLines).toBeUndefined();
 });
 
-it('says "1 review" for one', async () => {
+it('in Icelandic: the decimal comma, "einkunnir", and the sub-scores in their own words', async () => {
+  setCurrentLanguage('is');
+  api.on(
+    'GET',
+    '/venues/:venueId/reviews',
+    answer(FOUR_ROWS, null, {
+      averageRating: 4.6,
+      totalReviews: 4,
+      totalRatings: 23,
+      equipmentRating: { average: 4.5, count: 9 },
+      cleanlinessRating: { average: 4.8, count: 12 },
+      distribution: { 1: 0, 2: 1, 3: 1, 4: 5, 5: 16 },
+    }),
+  );
+  await renderPage();
+  const summary = within(screen.getByTestId('reviews-summary'));
+  expect(summary.getByText('4,6', { includeHiddenElements: true })).toBeOnTheScreen();
+  expect(summary.getByTestId('reviews-summary-count')).toHaveTextContent('23 einkunnir', { exact: true });
+  expect(summary.getByText('Tækjabúnaður')).toBeOnTheScreen();
+  expect(summary.getByText('Hreinlæti')).toBeOnTheScreen();
+  expect(summary.getByText('4,8')).toBeOnTheScreen();
+  expect(summary.getByTestId('reviews-summary-subratings.cleanliness').props.accessibilityLabel).toBe(
+    'Hreinlæti, 4,8 af 5 stjörnum',
+  );
+  expect(screen.getByRole('header', { name: 'Umsagnir' })).toBeOnTheScreen();
+});
+
+it('says "1 einkunn" for one rating', async () => {
   setCurrentLanguage('is');
   api.on('GET', '/venues/:venueId/reviews', answer([row('11111111-0000-4000-8000-000000000001', 3, 'Ok')]));
   await renderPage();
+  expect(screen.getByTestId('reviews-summary-count')).toHaveTextContent('1 einkunn', { exact: true });
+});
+
+it('a venue rated only without text shows its summary, and no empty state', async () => {
+  api.on(
+    'GET',
+    '/venues/:venueId/reviews',
+    answer([], null, {
+      averageRating: 4,
+      totalReviews: 0,
+      totalRatings: 2,
+      equipmentRating: null,
+      cleanlinessRating: null,
+      distribution: { 1: 0, 2: 0, 3: 1, 4: 0, 5: 1 },
+    }),
+  );
+  await renderPage();
+  expect(screen.getByTestId('reviews-summary-count')).toHaveTextContent('2 ratings', { exact: true });
+  expect(screen.queryByText('No reviews yet')).toBeNull();
+  expect(screen.queryByTestId('reviews-summary-subratings')).toBeNull();
+});
+
+it('an older server (no summary): the summary iOS computes from the loaded rows, "4 reviews"', async () => {
+  api.on('GET', '/venues/:venueId/reviews', answer(FOUR_ROWS, null, 'omit'));
+  await renderPage();
+  const summary = within(screen.getByTestId('reviews-summary'));
+  expect(summary.getByText('4.5', { includeHiddenElements: true })).toBeOnTheScreen();
+  expect(summary.getByText('4 reviews')).toBeOnTheScreen();
+  expect(summary.getByLabelText('Rated 5: 2')).toBeOnTheScreen();
+  expect(screen.getByTestId('reviews-bar-fill-5')).toHaveStyle({ width: '50%' });
+});
+
+it('an older server says "1 review" for one', async () => {
+  setCurrentLanguage('is');
+  api.on('GET', '/venues/:venueId/reviews', answer([row('11111111-0000-4000-8000-000000000001', 3, 'Ok')], null, 'omit'));
+  await renderPage();
   expect(screen.getByText('1 umsögn')).toBeOnTheScreen();
-  expect(screen.getByRole('header', { name: 'Umsagnir' })).toBeOnTheScreen();
 });
 
 it('Done closes the page; the write prompt opens the write sheet', async () => {
@@ -231,6 +325,9 @@ describe('isOwnReview', () => {
     authorInitial: 'J',
     createdAt: new Date('2026-10-16T12:00:00Z'),
     reviewerProfileId: ME,
+    kind: 'written' as const,
+    equipmentRating: null,
+    cleanlinessRating: null,
   };
   it('knows the member’s review by the server’s ownReviewId or by its author', () => {
     expect(isOwnReview(review, MINE.toUpperCase(), null)).toBe(true);

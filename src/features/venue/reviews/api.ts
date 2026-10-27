@@ -18,6 +18,13 @@
  * required, and each row's `id`, `venueId`, `rating`, `createdAt` and
  * `reviewer.fullNameInitial` are required; `comment` may be missing or null.
  *
+ * API 0.46.0 (quick visit ratings): the list holds only the ratings with
+ * text, while the `summary` covers EVERY rating (its average, `totalRatings`
+ * and distribution) and carries the Equipment and Cleanliness averages (from
+ * 3 ratings up). So the summary is read now, fail-soft (one that does not
+ * read is none, and the page falls back to the rows), and each row's `kind`
+ * (an unknown one is "written") and sub-stars too.
+ *
  * THE WRITE. The author comes from the bearer token; the body is just the
  * rating, the trimmed comment and the visit date (`yyyy-MM-dd`, today in UTC,
  * which is Reykjavík time). Every submit carries a new Idempotency-Key, as
@@ -25,7 +32,8 @@
  */
 import { apiGet, apiPost, newIdempotencyKey, parseIsoDate, wireId, type RequestOptions } from '../../../api';
 import { todayServerDay } from '../../../i18n/format';
-import type { VenueReview } from './model';
+import { softCount, softSubRating } from '../../../api/venues';
+import { reviewKind, STARS_DESCENDING, subStars, type ServerReviewSummary, type StarRating, type VenueReview } from './model';
 
 /** One read of a venue's reviews. */
 export interface VenueReviewsPage {
@@ -34,6 +42,8 @@ export interface VenueReviewsPage {
   readonly ownReviewId: string | null;
   /** The server's say on whether the member may write one (iOS reads it but does not act on it). */
   readonly canWriteReview: boolean | null;
+  /** Every rating's average, count and stars, and the sub-scores; null when it did not read. */
+  readonly summary: ServerReviewSummary | null;
 }
 
 /** What a member can say is wrong with a review (ReviewReportInput.reason). */
@@ -156,6 +166,40 @@ function decodeRow(value: unknown, path: string): VenueReview {
     reviewerProfileId: typeof reviewer.profileId === 'string' && UUID.test(reviewer.profileId)
       ? reviewer.profileId.toLowerCase()
       : null,
+    // API 0.46.0, read softly: none of it decides what a card shows.
+    kind: reviewKind(json.kind),
+    equipmentRating: subStars(json.equipmentRating),
+    cleanlinessRating: subStars(json.cleanlinessRating),
+  };
+}
+
+/**
+ * The answer's `summary`, fail-soft: an average from 1 to 5, a count of the
+ * ratings (`totalRatings`, else an older server's `totalReviews`, when every
+ * rating had text) and a count for each star; anything else is no summary,
+ * and the page works one out from the rows instead.
+ */
+export function decodeReviewSummary(value: unknown): ServerReviewSummary | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const json = value as Json;
+  const average = json.averageRating;
+  if (typeof average !== 'number' || !Number.isFinite(average) || average < 0 || average > 5) return null;
+  const total = softCount(json.totalRatings) ?? softCount(json.totalReviews);
+  if (total === null) return null;
+  const raw = json.distribution;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const distribution = {} as Record<StarRating, number>;
+  for (const star of STARS_DESCENDING) {
+    const count = softCount((raw as Json)[String(star)]);
+    if (count === null) return null;
+    distribution[star] = count;
+  }
+  return {
+    averageRating: average,
+    totalRatings: total,
+    distribution,
+    equipmentRating: softSubRating(json.equipmentRating),
+    cleanlinessRating: softSubRating(json.cleanlinessRating),
   };
 }
 
@@ -172,6 +216,7 @@ export function decodeVenueReviews(data: unknown): VenueReviewsPage {
     reviews: rows.map((row, i) => decodeRow(row, `reviews.rows[${i}]`)),
     ownReviewId: optionalId(json, 'ownReviewId', 'reviews'),
     canWriteReview: canWrite === undefined ? null : canWrite,
+    summary: decodeReviewSummary(json.summary),
   };
 }
 

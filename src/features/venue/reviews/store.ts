@@ -19,7 +19,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import { errorMessage, TransportError } from '../../../api';
 import { fetchVenueReviews, type VenueReviewsPage } from './api';
-import type { VenueReview } from './model';
+import type { ServerReviewSummary, VenueReview } from './model';
 
 export type VenueReviewsStatus = 'loading' | 'loaded' | 'failed';
 
@@ -30,6 +30,11 @@ export interface VenueReviewsEntry {
   /** True once a read of this venue has landed. */
   readonly loaded: boolean;
   readonly ownReviewId: string | null;
+  /**
+   * The server's summary of every rating (API 0.46.0), or null (an older
+   * server, or one that did not read): what the reviews page's summary shows.
+   */
+  readonly summary: ServerReviewSummary | null;
   /** The last read's failure in the language on screen, or null. */
   readonly error: string | null;
   /** When the rows on screen were read (ms since the epoch), or null before the first read lands. */
@@ -77,6 +82,7 @@ export const EMPTY_REVIEWS_ENTRY: VenueReviewsEntry = Object.freeze({
   reviews: [],
   loaded: false,
   ownReviewId: null,
+  summary: null,
   error: null,
   readAt: null,
 });
@@ -106,6 +112,7 @@ export function createVenueReviewsStore(options: VenueReviewsStoreOptions = {}):
             loaded: true,
             reviews: page.reviews,
             ownReviewId: page.ownReviewId,
+            summary: page.summary,
             error: null,
             readAt: now(),
           });

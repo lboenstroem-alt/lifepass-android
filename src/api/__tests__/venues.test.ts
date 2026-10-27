@@ -91,6 +91,9 @@ describe('the model', () => {
       amenities: ['Sauna'],
       averageRating: 4.6,
       totalReviews: 12,
+      totalRatings: 23,
+      equipmentRating: { average: 4.5, count: 3 },
+      cleanlinessRating: { average: 4.8, count: 5 },
       displayOrder: 3,
       awaitingConnection: false,
       activitiesAwaitingConnection: true,
@@ -126,6 +129,9 @@ describe('the model', () => {
       amenities: ['Sauna'],
       averageRating: 4.6,
       totalReviews: 12,
+      totalRatings: 23,
+      equipmentRating: { average: 4.5, count: 3 },
+      cleanlinessRating: { average: 4.8, count: 5 },
       displayOrder: 3,
       awaitingConnection: false,
       activitiesAwaitingConnection: true,
@@ -196,6 +202,31 @@ describe('the model', () => {
     expect(() => decodeVenue({ ...minimalVenue, openingHours: 'always' })).toThrow();
     expect(() => decodeVenue({ ...minimalVenue, openingHours: { monday: { open: 9 } } })).toThrow();
     expect(() => decodeVenue({ ...minimalVenue, description: null, city: null })).not.toThrow();
+  });
+
+  it('reads the rating numbers of API 0.46.0 fail-soft: a malformed one is none, never a lost venue', () => {
+    // An older server, and a venue whose count is zero (absent on venue rows).
+    expect(decodeVenue({ ...minimalVenue, averageRating: 4.5, totalReviews: 3 })).toMatchObject({
+      totalRatings: null,
+      equipmentRating: null,
+      cleanlinessRating: null,
+    });
+    // Quick ratings without text: an average and a count of ratings, no reviews.
+    expect(decodeVenue({ ...minimalVenue, averageRating: 4.5, totalRatings: 2 })).toMatchObject({
+      averageRating: 4.5,
+      totalReviews: null,
+      totalRatings: 2,
+    });
+    for (const bad of ['23', 2.5, -1]) {
+      expect(decodeVenue({ ...minimalVenue, totalRatings: bad }).totalRatings).toBeNull();
+    }
+    for (const bad of ['4.5', { average: 4.5 }, { average: '4.5', count: 3 }, { average: 7, count: 3 }, { average: 4, count: 0 }, [4.5, 3]]) {
+      expect(decodeVenue({ ...minimalVenue, equipmentRating: bad }).equipmentRating).toBeNull();
+    }
+    expect(decodeVenue({ ...minimalVenue, cleanlinessRating: { average: 3.67, count: 3 } }).cleanlinessRating).toEqual({
+      average: 3.67,
+      count: 3,
+    });
   });
 
   it("decodes the contract's own venue samples", () => {

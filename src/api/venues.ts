@@ -16,11 +16,14 @@
  *   - `offerings`: a list keeps its strings and drops anything else (the web's
  *     `stringsOf`), and a value that is not a list reads as none, so one stray
  *     element never costs the member the venue;
- *   - `markerType`: anything but a string reads as none.
+ *   - `markerType`: anything but a string reads as none;
+ *   - the rating numbers of API 0.46.0, `totalRatings` and the
+ *     `equipmentRating` / `cleanlinessRating` sub-scores: garnish beside the
+ *     stars, so a malformed one reads as none (`softCount`, `softSubRating`).
  * A list page decodes all or nothing, as iOS's `[Venue]` does.
  */
 import { apiGet, type RequestOptions } from './client';
-import type { DayHours, OpeningHours, Venue } from '../types/venue';
+import type { DayHours, OpeningHours, SubRating, Venue } from '../types/venue';
 import { WEEKDAYS } from '../types/venue';
 
 /** One page holds the whole catalogue (about 45 venues; the API caps a page at 100). */
@@ -136,6 +139,25 @@ function optionalStrings(json: Json, key: string, path: string): string[] | null
   return [...(value as string[])];
 }
 
+/** A count read fail-soft: a whole number of 0 or more, anything else none. */
+export function softCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+/**
+ * A sub-score (`{ average, count }`, API 0.46.0) read fail-soft: an average
+ * from 1 to 5 given by at least one member, anything else none. The server
+ * sends one only from 3 ratings up; the phone never applies that rule itself.
+ */
+export function softSubRating(value: unknown): SubRating | null {
+  if (!isObject(value)) return null;
+  const { average } = value;
+  const count = softCount(value.count);
+  if (typeof average !== 'number' || !Number.isFinite(average) || average < 1 || average > 5) return null;
+  if (count === null || count === 0) return null;
+  return { average, count };
+}
+
 /**
  * A list read for its strings only: `["pool", null, 3]` is `["pool"]`, and
  * `[null, null]` is `[]` (still the server's list, not a missing one). Anything
@@ -208,6 +230,10 @@ export function decodeVenue(raw: unknown, path = 'venue'): Venue {
     amenities: optionalStrings(json, 'amenities', path),
     averageRating: optionalNumber(json, 'averageRating', path),
     totalReviews: optionalInteger(json, 'totalReviews', path),
+    // Fail-soft (see the file comment).
+    totalRatings: softCount(present(json, 'totalRatings')),
+    equipmentRating: softSubRating(present(json, 'equipmentRating')),
+    cleanlinessRating: softSubRating(present(json, 'cleanlinessRating')),
     displayOrder: optionalInteger(json, 'displayOrder', path),
     awaitingConnection: optionalBool(json, 'awaitingConnection', path),
     activitiesAwaitingConnection: optionalBool(json, 'activitiesAwaitingConnection', path),
@@ -255,6 +281,9 @@ export function venueToApi(venue: Venue): Json {
   put('amenities', venue.amenities);
   put('averageRating', venue.averageRating);
   put('totalReviews', venue.totalReviews);
+  put('totalRatings', venue.totalRatings);
+  put('equipmentRating', venue.equipmentRating);
+  put('cleanlinessRating', venue.cleanlinessRating);
   put('displayOrder', venue.displayOrder);
   put('awaitingConnection', venue.awaitingConnection);
   put('activitiesAwaitingConnection', venue.activitiesAwaitingConnection);

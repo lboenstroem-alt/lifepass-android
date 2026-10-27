@@ -129,8 +129,13 @@ describe('loadVenueDetail', () => {
 });
 
 describe('the reviews read', () => {
-  it('reads the rows as iOS does (the summary is not used)', () => {
-    const [review] = decodeVenueReviews(reviewsJson([{ ...REVIEW_A, comment: undefined }]));
+  it('reads the rows as iOS does (the summary is not used), with the kind and sub-stars of API 0.46.0', () => {
+    const [review, quick] = decodeVenueReviews(
+      reviewsJson([
+        { ...REVIEW_A, comment: undefined },
+        { ...REVIEW_A, kind: 'quick', equipmentRating: 4, cleanlinessRating: 9 },
+      ]),
+    );
     expect(review).toEqual({
       id: REVIEW_A.id,
       venueId: VENUE_ID,
@@ -138,7 +143,11 @@ describe('the reviews read', () => {
       comment: null,
       authorInitial: 'A',
       createdAt: new Date('2026-10-02T09:30:00.000Z'),
+      kind: 'written',
+      equipmentRating: null,
+      cleanlinessRating: null,
     });
+    expect(quick).toMatchObject({ kind: 'quick', equipmentRating: 4, cleanlinessRating: null });
   });
 
   it('a row without its rating fails the read rather than inventing one', () => {

@@ -35,6 +35,17 @@ export interface OpeningHours {
 }
 
 export const WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
+
+/**
+ * One of a venue's sub-scores (API 0.46.0): the average of the Equipment or
+ * Cleanliness stars members gave in their visit ratings, and how many gave
+ * one. The server sends it only once 3 or more members did.
+ */
+export interface SubRating {
+  /** 1 to 5. */
+  readonly average: number;
+  readonly count: number;
+}
 export type Weekday = (typeof WEEKDAYS)[number];
 
 export interface Venue {
@@ -62,8 +73,22 @@ export interface Venue {
   readonly walkInsAllowed: boolean | null;
   readonly phone: string | null;
   readonly amenities: readonly string[] | null;
+  /** The average of EVERY rating, written reviews and quick visit ratings alike (API 0.46.0). */
   readonly averageRating: number | null;
+  /**
+   * The ratings WITH text, the ones the review list shows. Before 0.46.0 every
+   * rating had text, so an older server's count of ratings.
+   */
   readonly totalReviews: number | null;
+  /**
+   * Every rating behind `averageRating` (API 0.46.0): what the stars' count
+   * reads ("4.6 · 23 ratings"). Absent while zero, and from an older server.
+   */
+  readonly totalRatings: number | null;
+  /** The Equipment average (API 0.46.0), sent only from 3 ratings up. */
+  readonly equipmentRating: SubRating | null;
+  /** The Cleanliness average (API 0.46.0), sent only from 3 ratings up. */
+  readonly cleanlinessRating: SubRating | null;
   readonly displayOrder: number | null;
   /** "Coming soon": listed, but not yet connected for booking or check-in. */
   readonly awaitingConnection: boolean | null;

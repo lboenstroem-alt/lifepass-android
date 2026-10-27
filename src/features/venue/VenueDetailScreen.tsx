@@ -254,7 +254,12 @@ export default function VenueDetailScreen({ navigation, route }: SharedRouteProp
               </View>
               <OpeningHoursBlock venue={venue} />
               <GettingThereBlock venue={venue} onDirections={() => setDirectionsOpen(true)} />
-              <ReviewsBlock reviews={model.reviews} onOpenReviews={openReviews} />
+              <ReviewsBlock
+                reviews={model.reviews}
+                equipment={venue.equipmentRating}
+                cleanliness={venue.cleanlinessRating}
+                onOpenReviews={openReviews}
+              />
             </View>
           </>
         ) : (

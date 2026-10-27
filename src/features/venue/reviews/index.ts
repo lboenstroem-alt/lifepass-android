@@ -42,5 +42,5 @@ export {
   type VenueReviewsStatus,
   type VenueReviewsStore,
 } from './store';
-export type { VenueReview, ReviewSummary } from './model';
-export { reviewSummary } from './model';
+export type { VenueReview, ReviewSummary, ServerReviewSummary } from './model';
+export { pageSummary, reviewSummary } from './model';

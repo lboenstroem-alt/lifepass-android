@@ -47,6 +47,25 @@
      "booking.room.label": "Salur"
     }
    }
+  },
+  {
+   "change": "Venue rating numbers: the stars' count is every rating, 4.6 · 23 ratings / 4,6 · 23 einkunnir (venue.ratings.count.one/.many), and the Equipment / Cleanliness averages, Tækjabúnaður / Hreinlæti (venue.ratings.equipment, venue.ratings.cleanliness) (API 0.46.0; lifepass-ios feat/member-feedback, the app version after 3.1.0)",
+   "dictionary": "base",
+   "ios": {},
+   "android": {
+    "en": {
+     "venue.ratings.count.one": "{count} rating",
+     "venue.ratings.count.many": "{count} ratings",
+     "venue.ratings.equipment": "Equipment",
+     "venue.ratings.cleanliness": "Cleanliness"
+    },
+    "is": {
+     "venue.ratings.count.one": "{count} einkunn",
+     "venue.ratings.count.many": "{count} einkunnir",
+     "venue.ratings.equipment": "Tækjabúnaður",
+     "venue.ratings.cleanliness": "Hreinlæti"
+    }
+   }
   }
  ]
 }

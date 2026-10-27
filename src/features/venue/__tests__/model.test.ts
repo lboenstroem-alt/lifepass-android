@@ -9,7 +9,9 @@ import {
   hasDirections,
   heroKicker,
   hourText,
+  ratingCount,
   ratingLine,
+  ratingText,
   showsGettingThere,
   statusBarBandOpacity,
   venueBar,
@@ -122,19 +124,45 @@ describe('the hours rows', () => {
   });
 });
 
-describe('the rating line', () => {
-  it('rated: "4.6" and "· 12 reviews"', () => {
-    expect(ratingLine(venue(), en)).toEqual({ rating: '4.6', count: '· 12 reviews' });
-    expect(ratingLine(venue(), is)).toEqual({ rating: '4.6', count: '· 12 umsagnir' });
+describe('the rating line (API 0.46.0: every rating counts)', () => {
+  it('rated: "4.6 · 23 ratings", "4,6 · 23 einkunnir" in Icelandic', () => {
+    const rated = venue({ averageRating: 4.6, totalRatings: 23, totalReviews: 5 });
+    expect(ratingLine(rated, 'en')).toEqual({ rating: '4.6', count: '· 23 ratings' });
+    expect(ratingLine(rated, 'is')).toEqual({ rating: '4,6', count: '· 23 einkunnir' });
   });
 
-  it('a rating with no count shows no count', () => {
-    expect(ratingLine(venue({ totalReviews: 0 }), en)).toEqual({ rating: '4.6', count: null });
+  it('counts with the plural rule: one rating, and the Icelandic singular for 21', () => {
+    expect(ratingLine(venue({ totalRatings: 1 }), 'en')).toEqual({ rating: '4.6', count: '· 1 rating' });
+    expect(ratingLine(venue({ totalRatings: 1 }), 'is')).toEqual({ rating: '4,6', count: '· 1 einkunn' });
+    expect(ratingLine(venue({ totalRatings: 21 }), 'is')).toEqual({ rating: '4,6', count: '· 21 einkunn' });
+    expect(ratingLine(venue({ totalRatings: 11 }), 'is')).toEqual({ rating: '4,6', count: '· 11 einkunnir' });
+  });
+
+  it('only quick ratings (no text, so no reviews): the ratings count, never "0 reviews"', () => {
+    const quickOnly = venue({ averageRating: 4.5, totalReviews: null, totalRatings: 3 });
+    expect(ratingLine(quickOnly, 'en')).toEqual({ rating: '4.5', count: '· 3 ratings' });
+    expect(ratingCount(quickOnly)).toBe(3);
+  });
+
+  it('an older server: totalReviews is the count', () => {
+    expect(ratingLine(venue({ totalRatings: null, totalReviews: 12 }), 'en')).toEqual({ rating: '4.6', count: '· 12 ratings' });
+  });
+
+  it('a rating with no count, or a count of 0, shows no count', () => {
+    expect(ratingLine(venue({ totalRatings: null, totalReviews: 0 }), 'en')).toEqual({ rating: '4.6', count: null });
+    expect(ratingLine(venue({ totalRatings: null, totalReviews: null }), 'en')).toEqual({ rating: '4.6', count: null });
+    expect(ratingLine(venue({ totalRatings: 0, totalReviews: 0 }), 'is')).toEqual({ rating: '4,6', count: null });
+  });
+
+  it('writes the average as printf rounds it, with the Icelandic comma', () => {
+    expect(ratingText(4.25, 'en')).toBe('4.2');
+    expect(ratingText(4.75, 'is')).toBe('4,8');
+    expect(ratingText(5, 'is')).toBe('5,0');
   });
 
   it('unrated: "No reviews yet"', () => {
-    expect(ratingLine(venue({ averageRating: null }), en)).toEqual({ empty: 'No reviews yet' });
-    expect(ratingLine(venue({ averageRating: 0 }), is)).toEqual({ empty: 'Engar umsagnir enn' });
+    expect(ratingLine(venue({ averageRating: null }), 'en')).toEqual({ empty: 'No reviews yet' });
+    expect(ratingLine(venue({ averageRating: 0 }), 'is')).toEqual({ empty: 'Engar umsagnir enn' });
   });
 });
 
