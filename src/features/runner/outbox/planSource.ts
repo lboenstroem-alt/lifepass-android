@@ -5,26 +5,22 @@
  *
  * PLAN-1 owns the bridge (`src/features/plan/shell/bridges.ts`,
  * `installPlanOutbox(kind, source)`); this object fills its
- * `PlanOutboxSource`, so installing it is one line in ../register.ts once
- * both packages are on the same branch (the merge checklist there; a test,
- * ./__tests__/planBridgeInstall.test.ts, fails until it is in):
+ * `PlanOutboxSource`, and ../register.ts installs it at startup
+ * (./__tests__/planBridgeInstall.test.ts keeps it installed):
  *
  *   installPlanOutbox('workout', workoutPlanOutboxSource);
  *
- * NOT INSTALLED ON THIS BRANCH. Until it is, Plan's load sends nothing with
- * foreground semantics and shows no failed-item banner; the activation hooks
- * (../register.ts) still send the queue on every profile load and return to
- * the foreground, and a failed item waits on disk for the banner.
+ * The activation hooks (../register.ts) also send the queue on every profile
+ * load and return to the foreground, whichever tab is open.
  *
  * What Plan gets from it, in iOS's order:
  *
  * - `activate` is Plan's APPEARANCE (iOS PlanView's `.task`:
  *   `WorkoutRunnerSupport.activate` runs before `load()` and before its
  *   minor and consent guard): the Resume row is read again from runner.json
- *   (one past its day is deleted) and the member's queue is loaded. It is
- *   not a PLAN-1 `PlanOutboxSource` member yet: contract request to PLAN-1 to
- *   call `source.activate?.()` on every appearance ahead of `reloadPlan`'s
- *   guard. Until then `flush` runs it, behind that guard.
+ *   (one past its day is deleted) and the member's queue is loaded. Plan's
+ *   `runPlanTask` calls it on every appearance ahead of `reloadPlan`'s guard;
+ *   `flush` runs it again behind that guard, which costs one small read.
  * - `flush` is Plan's load step "before the read" (iOS `PlanOutboxBridge
  *   .flush()`): what waits is sent with FOREGROUND semantics (a member is
  *   looking at Plan, so a withdrawn consent may show its sheet). Plan reads
@@ -53,7 +49,7 @@ export interface WorkoutPlanOutboxItem {
   readonly kind: 'workout' | 'meal';
 }
 
-/** PLAN-1's `PlanOutboxSource`, as the workout outbox fills it, plus `activate`. */
+/** PLAN-1's `PlanOutboxSource`, as the workout outbox fills it (with its optional `activate`). */
 export interface WorkoutPlanOutboxSource {
   activate(): Promise<void>;
   flush(): Promise<void>;

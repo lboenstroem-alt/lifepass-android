@@ -1,12 +1,10 @@
 /**
- * The merge guard for Plan's half of the workout outbox. PLAN-1 owns the
- * bridge (`src/features/plan/shell/bridges.ts`); it is not on RUN-1's branch,
- * so ../../register.ts cannot install the workout source yet (its merge
- * checklist names the line). Once both packages are on one branch this test
- * runs, and fails until PLAN-1's feature index exports the bridge and the
- * runner installs into it: without that, Plan's load sends nothing with
- * foreground semantics and never shows the failed-item banner, so a failed
- * workout would wait unseen until the seven-day expiry dropped it.
+ * The guard for Plan's half of the workout outbox. PLAN-1 owns the bridge
+ * (`src/features/plan/shell/bridges.ts`) and ../../register.ts installs the
+ * workout source into it. This fails if that install goes: without it,
+ * Plan's load sends nothing with foreground semantics and never shows the
+ * failed-item banner, so a failed workout would wait unseen until the
+ * seven-day expiry dropped it.
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';

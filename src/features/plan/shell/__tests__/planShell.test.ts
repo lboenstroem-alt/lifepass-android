@@ -568,6 +568,54 @@ describe('appearances', () => {
     expect(events.find((e) => e.event === 'plan_viewed')).toBeDefined();
   });
 
+  it('lets each outbox activate before the guard, workouts first, even where the guard then reads nothing', async () => {
+    const order: string[] = [];
+    installPlanOutbox('meal', {
+      activate: async () => void order.push('meal.activate'),
+      flush: async () => void order.push('meal.flush'),
+      failedItems: () => [],
+      discard: async () => undefined,
+    });
+    installPlanOutbox('workout', {
+      activate: async () => void order.push('workout.activate'),
+      flush: async () => void order.push('workout.flush'),
+      failedItems: () => [],
+      discard: async () => undefined,
+    });
+
+    signIn(memberProfile({ consent: false }));
+    planDidAppear();
+    await settle();
+    expect(order).toEqual(['workout.activate', 'meal.activate']);
+    expect(api.sentAll('/health')).toHaveLength(0);
+
+    order.length = 0;
+    signIn();
+    api.on('GET', '/health', () => {
+      order.push('read');
+      return Reply.ok(dayJSON());
+    });
+    planDidAppear();
+    await settle();
+    expect(order).toEqual(['workout.activate', 'meal.activate', 'workout.flush', 'meal.flush', 'read']);
+  });
+
+  it('an outbox whose activate throws does not stop the read', async () => {
+    signIn();
+    installPlanOutbox('workout', {
+      activate: async () => {
+        throw new Error('disk');
+      },
+      flush: async () => undefined,
+      failedItems: () => [],
+      discard: async () => undefined,
+    });
+    api.on('GET', '/health', Reply.ok(dayJSON()));
+    planDidAppear();
+    await settle();
+    expect(api.sentAll('/health')).toHaveLength(1);
+  });
+
   it('back from a sheet keeps the day, and reads with force only when asked', async () => {
     signIn();
     api.on('GET', '/health', (request) => Reply.ok(dayJSON(request.query.date ?? TODAY)));
