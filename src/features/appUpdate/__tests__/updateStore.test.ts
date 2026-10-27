@@ -109,6 +109,39 @@ it('a block needs a fresh answer: a failed re-check lifts it; a soft prompt stay
   expect(useAppUpdate.getState().prompt).toEqual({ kind: 'available', latestVersion: '2.6.0' });
 });
 
+it('a block a failed re-check lifted is asked about again at the very next return (iOS 3.1.0 follow-up 1)', async () => {
+  api.on('GET', '/app-version', answer('2.6.0', null));
+  await checkForUpdateIfStale();
+  expect(useAppUpdate.getState().prompt).toEqual({ kind: 'required' });
+
+  // A moment offline on a return: the block lifts (fail open)...
+  api.reset();
+  api.on('GET', '/app-version', { kind: 'network-error' });
+  now += 60_000;
+  await checkForUpdateIfStale();
+  expect(useAppUpdate.getState().prompt).toEqual({ kind: 'none' });
+  expect(useAppUpdate.getState().checkedAt).toBeNull();
+
+  // ...and the next return, well inside half an hour, asks again and blocks.
+  api.reset();
+  api.on('GET', '/app-version', answer('2.6.0', null));
+  now += 60_000;
+  await checkForUpdateIfStale();
+  expect(checks()).toBe(1);
+  expect(useAppUpdate.getState().prompt).toEqual({ kind: 'required' });
+});
+
+it('a failed re-check under a soft prompt keeps the last answer and its clock', async () => {
+  api.on('GET', '/app-version', answer(null, '2.6.0'));
+  await checkForUpdate();
+  const answeredAt = useAppUpdate.getState().checkedAt;
+  api.reset();
+  api.on('GET', '/app-version', { kind: 'network-error' });
+  now += RECHECK_AFTER_MS;
+  await checkForUpdateIfStale();
+  expect(useAppUpdate.getState()).toMatchObject({ prompt: { kind: 'available', latestVersion: '2.6.0' }, checkedAt: answeredAt });
+});
+
 it('a build that cannot say its version is never blocked', async () => {
   setAppUpdateDepsForTests({ currentVersion: () => null, now: () => now });
   api.on('GET', '/app-version', answer('9.0.0', '9.0.0'));
