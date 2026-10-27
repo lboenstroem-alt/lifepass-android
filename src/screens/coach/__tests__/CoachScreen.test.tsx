@@ -1,8 +1,9 @@
 /**
  * The Coach tab on screen (iOS CoachView.swift): the empty state and its
  * chips' gating, the free tier's line and card, the locking input, the
- * drawer (its Saved presenting the Saved sheet), venue cards' "Book it" by slug, parked prompts consumed on every
- * appearance, and dictation (en-US, on the phone where it can, stopped when
+ * drawer (its Saved presenting the Saved sheet), venue cards' "Book it" by
+ * slug, a class answer's cards (Book, close and show again), parked prompts
+ * consumed on every appearance, and dictation (en-US, on the phone where it can, stopped when
  * the tab loses focus, never while locked).
  *
  * The four flows are COACH-2 to COACH-5's. The venue wizard (COACH-2) is the
@@ -29,6 +30,7 @@ import {
 } from '../../../features/coach/store/coachStore';
 import { claimCoachForMember } from '../../../features/coach/register';
 import { favouritesStore } from '../../../features/favourites';
+import { CARDS_EN, envelope, onDay } from '../../../features/coach/chat/__tests__/classCardFixtures';
 import { lookup, translatePlural } from '../../../i18n';
 import { runSignInHooks } from '../../../app/signOut';
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
@@ -50,7 +52,16 @@ jest.mock('../../../features/favourites', () => ({
   ...jest.requireActual('../../../features/favourites'),
   useFavourite: () => ({ isFavourite: false, loading: false, toggle: async () => undefined }),
 }));
+// A class card's Book is the day plan's own (tested with the class sheet in
+// src/features/classes/sheet/__tests__/coachLookup.test.ts); here only that
+// the card hands it its session.
+jest.mock('../../../features/coach/dayPlan/wizard', () => ({
+  ...jest.requireActual('../../../features/coach/dayPlan/wizard'),
+  bookPlanClass: jest.fn(async () => undefined),
+}));
 /* eslint-enable @typescript-eslint/no-require-imports */
+
+const wizard = jest.requireMock('../../../features/coach/dayPlan/wizard') as { bookPlanClass: jest.Mock };
 
 stubApiClientPerTest();
 
@@ -269,6 +280,31 @@ describe('the chat', () => {
     await fireEvent.press(screen.getByRole('button', { name: `${en('coach.venue.book_it')}, Sky Lagoon` }));
     await settle();
     expect(screen.getByText('VenueDetail {"slug":"sky-lagoon"}')).toBeOnTheScreen();
+  });
+
+  it('a class answer lists its classes under the reply: Book hands over the session, the list closes and comes back', async () => {
+    // The server's own recorded answer, moved a year ahead so its classes are upcoming.
+    api.on('POST', '/coach', Reply.json(200, envelope(onDay(CARDS_EN, '2099-10-13'))));
+    await renderCoach();
+    await fireEvent.changeText(screen.getByTestId('coach.input'), 'any classes in Akureyri?');
+    await fireEvent(screen.getByTestId('coach.input'), 'submitEditing');
+    await settle();
+    expect((api.sent('/coach', 'POST').body as { cards?: string[] }).cards).toEqual(['classes']);
+    expect(screen.getByText('Here are classes in Akureyri today. Tap one to book.')).toBeOnTheScreen();
+    expect(screen.getByTestId('coach.classes')).toBeOnTheScreen();
+
+    await fireEvent.press(screen.getByTestId('coach.classes.row.cls_292c2799eb.book'));
+    await settle();
+    expect(wizard.bookPlanClass).toHaveBeenCalledTimes(1);
+    expect(wizard.bookPlanClass.mock.calls[0]![0]).toMatchObject({ id: 'cls_292c2799eb', booking: { eventId: 2_102_243_144 } });
+    // A full class offers no Book.
+    expect(screen.queryByTestId('coach.classes.row.cls_be41a59600.book')).toBeNull();
+
+    await fireEvent.press(screen.getByRole('button', { name: en('coach.classes.close') }));
+    expect(screen.queryByTestId('coach.classes')).toBeNull();
+    expect(useCoachStore.getState().messages.at(-1)!.classCardsHidden).toBe(true);
+    await fireEvent.press(screen.getByRole('button', { name: lookup('coach.classes.show', 'en').replace('{count}', '4') }));
+    expect(screen.getByTestId('coach.classes')).toBeOnTheScreen();
   });
 
   it('a prompt parked by Home is sent on the next appearance, and one parked while on screen too', async () => {

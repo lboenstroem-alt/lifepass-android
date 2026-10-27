@@ -21,6 +21,12 @@
  *
  * Times are parsed here from their ISO strings, with or without fractional
  * seconds (`parseIsoDate`).
+ *
+ * THE CHAT'S CLASS CARDS (API 0.36.0) are the same `CoachPlanClass` as a
+ * plan's class step, with the card's own extras (status, spots left, the
+ * price line, the "from" price), read card by card (`decodeClassCards`).
+ * A saved chat keeps them in the server's own shape (`encodePlanClass`), so
+ * the same fail-soft decoder reads them back.
  */
 import { decodeCoachFreeMessages, type CoachFreeMessages } from '../../../api';
 import { parseIsoDate } from '../../../api/wire';
@@ -186,7 +192,8 @@ function decodeVenueCard(raw: unknown): CoachPlanVenue {
 /**
  * The class feed's booking handle (iOS `CoachClassBooking`): a kind this
  * build does not know, an activity id that is not a UUID, or an Abler class
- * without its event is no handle at all.
+ * without its event is no handle at all. A slot keeps its own start and end
+ * only as a pair, the end after the start.
  */
 export function decodeClassBooking(raw: unknown): CoachClassBooking | null {
   if (!isObject(raw)) return null;
@@ -196,10 +203,20 @@ export function decodeClassBooking(raw: unknown): CoachClassBooking | null {
   if (typeof activityId !== 'string' || !UUID_TEXT.test(activityId)) return null;
   const eventId = wholeNumber(raw.eventId);
   if (kind === 'class' && eventId === null) return null;
-  return { kind, activityId, eventId };
+  let slotStartsAt: Date | null = null;
+  let slotEndsAt: Date | null = null;
+  if (kind === 'slot') {
+    const starts = optionalDate(raw, 'startsAt');
+    const ends = optionalDate(raw, 'endsAt');
+    if (starts && ends && ends.getTime() > starts.getTime()) {
+      slotStartsAt = starts;
+      slotEndsAt = ends;
+    }
+  }
+  return { kind, activityId, eventId, slotStartsAt, slotEndsAt };
 }
 
-/** A class step's card (iOS `CoachPlanClass.init(from:)`). */
+/** A class step's card, or a chat class card (iOS `CoachPlanClass.init(from:)`). */
 export function decodePlanClass(raw: unknown): CoachPlanClass {
   if (!isObject(raw)) throw new Unusable('class');
   let id: string;
@@ -216,15 +233,84 @@ export function decodePlanClass(raw: unknown): CoachPlanClass {
   if (!startsAt) throw new Unusable('startsAt');
   const ends = optionalDate(raw, 'endsAt');
   const endsAt = ends && ends.getTime() > startsAt.getTime() ? ends : null;
+  const venueSlug = requiredString(raw, 'venueSlug');
+  const venueName = requiredString(raw, 'venueName');
+  // The chat card's extras each fail soft on their own: a value this build
+  // cannot read is no value, never a lost card.
+  const spots = wholeNumber(raw.spotsLeft);
+  const surcharge = wholeNumber(raw.surchargeFromIsk);
   return {
     id,
     title,
     startsAt,
     endsAt,
-    venueSlug: requiredString(raw, 'venueSlug'),
-    venueName: requiredString(raw, 'venueName'),
+    venueSlug,
+    venueName,
     booking: decodeClassBooking(raw.booking),
+    status: optionalString(raw, 'status'),
+    spotsLeft: spots === null ? null : Math.max(spots, 0),
+    priceLabel: optionalString(raw, 'priceLabel'),
+    surchargeFromIsk: surcharge !== null && surcharge > 0 ? surcharge : null,
   };
+}
+
+/** The most class cards a reply shows; the server sends at most 6 (iOS `CoachResponse.maxClassCards`). */
+export const MAX_CLASS_CARDS = 6;
+
+/**
+ * A reply's `classes` (iOS `CoachResponse.classes`), FAIL SOFT, card by card:
+ * a card this build cannot read is dropped, a list that is not a list is no
+ * cards, a class sent twice is shown once, and six at most. Empty from an
+ * older server.
+ */
+export function decodeClassCards(value: unknown): CoachPlanClass[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const cards: CoachPlanClass[] = [];
+  for (const entry of value) {
+    if (entry === null) continue;
+    const card = lossy(() => decodePlanClass(entry));
+    if (!card || seen.has(card.id)) continue;
+    seen.add(card.id);
+    cards.push(card);
+    if (cards.length === MAX_CLASS_CARDS) break;
+  }
+  return cards;
+}
+
+/** A date as the server writes one ("2026-10-13T12:10:00.000Z"), which `parseIsoDate` reads back to the same instant. */
+function wireDate(date: Date): string {
+  return date.toISOString();
+}
+
+/** A booking handle in the server's shape (iOS `CoachClassBooking.encode(to:)`). */
+function encodeClassBooking(booking: CoachClassBooking): Json {
+  const json: Json = { kind: booking.kind, activityId: booking.activityId.toLowerCase() };
+  if (booking.eventId !== null) json.eventId = booking.eventId;
+  if (booking.slotStartsAt) json.startsAt = wireDate(booking.slotStartsAt);
+  if (booking.slotEndsAt) json.endsAt = wireDate(booking.slotEndsAt);
+  return json;
+}
+
+/**
+ * A class card in the server's own shape (iOS `CoachPlanClass.encode(to:)`),
+ * for a saved chat: `decodePlanClass` reads it back to the same card. What is
+ * absent is left out. Nothing here is the member's own: the cards are the
+ * generic timetable rows.
+ */
+export function encodePlanClass(session: CoachPlanClass): Json {
+  const json: Json = { id: session.id };
+  if (session.title !== null) json.title = session.title;
+  json.startsAt = wireDate(session.startsAt);
+  if (session.endsAt) json.endsAt = wireDate(session.endsAt);
+  json.venueSlug = session.venueSlug;
+  json.venueName = session.venueName;
+  if (session.booking) json.booking = encodeClassBooking(session.booking);
+  if (session.status != null) json.status = session.status;
+  if (session.spotsLeft != null) json.spotsLeft = session.spotsLeft;
+  if (session.priceLabel != null) json.priceLabel = session.priceLabel;
+  if (session.surchargeFromIsk != null) json.surchargeFromIsk = session.surchargeFromIsk;
+  return json;
 }
 
 function decodeSightCard(raw: unknown): CoachPlanSight {

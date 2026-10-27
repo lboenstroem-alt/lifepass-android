@@ -15,14 +15,16 @@
 // or can't be booked says so and offers "See other times" (the full flow on
 // that day). `ClassSheetHost` is mounted once by F4's tabs shell.
 //
-// THE COACH. A plan's class step books through `bookCoachClass(session,
-// { navigation })` (../coachLookup.ts, re-exported here because another
-// feature reaches this one only through an index): the plan's own handle,
-// else the same class found in the feed, else the venue's page.
+// THE COACH. A plan's class step and a chat class card book through
+// `bookCoachClass(session, { navigation })` (../coachLookup.ts, re-exported
+// here because another feature reaches this one only through an index): the
+// plan's own handle, else the same class found in the feed, else the venue's
+// page.
 export { default as ClassSheetHost } from './ClassSheetHost';
 export { openClassSheet, type ClassSheetOccurrence, type OpenClassSheetOptions } from './open';
 export {
   bookCoachClass,
+  coachCardSnapshot,
   coachClassOccurrence,
   COACH_CLASS_LOOKUP_PAGES,
   COACH_CLASS_START_TOLERANCE_MS,
@@ -31,5 +33,6 @@ export {
   type BookCoachClassOptions,
   type CoachClassBooking,
   type CoachClassLookupDeps,
+  type CoachClassStatus,
   type CoachPlanClass,
 } from '../coachLookup';

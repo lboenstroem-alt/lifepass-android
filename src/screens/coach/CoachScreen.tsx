@@ -8,7 +8,8 @@
 //   `.sheet`), kept mounted with this screen so it can open its page after it
 //   has gone and come back after a venue
 //   before the member says anything: the heading and the chips;
-//   after: the chat (bubbles, question chips, venue cards, the flows' cards)
+//   after: the chat (bubbles, question chips, venue cards, class cards, the
+//   flows' cards)
 //   the free tier's count line or membership card
 //   the input: 1 to 5 lines, Send on the keyboard, the mic while empty, the
 //   send arrow while not; locked (55%, its own placeholder) while an
@@ -49,6 +50,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { isLiveProgramStatus } from '../../api/profile';
 import { LPText, Wordmark } from '../../components/ui';
+import { bookPlanClass } from '../../features/coach/dayPlan/wizard';
 import { inputPromptKey } from '../../features/coach/freeTier/freeTier';
 import FreeTierStrip from '../../features/coach/freeTier/FreeTierStrip';
 import type { CoachRoute } from '../../features/coach/store/host';
@@ -72,6 +74,7 @@ import { TAB_BAR_HEIGHT } from '../../navigation/CustomTabBar';
 import type { Venue } from '../../types/venue';
 import { CategoryPrompt } from './CategoryStrip';
 import ChatDrawer from './ChatDrawer';
+import ClassCardsMessage from './ClassCardsMessage';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
 import MicButton from './MicButton';
 import QuestionBubbleMessage from './QuestionBubbleMessage';
@@ -474,6 +477,19 @@ function MessageContent({ message, busy, onBook }: Omit<MessageRowProps, 'onOffs
   }
   if (message.venues && message.venues.length > 0) {
     return <VenueCarouselMessage intro={message.text} venues={message.venues} onBook={onBook} />;
+  }
+  if (message.classCards && message.classCards.length > 0) {
+    // The chat's class cards (API 0.36.0): Book opens the same class sheet
+    // as a day plan's class and a Classes row (iOS CoachView `bookClass`).
+    return (
+      <ClassCardsMessage
+        intro={message.text}
+        classes={message.classCards}
+        hidden={!!message.classCardsHidden}
+        onSetHidden={(hidden) => useCoachStore.getState().setClassCardsHidden(hidden, message.id)}
+        onBook={bookPlanClass}
+      />
+    );
   }
   if (message.options && message.options.length > 0) {
     return (

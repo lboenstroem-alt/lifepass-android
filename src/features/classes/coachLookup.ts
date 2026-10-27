@@ -21,34 +21,61 @@
  * class for whoever signs in next (iOS tears the Coach view, and its sheet,
  * down at sign-out).
  *
- * A Coach slot handle carries no end. The sheet's re-check supplies it, and
- * if that fails the session is "unresolved" with Try again: a slot is never
+ * A Coach slot is booked by its handle's own start and end when the server
+ * sent them (what the create call sends, as for a Classes row), else by the
+ * class's times. With no end at all the sheet's re-check supplies it, and if
+ * that fails the session is "unresolved" with Try again: a slot is never
  * booked blind.
  *
+ * A chat class card (API 0.36.0) also carries its own verdict (open, full,
+ * opens later, spots left) and the feed's "from" price. Both ride into the
+ * sheet, so a card that said Full or "opens later" is never offered Confirm
+ * when the sheet's re-check cannot answer (`coachCardSnapshot`).
+ *
  * COACH-3 decodes the plan (its lossy plan decoder) and hands each class step
- * here as a `CoachPlanClass`.
+ * here as a `CoachPlanClass`; the chat's class cards are decoded the same way.
  */
 import { fetchClassFeedPage, type ClassFeedFetcher, type ClassFeedItem } from '../../api/classFeed';
 import { VenueTimeFormat } from '../../i18n';
 import { openSharedRoute, type SharedRouteNavigation } from '../../navigation/sharedSheet';
-import { PROVIDER_ABLER, PROVIDER_INTERNAL, toOccurrence, type ClassOccurrence } from './model/occurrence';
+import {
+  PROVIDER_ABLER,
+  PROVIDER_INTERNAL,
+  toOccurrence,
+  type ClassOccurrence,
+  type ClassOccurrenceSnapshot,
+} from './model/occurrence';
 import { openClassSheet, type OpenClassSheetOptions } from './sheet/open';
 import { knownVenueIdForSlug } from './sheet/pages';
 import { classSheetSignOuts } from './sheet/requests';
 
 /**
  * The class feed's booking handle on a plan's class: `{ kind: "class",
- * activityId, eventId }` or `{ kind: "slot", activityId }`. A kind this build
- * does not know, or an Abler class without its event, is no handle at all
- * (the plan's decoder drops it, as iOS `CoachClassBooking` does).
+ * activityId, eventId }` or `{ kind: "slot", activityId, startsAt, endsAt }`.
+ * A kind this build does not know, or an Abler class without its event, is no
+ * handle at all (the plan's decoder drops it, as iOS `CoachClassBooking` does).
  */
 export interface CoachClassBooking {
   readonly kind: 'class' | 'slot';
   readonly activityId: string;
   readonly eventId: number | null;
+  /**
+   * A slot's own times, which are what the create call sends (as for a
+   * Classes row). Null (or absent) when the server left them out or they are
+   * not a start before an end; the class's own times stand in.
+   */
+  readonly slotStartsAt?: Date | null;
+  readonly slotEndsAt?: Date | null;
 }
 
-/** A class step in a Coach plan (iOS `CoachPlanClass`). */
+/**
+ * A chat class card's booking state on the wire (API 0.36.0), from the same
+ * verdict the booking flow uses: `open`, `full`, `opens_later`, or a state a
+ * later server added, which is never bookable from the card.
+ */
+export type CoachClassStatus = string;
+
+/** A class step in a Coach plan, or a class card under a chat reply (iOS `CoachPlanClass`). */
 export interface CoachPlanClass {
   readonly id: string;
   /** Null when the venue gave the class no name. */
@@ -60,6 +87,68 @@ export interface CoachPlanClass {
   readonly venueName: string;
   /** The class feed's booking handle, when the server included it. */
   readonly booking: CoachClassBooking | null;
+
+  // Chat cards only (API 0.36.0), all generic, never the member's own. A day
+  // plan's class carries none of them (absent or null).
+
+  /** Whether booking is open now. Null when the server sent none. */
+  readonly status?: CoachClassStatus | null;
+  /** Spots left (never below 0); null when the class has no limit or none is known. */
+  readonly spotsLeft?: number | null;
+  /**
+   * Already worded by the server in the reply's language ("Included in your
+   * plan", "From 4,500 ISK"). The booking sheet shows the exact charge.
+   */
+  readonly priceLabel?: string | null;
+  /** The class feed's public "from" price (above 0), as `GET /classes` ships it. */
+  readonly surchargeFromIsk?: number | null;
+}
+
+/**
+ * A chat card's own verdict, so the sheet starts from it and keeps it if the
+ * one-day re-check can't answer (offline, a 5xx): a card that said Full or
+ * "opens later" is then not offered Confirm (iOS `cardSnapshot`). Null when
+ * the card carried neither a status nor a spot count, which is every day
+ * plan's class, so that path seeds exactly as before. The re-check replaces
+ * it, and the create call stays the real gate.
+ */
+export function coachCardSnapshot(
+  session: Pick<CoachPlanClass, 'status' | 'spotsLeft'>,
+): ClassOccurrenceSnapshot | null {
+  const status = session.status ?? null;
+  const spotsLeft = session.spotsLeft ?? null;
+  if (status === null && spotsLeft === null) return null;
+  let canBook: boolean | null;
+  let canBookReason: string | null = null;
+  switch (status) {
+    case null:
+      canBook = null;
+      break;
+    case 'open':
+      canBook = true;
+      break;
+    case 'full':
+      canBook = false;
+      canBookReason = 'class_full';
+      break;
+    case 'opens_later':
+      // The sheet's own "not open yet" wording.
+      canBook = false;
+      canBookReason = 'event_not_open';
+      break;
+    default:
+      canBook = false;
+  }
+  return {
+    canBook,
+    canBookReason,
+    full: status === 'full',
+    // Spots left as a count against a limit of the same size, which is how
+    // the sheet and the slot seed read "N left".
+    attendanceCurrent: spotsLeft === null ? null : 0,
+    attendanceLimit: spotsLeft,
+    registrationOpensAt: null,
+  };
 }
 
 /** The longest a feed row's start may differ from the plan's and still be that class. */
@@ -81,6 +170,8 @@ export function coachClassOccurrence(
   if (!booking) return null;
   let occurrenceActivity: ClassOccurrence['activity'];
   let handle: ClassOccurrence['handle'];
+  let startsAt = session.startsAt;
+  let endsAt = session.endsAt && session.endsAt.getTime() > session.startsAt.getTime() ? session.endsAt : null;
   if (booking.kind === 'class') {
     if (booking.eventId == null) return null;
     // Labelled the way the Classes tab labels an Abler row: by the venue,
@@ -90,21 +181,31 @@ export function coachClassOccurrence(
   } else {
     occurrenceActivity = { id: booking.activityId, name: session.title ?? session.venueName, provider: PROVIDER_INTERNAL };
     handle = { kind: 'slot' };
+    // The slot handle's own times are what the create call sends, exactly
+    // as a Classes row books it.
+    const slotStart = booking.slotStartsAt ?? null;
+    const slotEnd = booking.slotEndsAt ?? null;
+    if (slotStart && slotEnd && slotEnd.getTime() > slotStart.getTime()) {
+      startsAt = slotStart;
+      endsAt = slotEnd;
+    }
   }
-  const endsAt = session.endsAt && session.endsAt.getTime() > session.startsAt.getTime() ? session.endsAt : null;
+  const surcharge = session.surchargeFromIsk ?? null;
   return {
-    id: `coach-${session.id}-${Math.trunc(session.startsAt.getTime() / 1000)}`,
+    id: `coach-${session.id}-${Math.trunc(startsAt.getTime() / 1000)}`,
     activity: occurrenceActivity,
     venueId: venueIdForSlug(session.venueSlug),
     venueSlug: session.venueSlug,
     handle,
-    startsAt: session.startsAt,
+    startsAt,
     endsAt,
     className: session.title,
     venueName: session.venueName,
     instructor: null,
-    surchargeFromIsk: null,
-    snapshot: null,
+    // A chat card carries the feed's "from" price; a day plan's class does
+    // not. The sheet uses it only while it has no disclosure.
+    surchargeFromIsk: surcharge !== null && surcharge > 0 ? surcharge : null,
+    snapshot: coachCardSnapshot(session),
   };
 }
 

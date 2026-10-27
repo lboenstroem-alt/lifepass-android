@@ -11,6 +11,7 @@
  * a goal, an injured knee or a body detail must never come back to the model
  * three chats later inside "here is the conversation so far".
  */
+import type { CoachPlanClass } from '../../classes/sheet';
 import type { CoachFlowId } from '../flows/types';
 import type { QuestionOption } from '../../../types/coach';
 import type { Venue } from '../../../types/venue';
@@ -41,13 +42,25 @@ export interface CoachMessage {
   /** The category strip under the text ("What would you like to find nearby?"). */
   readonly showCategoryStrip?: boolean;
 
+  /**
+   * The classes a timetable answer is about (API 0.36.0), shown as a pop-up
+   * list under `text` with a Book button each (iOS `classCards`). A saved
+   * chat keeps them with the reply (unlike venue cards), so a reopened
+   * chat's "Tap one to book" still has something under it; a class that has
+   * started since shows Started, and Book re-checks the class as always.
+   */
+  readonly classCards?: readonly CoachPlanClass[];
+  /** The member closed the class list; a small button brings it back (not saved). */
+  readonly classCardsHidden?: boolean;
+
   /** A flow's own bubble: drawn by `flows[flow].renderers[kind]`. */
   readonly kind?: string;
   readonly payload?: unknown;
   /**
    * The chat lands on this message's TOP when it arrives, not its bottom: a
-   * day plan is taller than the screen, and the member reads down through it
-   * (iOS `last.plan == nil ? .bottom : .top`). Only the day plan sets it;
+   * day plan, or a reply with up to six class cards, is taller than the
+   * screen, and the member reads down through it from the reply and the
+   * earliest class (iOS `tall ? .top : .bottom`). Only those two set it;
    * every other bubble, a proposal or summary card included, scrolls to the
    * end, where its chips and buttons are.
    */

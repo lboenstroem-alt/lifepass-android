@@ -8,7 +8,10 @@
  * the local wipe), the store half of CoachFreeTierTests, and the package's
  * acceptance cases: a chat past 20 turns still answers, "Book it" opens by
  * slug (the resolved venue rows), the next account never sees the last
- * one's chat, and two Home prompts produce two sends.
+ * one's chat, and two Home prompts produce two sends. And the chat path of
+ * CoachClassCardsTests: what the chat sends, what it shows, and how it
+ * behaves against a server that has never heard of cards, including one
+ * that refuses the new key outright.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, Reply, type StubRequest } from '@test/server';
@@ -29,7 +32,9 @@ import {
   writeSavedSessions,
 } from '../../persistence/sessions';
 import { INITIAL_FREE_TIER } from '../../freeTier/freeTier';
+import { BAD_REQUEST, CARDS_EN, envelope, PLAIN_EN } from '../../chat/__tests__/classCardFixtures';
 import {
+  coachSendsClassCards,
   PARKED_SEND,
   pendingCoachSaves,
   resetCoachStoreForTests,
@@ -77,6 +82,7 @@ function answer(reply: string | ((request: StubRequest) => string), extra: Recor
 interface CoachBody {
   readonly locale: string;
   readonly messages: readonly { readonly role: string; readonly content: string }[];
+  readonly cards?: readonly string[];
 }
 
 function coachBodies(): CoachBody[] {
@@ -160,6 +166,8 @@ describe('a typed message no flow takes', () => {
           { role: 'assistant', content: en('coach.greeting') },
           { role: 'user', content: 'where can I swim tonight?' },
         ],
+        // A free chat asks for class cards (API 0.36.0).
+        cards: ['classes'],
       },
     ]);
     expect(texts()).toEqual([en('coach.greeting'), 'where can I swim tonight?', 'Laugardalslaug is open until 22.']);
@@ -247,6 +255,152 @@ describe('a typed message no flow takes', () => {
     const last = texts().at(-1)!;
     expect(last.startsWith(en('coach.ai_error').split('{error}')[0]!)).toBe(true);
     expect(coach().isTyping).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('class cards (CoachClassCardsTests, the chat path)', () => {
+  const ask = 'Are there any classes in Akureyri today?';
+  const cardsReply = 'Here are classes in Akureyri today. Tap one to book.';
+  const plainReply = 'Today in Akureyri:\n• 12:10-13:10 HOT FIT, Nordur Akureyri';
+  const badRequest = () => Reply.json(400, JSON.parse(BAD_REQUEST), { 'content-type': 'application/problem+json' });
+  const serve = (json: string) => api.on('POST', '/coach', Reply.json(200, envelope(json)));
+  const last = () => coach().messages.at(-1)!;
+
+  it('the chat asks for class cards and shows them under the reply (testTheChatAsksForClassCardsAndShowsThem)', async () => {
+    serve(CARDS_EN);
+    await coach().send(ask);
+    expect(coachBodies()).toHaveLength(1);
+    expect(Object.keys(coachBodies()[0]!).sort()).toEqual(['cards', 'locale', 'messages']);
+    expect(coachBodies()[0]!.cards).toEqual(['classes']);
+    expect(coachBodies()[0]!.messages.at(-1)!.content).toBe(ask);
+
+    expect(last().role).toBe('assistant');
+    // The short reply still shows.
+    expect(last().text).toBe(cardsReply);
+    expect(last().classCards?.map((session) => session.title)).toEqual(['HOT FIT', 'Spinning', 'Yoga Flow', 'Sauna ritual']);
+    expect(last().classCardsHidden).toBeFalsy();
+    // Up to six cards are taller than the screen: the chat lands on the reply's top.
+    expect(last().anchorTop).toBe(true);
+    expect(coachSendsClassCards()).toBe(true);
+  });
+
+  it("a follow-up carries the card turn's words (testAFollowUpCarriesTheCardTurnsWords)", async () => {
+    serve(CARDS_EN);
+    await coach().send(ask);
+    await coach().send('Which one would you recommend?');
+    expect(coachBodies().at(-1)!.messages.slice(-3).map((message) => message.content)).toEqual([
+      ask,
+      cardsReply,
+      'Which one would you recommend?',
+    ]);
+  });
+
+  it('an older server just answers in text (testAnOlderServerJustAnswersInText)', async () => {
+    serve(PLAIN_EN);
+    await coach().send(ask);
+    expect(coachBodies()).toHaveLength(1);
+    expect(last().text).toBe(plainReply);
+    expect(last().classCards).toBeUndefined();
+    expect(last().anchorTop).toBeUndefined();
+  });
+
+  it('a server that refuses the key gets the plain request once, then no more (testAServerThatRefusesTheKeyGetsThePlainRequestOnceThenNoMore)', async () => {
+    api.on('POST', '/coach', (request) =>
+      (request.body as CoachBody).cards !== undefined ? badRequest() : Reply.json(200, envelope(PLAIN_EN)),
+    );
+    await coach().send(ask);
+    expect(coachBodies()).toHaveLength(2);
+    expect(coachBodies()[0]!.cards).toEqual(['classes']);
+    expect(Object.keys(coachBodies()[1]!).sort()).toEqual(['locale', 'messages']);
+    expect(coachBodies()[1]!.messages).toEqual(coachBodies()[0]!.messages);
+    expect(last().text).toBe(plainReply);
+    expect(coachSendsClassCards()).toBe(false);
+
+    await coach().send('And tomorrow?');
+    // One request per turn from now on, New chat or not.
+    expect(coachBodies()).toHaveLength(3);
+    expect(coachBodies()[2]).not.toHaveProperty('cards');
+    coach().resetChat();
+    await coach().send('And Sunday?');
+    expect(coachBodies()).toHaveLength(4);
+    expect(coachBodies()[3]).not.toHaveProperty('cards');
+
+    // The next account asks again (iOS builds a new view model).
+    await runSignOutCleaners({ memberId: MEMBER_A });
+    expect(coachSendsClassCards()).toBe(true);
+  });
+
+  it('a 400 the plain request also gets is shown, and the key stays (testA400ThePlainRequestAlsoGetsIsShownAndTheKeyStays)', async () => {
+    api.on('POST', '/coach', badRequest());
+    await coach().send(ask);
+    // Retried once, never more.
+    expect(coachBodies()).toHaveLength(2);
+    expect(last().role).toBe('assistant');
+    expect(last().text).toBe('The coach request payload is invalid.');
+    expect(last().classCards).toBeUndefined();
+    // The key was not the problem.
+    expect(coachSendsClassCards()).toBe(true);
+  });
+
+  it.each([
+    [429, 'coach-daily-limit'],
+    [500, 'internal_error'],
+    [503, 'coach-busy'],
+  ])('a %s is never retried (testOtherRefusalsAreNeverRetried)', async (status, slug) => {
+    api.on('POST', '/coach', Reply.problem(status, slug));
+    await coach().send(ask);
+    expect(coachBodies()).toHaveLength(1);
+    expect(coachSendsClassCards()).toBe(true);
+    expect(last().classCards).toBeUndefined();
+  });
+
+  it('cards with no words still get a line above them (testCardsWithNoWordsStillGetALineAboveThem)', async () => {
+    serve(CARDS_EN.replace(cardsReply, ' '));
+    await coach().send(ask);
+    expect(last().text).toBe(en('coach.classes.intro'));
+    expect(last().classCards).toHaveLength(4);
+  });
+
+  it('the list closes and comes back, keeping its cards (testTheListClosesAndComesBack)', async () => {
+    serve(CARDS_EN);
+    await coach().send(ask);
+    const id = last().id;
+    coach().setClassCardsHidden(true, id);
+    expect(last().classCardsHidden).toBe(true);
+    expect(last().classCards).toHaveLength(4);
+    coach().setClassCardsHidden(false, id);
+    expect(last().classCardsHidden).toBe(false);
+    // A message without cards is left alone.
+    const before = coach().messages;
+    coach().setClassCardsHidden(true, GREETING_ID);
+    expect(coach().messages).toBe(before);
+  });
+
+  it('a chat reopened from the drawer keeps its class cards (testAChatReopenedFromTheDrawerKeepsItsClassCards)', async () => {
+    await claimCoachForMember(MEMBER_A, false);
+    serve(CARDS_EN);
+    await coach().send(ask);
+    const shown = last().classCards;
+    coach().resetChat();
+    await pendingCoachSaves();
+
+    // A later launch reads the saved chats from disk.
+    resetCoachStoreForTests();
+    await claimCoachForMember(MEMBER_A, false);
+    await coach().loadSessions();
+    const saved = coach().savedSessions[0]!;
+    coach().restoreSession(saved.id);
+    const restored = last();
+    expect(restored.text).toBe(cardsReply);
+    // Field for field, booking handles included.
+    expect(restored.classCards).toEqual(shown);
+    expect(restored.classCards?.map((session) => session.status)).toEqual(['open', 'full', 'opens_later', 'open']);
+    expect(restored.classCards?.[3]?.booking?.slotEndsAt).toEqual(new Date('2026-10-13T20:00:00Z'));
+    expect(coach().messages.find((message) => message.role === 'user')?.classCards).toBeUndefined();
+    // Restoring asks nothing.
+    expect(coachBodies()).toHaveLength(1);
   });
 });
 

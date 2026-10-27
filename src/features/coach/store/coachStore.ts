@@ -28,8 +28,10 @@
  * - the send pipeline: the flows first (../flows/types.ts, in iOS order), and
  *   only words no flow took reach the model, and only while no allowance is
  *   spent;
- * - the chat call (`POST /coach`), its venue documents, its errors (429 is
- *   an allowance spent, 503 `coach-busy` a moment's wait);
+ * - the chat call (`POST /coach`), its venue documents, its class cards
+ *   (API 0.36.0: a class question answered with the classes, each with
+ *   Book), its errors (429 is an allowance spent, 503 `coach-busy` a
+ *   moment's wait);
  * - the free tier (../freeTier), the saved chats (../persistence), the
  *   health lane (`dropHealthMessages`) and the parked entries from other tabs.
  */
@@ -37,6 +39,7 @@ import { create } from 'zustand';
 
 import { errorMessage, isApiError, type ApiError, type CoachFreeMessages } from '../../../api';
 import type { ProfileCoachBlock } from '../../../api/profile';
+import type { CoachPlanClass } from '../../classes/sheet';
 import { currentLanguage, translate, type Lang, type Params } from '../../../i18n';
 import { useIntentStore, type CoachProgramEntry } from '../../../stores/intentStore';
 import { postCoachChat, type CoachApiMessage } from '../chat/coachApi';
@@ -188,6 +191,8 @@ export interface CoachActions {
   resumeSend(text: string): Promise<void>;
   /** A chip on a question bubble: back to the flow that asked it. */
   selectOption(messageId: string, value: string, label: string): Promise<void>;
+  /** Close or reopen a reply's class list (iOS `setClassCardsHidden`); the cards stay. */
+  setClassCardsHidden(hidden: boolean, messageId: string): void;
   /** iOS `abandonOpenQuestions`. */
   abandonOpenQuestions(): void;
 
@@ -274,6 +279,13 @@ let accountEpoch = 0;
  * its own send, or by a new chat / sign-out (whose chat no longer waits).
  */
 let activeSend: object | null = null;
+/**
+ * Whether the chat asks for class cards (iOS `sendsClassCards`). Turned off
+ * for the rest of the app session once a server has refused the `cards` key
+ * with a 400 that the plain request then got past; back on for the next
+ * account (iOS builds a new view model at sign-in).
+ */
+let sendsClassCards = true;
 /** Saves run one after another, in the order they were made. */
 let saveChain: Promise<void> = Promise.resolve();
 let sessionsLoading: Promise<void> | null = null;
@@ -446,11 +458,18 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
     });
   };
 
-  /** Appends the model's answer: a venue document as cards (or a text list), else the text. */
-  const appendAssistantReply = async (text: string, token: CoachBusyToken) => {
+  /**
+   * Appends the model's answer: a venue document as cards (or a text list),
+   * else the text with its class cards. Class cards ride on a prose reply
+   * only: the server never sends them with a venues document, and if one
+   * ever did the venues would win (iOS `appendAssistantReply`).
+   */
+  const appendAssistantReply = async (text: string, classes: readonly CoachPlanClass[], token: CoachBusyToken) => {
     const payload = parseVenuePayload(text);
     if (!payload) {
-      append({ role: 'assistant', text });
+      // A reply with up to six class cards can be taller than the screen:
+      // the chat lands on its top, so the reply and the earliest class show first.
+      append(classes.length > 0 ? { role: 'assistant', text, classCards: classes, anchorTop: true } : { role: 'assistant', text });
       return;
     }
     const cards = await resolveVenueCards(payload);
@@ -467,12 +486,18 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
   const callAI = async () => {
     const token = busy();
     try {
-      const reply = await postCoachChat(language(), buildModelMessages(get().messages));
+      const reply = await postCoachChat(language(), buildModelMessages(get().messages), { cards: sendsClassCards });
+      // The server refused the new key and answered the plain request: stop
+      // asking for this account's session.
+      if (reply.cardsRefused && token.sameAccount()) sendsClassCards = false;
       // Counted even when a New chat came meanwhile (the allowance was
       // spent), but never into the next account's counts.
       get().recordFreeMessages(reply.freeMessages, token);
       if (!token.isCurrent()) return;
-      await appendAssistantReply(reply.reply.trim() ? reply.reply : tr('coach.ai_unavailable'), token);
+      // A reply that came with class cards but no words still needs a line
+      // above the list, not the "unavailable" apology.
+      const fallback = reply.classes.length > 0 ? tr('coach.classes.intro') : tr('coach.ai_unavailable');
+      await appendAssistantReply(reply.reply.trim() ? reply.reply : fallback, reply.classes, token);
     } catch (error) {
       if (isApiError(error)) {
         // 429: an allowance is spent (a member's 10 today, or a free
@@ -648,6 +673,15 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
       await COACH_FLOWS[message.flow].selectOption?.(messageId, value, label);
     },
 
+    setClassCardsHidden(hidden, messageId) {
+      const { messages } = get();
+      const index = messages.findIndex((message) => message.id === messageId);
+      if (index < 0 || !messages[index]!.classCards) return;
+      const next = [...messages];
+      next[index] = { ...messages[index]!, classCardsHidden: hidden };
+      set({ messages: next });
+    },
+
     abandonOpenQuestions,
 
     resetChat() {
@@ -746,6 +780,7 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
       storageEpoch += 1;
       accountEpoch += 1;
       activeSend = null;
+      sendsClassCards = true;
       sessionsLoading = null;
       for (const flow of Object.values(COACH_FLOWS)) {
         try {
@@ -830,9 +865,15 @@ export function resetCoachStoreForTests(): void {
   storageEpoch += 1;
   accountEpoch += 1;
   activeSend = null;
+  sendsClassCards = true;
   sessionsLoading = null;
   saveChain = Promise.resolve();
   useCoachStore.setState({ ...initialState() });
+}
+
+/** Whether the chat still asks for class cards this session (iOS `sendsClassCards`). */
+export function coachSendsClassCards(): boolean {
+  return sendsClassCards;
 }
 
 /** Lets a test wait for the saves in flight. */

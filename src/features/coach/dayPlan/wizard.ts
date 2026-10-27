@@ -461,10 +461,11 @@ const venueThroughCoach = {
 } as unknown as SharedRouteNavigation;
 
 /**
- * A class step's Book (iOS CoachView's `onBookClass`): the class sheet on
+ * A class step's Book (iOS CoachView's `bookClass`): the class sheet on
  * that exact session (the plan's own handle, else the same class found in
  * the feed), or, when nothing matches, the venue's page, whose timetable
- * books it (CLASS-2's `bookCoachClass`).
+ * books it (CLASS-2's `bookCoachClass`). A chat class card's Book is the
+ * same call (src/screens/coach/ClassCardsMessage.tsx).
  */
 export async function bookPlanClass(session: ClassSheet.CoachPlanClass): Promise<void> {
   try {
