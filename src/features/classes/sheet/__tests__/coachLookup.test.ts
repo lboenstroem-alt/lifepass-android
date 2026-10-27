@@ -8,14 +8,22 @@
  * testACoachSlotWithNoEndCannotBeBookedBlind; and CoachViewModel's
  * `classOccurrence(for:)` lookup: the title search first, then at most three
  * unfiltered pages of the class's Reykjavík day, else the venue's page).
+ *
+ * And the iOS 3.1.0 cases of a chat class card (CoachClassCardsTests "Book
+ * opens the existing class sheet on THAT session"): the card's own verdict
+ * and "from" price ride into the sheet, a slot is booked by its handle's
+ * own times, and a card that said Full or "opens later" is never offered
+ * Confirm when the sheet's re-check fails.
  */
-import { Reply } from '@test/server';
+import { api, Reply } from '@test/server';
 
 import { decodeClassFeedItem, type ClassFeedItem, type ClassFeedPage, type ClassFeedPageQuery } from '../../../../api/classFeed';
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { runSignOutCleaners } from '../../../../app/signOut';
+import { canConfirmOccurrence } from '../../../booking';
 import {
   bookCoachClass,
+  coachCardSnapshot,
   coachClassOccurrence,
   COACH_CLASS_LOOKUP_PAGES,
   feedOccurrenceMatching,
@@ -308,5 +316,167 @@ describe('a Coach slot with no end', () => {
     expect(session.store.getState().selectedSlot).toBeNull();
     await session.store.getState().confirmBooking();
     expect(session.store.getState().isBooking).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A chat class card (API 0.36.0)
+
+/**
+ * The four cards of the server's own recorded answer (iOS
+ * `CoachClassCardFixtures.cardsEN`, as the Coach decodes them), on `day`.
+ */
+function chatCards(day = '2026-10-13'): CoachPlanClass[] {
+  const at = (time: string) => new Date(`${day}T${time}Z`);
+  return [
+    {
+      id: 'cls_292c2799eb',
+      title: 'HOT FIT',
+      startsAt: at('12:10:00'),
+      endsAt: at('13:10:00'),
+      venueSlug: 'nordur-akureyri',
+      venueName: 'Nordur Akureyri',
+      booking: { kind: 'class', activityId: '6b1f0c52-3a7e-4d19-8f2a-0c9d4e5b7a11', eventId: 2_102_243_144, slotStartsAt: null, slotEndsAt: null },
+      status: 'open',
+      spotsLeft: 18,
+      priceLabel: 'Included in your plan',
+      surchargeFromIsk: null,
+    },
+    {
+      id: 'cls_be41a59600',
+      title: 'Spinning',
+      startsAt: at('17:15:00'),
+      endsAt: at('18:00:00'),
+      venueSlug: 'world-class-skolastigur-akureyri-and-pool',
+      venueName: 'World Class Skólastígur Akureyri & Pool',
+      booking: { kind: 'class', activityId: '0e8a3d27-5c41-4b6f-9a12-7d3e8f1c2b44', eventId: 539_288_823, slotStartsAt: null, slotEndsAt: null },
+      status: 'full',
+      spotsLeft: 0,
+      priceLabel: 'Included in your plan',
+      surchargeFromIsk: null,
+    },
+    {
+      id: 'cls_094a45a28b',
+      title: 'Yoga Flow',
+      startsAt: at('18:00:00'),
+      endsAt: at('19:00:00'),
+      venueSlug: 'sjalfsraekt-heilsumidstod',
+      venueName: 'Sjálfsrækt heilsumiðstöð',
+      booking: { kind: 'class', activityId: 'a4c2e9f1-2b7d-4e3a-8c51-9f0d6b2a3e77', eventId: 743_812_291, slotStartsAt: null, slotEndsAt: null },
+      status: 'opens_later',
+      spotsLeft: 18,
+      priceLabel: 'Included in your plan',
+      surchargeFromIsk: null,
+    },
+    {
+      id: 'cls_3d7ee04649',
+      title: 'Sauna ritual',
+      startsAt: at('19:30:00'),
+      endsAt: at('20:00:00'),
+      venueSlug: 'forest-lagoon',
+      venueName: 'Forest Lagoon',
+      booking: { kind: 'slot', activityId: 'd9b7a1c3-6e2f-4a8d-b5c4-3e1f7a9d0c88', eventId: null, slotStartsAt: at('19:30:00'), slotEndsAt: at('20:00:00') },
+      status: 'open',
+      spotsLeft: 9,
+      priceLabel: 'From 4,500 ISK',
+      surchargeFromIsk: 4500,
+    },
+  ];
+}
+
+describe('a chat class card', () => {
+  it('an Abler card books its own event, its verdict seeding the sheet (testAnAblerCardBooksItsOwnEvent)', () => {
+    const session = chatCards()[0]!;
+    const occurrence = coachClassOccurrence(session)!;
+    expect(occurrence.handle).toEqual({ kind: 'ablerClass', eventId: 2_102_243_144 });
+    expect(occurrence.activity).toEqual({ id: '6b1f0c52-3a7e-4d19-8f2a-0c9d4e5b7a11', name: 'Nordur Akureyri', provider: 'abler' });
+    expect(occurrence.startsAt).toEqual(session.startsAt);
+    expect(occurrence.endsAt).toEqual(session.endsAt);
+    expect(occurrence.className).toBe('HOT FIT');
+    expect(occurrence.venueName).toBe('Nordur Akureyri');
+    expect(occurrence.surchargeFromIsk).toBeNull();
+    // The card's own verdict seeds the sheet; its re-check replaces it.
+    expect(occurrence.snapshot).toEqual({
+      canBook: true,
+      canBookReason: null,
+      full: false,
+      attendanceCurrent: 0,
+      attendanceLimit: 18,
+      registrationOpensAt: null,
+    });
+  });
+
+  it("each card's verdict rides into the sheet (testEachCardsVerdictRidesIntoTheSheet)", () => {
+    const [, full, later, slot] = chatCards();
+    expect(coachClassOccurrence(full!)!.snapshot).toEqual(
+      expect.objectContaining({ canBook: false, canBookReason: 'class_full', full: true, attendanceLimit: 0 }),
+    );
+    // The sheet's own "not open yet" wording.
+    expect(coachClassOccurrence(later!)!.snapshot).toEqual(
+      expect.objectContaining({ canBook: false, canBookReason: 'event_not_open', full: false }),
+    );
+    expect(coachClassOccurrence(slot!)!.snapshot).toEqual(expect.objectContaining({ canBook: true, attendanceLimit: 9 }));
+
+    // No status and no spots (an older server, or a day plan's class): no
+    // verdict, so the sheet seeds exactly as it always has.
+    expect(coachCardSnapshot({ status: null, spotsLeft: null })).toBeNull();
+    expect(coachCardSnapshot({})).toBeNull();
+    // Spots alone say nothing about whether it can be booked.
+    expect(coachCardSnapshot({ spotsLeft: 4 })).toEqual(expect.objectContaining({ canBook: null, attendanceLimit: 4 }));
+    // A state this build does not know is not bookable.
+    expect(coachCardSnapshot({ status: 'waitlist' })?.canBook).toBe(false);
+  });
+
+  it("a slot card books the slot's own times with its from price (testASlotCardBooksTheSlotsOwnTimesWithItsFromPrice)", () => {
+    const occurrence = coachClassOccurrence(chatCards()[3]!)!;
+    expect(occurrence.handle).toEqual({ kind: 'slot' });
+    expect(occurrence.activity).toEqual({ id: 'd9b7a1c3-6e2f-4a8d-b5c4-3e1f7a9d0c88', name: 'Sauna ritual', provider: 'internal' });
+    expect(occurrence.startsAt).toEqual(new Date('2026-10-13T19:30:00Z'));
+    expect(occurrence.endsAt).toEqual(new Date('2026-10-13T20:00:00Z'));
+    expect(occurrence.surchargeFromIsk).toBe(4500);
+  });
+
+  it("the slot handle's own times win over the class's, and name the session", () => {
+    const handle = { kind: 'slot' as const, activityId: ACTIVITY_ID, eventId: null, slotStartsAt: plus(START, 600), slotEndsAt: plus(START, 3000) };
+    // A plan class with no end of its own: the handle's end is what books it.
+    const occurrence = coachClassOccurrence(coachClass('Spin', handle, null))!;
+    expect(occurrence.startsAt).toEqual(plus(START, 600));
+    expect(occurrence.endsAt).toEqual(plus(START, 3000));
+    expect(occurrence.id).toBe(`coach-plan-class-1-${Math.trunc(plus(START, 600).getTime() / 1000)}`);
+    // A pair that is not a start before an end is no pair: the class's times stand.
+    const backwards = coachClassOccurrence(coachClass('Spin', { ...handle, slotEndsAt: plus(START, 600) }))!;
+    expect(backwards.startsAt).toEqual(START);
+    expect(backwards.endsAt).toEqual(plus(START, 3600));
+    // A day plan's class carries no "from" price.
+    expect(occurrence.surchargeFromIsk).toBeNull();
+    expect(occurrence.snapshot).toBeNull();
+  });
+
+  it("a card's verdict stands when the sheet's re-check fails (testACardsVerdictStandsWhenTheSheetsRecheckFails)", async () => {
+    const classes = chatCards('2030-03-14');
+    respond(() => Reply.problem(500, 'internal_error'));
+
+    for (const [index, reason] of [
+      [1, 'class_full'],
+      [2, 'event_not_open'],
+    ] as const) {
+      const session = testSession();
+      await session.prepare(coachClassOccurrence(classes[index]!)!);
+      const s = session.store.getState();
+      expect([index, s.occurrenceStatus]).toEqual([index, 'notBookable']);
+      expect(canConfirmOccurrence(s)).toBe(false);
+      expect(s.selectedClass?.canBookReason).toBe(reason);
+      await session.store.getState().confirmBooking();
+    }
+
+    const slot = testSession();
+    await slot.prepare(coachClassOccurrence(classes[3]!)!);
+    // Open: best effort, the create call decides.
+    expect(slot.store.getState().occurrenceStatus).toBe('ready');
+    expect(slot.store.getState().selectedSlot?.remainingCapacity).toBe(9);
+    expect(slot.store.getState().selectedSlot?.endTime).toEqual(new Date('2030-03-14T20:00:00Z'));
+
+    // Nothing was booked.
+    expect(api.requests.filter((request) => request.method === 'POST' && request.path.endsWith('/bookings'))).toEqual([]);
   });
 });

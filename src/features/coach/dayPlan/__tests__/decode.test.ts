@@ -158,7 +158,7 @@ describe('the plan', () => {
 });
 
 describe('the class card', () => {
-  it('reads the booking handle', () => {
+  it('reads the booking handle; a day plan\'s class carries none of the chat card extras', () => {
     const session = decodePlanClass(classStep('main').class);
     expect(session).toEqual({
       id: 'cls_1',
@@ -167,7 +167,11 @@ describe('the class card', () => {
       endsAt: new Date('2026-10-22T19:00:00Z'),
       venueSlug: 'hress',
       venueName: 'Hress',
-      booking: { kind: 'class', activityId: ACTIVITY, eventId: 4242 },
+      booking: { kind: 'class', activityId: ACTIVITY, eventId: 4242, slotStartsAt: null, slotEndsAt: null },
+      status: null,
+      spotsLeft: null,
+      priceLabel: null,
+      surchargeFromIsk: null,
     });
   });
 
@@ -190,10 +194,38 @@ describe('the class card', () => {
     expect(decodeClassBooking({ kind: 'waitlist', activityId: ACTIVITY })).toBeNull();
     expect(decodeClassBooking({ kind: 'class', activityId: ACTIVITY })).toBeNull();
     expect(decodeClassBooking({ kind: 'class', activityId: 'not-a-uuid', eventId: 1 })).toBeNull();
-    expect(decodeClassBooking({ kind: 'slot', activityId: ACTIVITY })).toEqual({ kind: 'slot', activityId: ACTIVITY, eventId: null });
+    expect(decodeClassBooking({ kind: 'slot', activityId: ACTIVITY })).toEqual({
+      kind: 'slot',
+      activityId: ACTIVITY,
+      eventId: null,
+      slotStartsAt: null,
+      slotEndsAt: null,
+    });
     expect(decodeClassBooking(null)).toBeNull();
     // The class itself still decodes, looked up in the feed instead.
     expect(decodePlanClass({ ...classStep('main').class, booking: { kind: 'class', activityId: ACTIVITY } }).booking).toBeNull();
+  });
+
+  it("a slot keeps its own times only as a pair, the end after the start (iOS 3.1.0 CoachClassBooking)", () => {
+    const slot = { kind: 'slot', activityId: ACTIVITY, startsAt: '2026-10-13T19:30:00.000Z', endsAt: '2026-10-13T20:00:00Z' };
+    expect(decodeClassBooking(slot)).toEqual({
+      kind: 'slot',
+      activityId: ACTIVITY,
+      eventId: null,
+      slotStartsAt: new Date('2026-10-13T19:30:00Z'),
+      slotEndsAt: new Date('2026-10-13T20:00:00Z'),
+    });
+    expect(decodeClassBooking({ ...slot, endsAt: undefined })?.slotStartsAt).toBeNull();
+    expect(decodeClassBooking({ ...slot, endsAt: '2026-10-13T19:30:00Z' })?.slotEndsAt).toBeNull();
+    expect(decodeClassBooking({ ...slot, startsAt: 'soon' })?.slotStartsAt).toBeNull();
+    // An Abler class is booked by its event, never by times.
+    expect(decodeClassBooking({ ...slot, kind: 'class', eventId: 7 })).toEqual({
+      kind: 'class',
+      activityId: ACTIVITY,
+      eventId: 7,
+      slotStartsAt: null,
+      slotEndsAt: null,
+    });
   });
 });
 
