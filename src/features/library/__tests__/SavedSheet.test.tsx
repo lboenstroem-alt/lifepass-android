@@ -146,10 +146,15 @@ describe('the Saved sheet: hikes and sights (API 0.45.0)', () => {
     expect(screen.queryByTestId('saved.sheet')).toBeNull();
   });
 
-  it('with none saved: the empty state', async () => {
+  it('with none saved: the empty state, whose button closes the sheet and opens the map with the sights showing', async () => {
     await renderSheet();
     expect(screen.getByTestId('saved.sights.empty')).toBeOnTheScreen();
     expect(screen.getByText('No saved hikes or sights yet')).toBeOnTheScreen();
+    await fireEvent.press(screen.getByTestId('saved.sights.find'));
+    await settle();
+    expect(screen.queryByTestId('saved.sheet')).toBeNull();
+    expect(useIntentStore.getState().pendingTab).toBe('Explore');
+    expect(useIntentStore.getState().takeExploreSights()).toBe(true);
   });
 
   it('back from a place brings the sheet up again, as from a venue', async () => {

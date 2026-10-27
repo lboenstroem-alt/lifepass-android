@@ -87,6 +87,14 @@ export default function ProfileScreen({ navigation, route }: SharedRouteProps<'P
     useIntentStore.getState().requestTab('Explore');
   }, [navigation]);
 
+  /** "Find hikes and sights": the same way out, to Explore's map with the sights showing. */
+  const leaveForSights = useCallback(() => {
+    navigation.goBack();
+    const intents = useIntentStore.getState();
+    intents.requestExploreSights();
+    intents.requestTab('Explore');
+  }, [navigation]);
+
   const openVenue = useCallback((slug: string) => openSharedRoute(navigation, 'VenueDetail', { slug }), [navigation]);
   const openSight = useCallback((slug: string) => openSharedRoute(navigation, 'AttractionDetail', { slug }), [navigation]);
 
@@ -138,6 +146,7 @@ export default function ProfileScreen({ navigation, route }: SharedRouteProps<'P
           saved={saved}
           onOpenVenue={openVenue}
           onOpenSight={openSight}
+          onFindSights={leaveForSights}
           onFindVenues={leaveForExplore}
           bottomSpace={bottomSpace}
         />

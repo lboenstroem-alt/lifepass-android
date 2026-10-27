@@ -403,7 +403,9 @@ describe('the rating numbers (API 0.46.0)', () => {
     expect(block.getByText('4,5')).toBeOnTheScreen();
     expect(block.getByText('Hreinlæti')).toBeOnTheScreen();
     expect(block.getByText('4,8')).toBeOnTheScreen();
-    expect(block.getByTestId('venue.reviews.subratings.equipment').props.accessibilityLabel).toBe('Tækjabúnaður, 4,5 af 5 stjörnum');
+    expect(block.getByTestId('venue.reviews.subratings.equipment').props.accessibilityLabel).toBe(
+      'Tækjabúnaður: 4,5 af 5, út frá 9 einkunnum',
+    );
   });
 
   it('under 3 ratings the server sends no sub-score, and the section shows none', async () => {

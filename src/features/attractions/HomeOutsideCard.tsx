@@ -32,8 +32,9 @@
  *
  * Where a tap goes is Home's: `onOpenSight` opens the sight's card,
  * `onSeeAllOnMap` parks the sights intent and switches to Explore. Each pick
- * also carries its heart (./SightHeart.tsx, API 0.45.0), beside the row
- * rather than inside it, so TalkBack reaches "open" and "save" one by one.
+ * also carries its heart (./SightHeart.tsx, API 0.45.0) at its end, where the
+ * chevron was (as on iOS), beside the row rather than inside it, so TalkBack
+ * reaches "open" and "save" one by one.
  */
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEffect, useMemo } from 'react';
@@ -181,7 +182,6 @@ function PickRow({
             {distance}
           </LPText>
         ) : null}
-        <Ionicons name="chevron-forward" size={13} color={colors.paper3} />
       </Pressable>
       <SightHeart slug={pick.slug} name={name} testID={`home.outside.heart.${pick.slug}`} />
     </View>

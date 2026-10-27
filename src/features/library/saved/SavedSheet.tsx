@@ -239,7 +239,19 @@ export default function SavedSheet({ visible, onClose }: SavedSheetProps) {
           </View>
         ) : null}
 
-        <SavedSightsSection attractions={saved.attractions} onOpenSight={openSight} testID="saved.sights" />
+        <SavedSightsSection
+          attractions={saved.attractions}
+          loading={saved.favouritesLoading}
+          onOpenSight={openSight}
+          onFindSights={() =>
+            leaveThen(() => {
+              const intents = useIntentStore.getState();
+              intents.requestExploreSights();
+              intents.requestTab('Explore');
+            })
+          }
+          testID="saved.sights"
+        />
 
         <View style={styles.shelf} testID="saved.suggestions">
           <LinearGradient

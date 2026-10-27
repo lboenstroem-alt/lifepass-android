@@ -250,6 +250,17 @@ describe('the upcoming card', () => {
     expect(analytics).toContainEqual(['profile_opened', { entry: 'home_upcoming' }]);
   });
 
+  it('a class booking with a room shows it after the venue (API 0.44.0), on a second line if it needs one', async () => {
+    freshHome();
+    serve({
+      bookings: [{ ...bookingRow('b-class', new Date(Date.now() + 26 * 3600 * 1000).toISOString(), 'Hress'), room: 'Salur 3' }],
+    });
+    await renderHome();
+    const title = within(screen.getByTestId('home.upcoming')).getByTestId('home.upcoming.title');
+    expect(title).toHaveTextContent('Hress · Salur 3', { exact: true });
+    expect(title).toHaveProp('numberOfLines', 2);
+  });
+
   it('with no booking, Explore asks for the Explore tab', async () => {
     freshHome();
     serve();

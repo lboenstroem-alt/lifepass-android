@@ -15,8 +15,8 @@
  *     then the score).
  *   - Each row: the sight's ring, its name (Icelandic in Icelandic, else the
  *     English exonym where there is one), "Waterfall · South Iceland · Top
- *     pick", a chevron, and beside the row the place's heart (API 0.45.0,
- *     ./SightHeart.tsx).
+ *     pick", and beside the row, where the chevron was (as on iOS), the
+ *     place's heart (API 0.45.0, ./SightHeart.tsx).
  *   - The rows scroll inside at most 30 % of the space below the search row
  *     (between 72 and 180 points): while a name is typed the keyboard takes
  *     half a small phone, and five full rows would leave the map a sliver.
@@ -33,7 +33,6 @@
  *     away for that query and, on the map, brings the sight into view with
  *     the layer on (`onOpenSight`'s `at`).
  */
-import { Ionicons } from '@expo/vector-icons';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type KeyboardEvent } from 'react-native';
 
@@ -207,7 +206,6 @@ const SightRow = memo(function SightRow({ sight, name, detail, divided, onOpen }
             {detail}
           </LPText>
         </View>
-        <Ionicons name="chevron-forward" size={12} color={colors.paper3} {...hiddenFromAccessibility} />
       </Pressable>
       <SightHeart slug={sight.slug} name={name} testID={`explore.sights.heart.${sight.slug}`} />
     </View>

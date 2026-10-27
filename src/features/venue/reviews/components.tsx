@@ -65,8 +65,10 @@ export function QuoteGlyph({ size }: { readonly size: number }) {
 /**
  * One review. `compact` is the venue page's card (iOS `reviewCardSmall`:
  * 11 pt stars, a 13 pt comment cut at four lines); otherwise the reviews
- * page's (`reviewCard`: 12 pt stars, the whole 14 pt comment). `onReport`
- * adds Android's "Report review" button (owner decision D5).
+ * page's (`reviewCard`: 12 pt stars, the whole 14 pt comment, and a visit
+ * rating's Equipment and Cleanliness stars when the member gave any, API
+ * 0.46.0, as iOS draws them). `onReport` adds Android's "Report review"
+ * button (owner decision D5).
  */
 export function ReviewCard({
   review,
@@ -117,6 +119,39 @@ export function ReviewCard({
           {review.comment}
         </LPText>
       ) : null}
+      {compact ? null : <ReviewSubStars review={review} />}
+    </View>
+  );
+}
+
+/** "Equipment ★ 4   Cleanliness ★ 5": a visit rating's sub-stars, each only when given. */
+function ReviewSubStars({ review }: { readonly review: Pick<VenueReview, 'id' | 'equipmentRating' | 'cleanlinessRating'> }) {
+  const { t } = useT();
+  const parts = [
+    review.equipmentRating !== null ? { key: 'equipment', label: t('venue.ratings.equipment'), value: review.equipmentRating } : null,
+    review.cleanlinessRating !== null ? { key: 'cleanliness', label: t('venue.ratings.cleanliness'), value: review.cleanlinessRating } : null,
+  ].filter((part): part is { key: string; label: string; value: number } => part !== null);
+  if (parts.length === 0) return null;
+  return (
+    <View style={styles.subStars} testID={`review-${review.id}-substars`}>
+      {parts.map((part) => (
+        <View
+          key={part.key}
+          style={styles.subStar}
+          accessible
+          accessibilityRole="text"
+          accessibilityLabel={t('venue.ratings.sub_value', { label: part.label, value: part.value })}
+          testID={`review-${review.id}-${part.key}`}
+        >
+          <LPText size={11} weight="medium" color={colors.paper3}>
+            {part.label}
+          </LPText>
+          <Ionicons name="star" size={9} color={colors.signal} {...hiddenFromAccessibility} />
+          <LPText size={11} weight="medium" color={colors.paper3}>
+            {String(part.value)}
+          </LPText>
+        </View>
+      ))}
     </View>
   );
 }
@@ -284,6 +319,8 @@ const styles = StyleSheet.create({
   cardCompact: {},
   cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   cardHeaderEnd: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
+  subStars: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 4 },
+  subStar: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   reportButton: { minWidth: 24, minHeight: 24, alignItems: 'center', justifyContent: 'center' },
   // iOS lineSpacing 2 and 3 over the face's own line height.
   commentCompact: { lineHeight: 19 },

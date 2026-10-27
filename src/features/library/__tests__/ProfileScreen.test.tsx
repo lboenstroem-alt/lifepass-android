@@ -434,16 +434,26 @@ describe('the Saved half: hikes and sights (API 0.45.0)', () => {
     await waitFor(() => expect(api.sent('/favourites', 'DELETE').query).toEqual({ attractionSlug: 'skogafoss' }));
   });
 
-  it('none saved: the empty state in its own words, in both languages', async () => {
+  it('none saved: "Find hikes and sights" leaves Profile, then opens Explore’s map with the sights showing', async () => {
+    await renderProfile('saved');
+    await fireEvent.press(screen.getByRole('button', { name: 'Find hikes and sights' }));
+    expect(currentRoute()).toBe('Start');
+    expect(useIntentStore.getState().pendingTab).toBe('Explore');
+    expect(useIntentStore.getState().takeExploreSights()).toBe(true);
+  });
+
+  it('none saved: the empty state in its own words', async () => {
     await renderProfile('saved');
     expect(within(screen.getByTestId('library.sights.empty')).getByText('No saved hikes or sights yet')).toBeOnTheScreen();
     expect(screen.getByText('Tap the heart on a hike, a waterfall or any other sight to keep it here.')).toBeOnTheScreen();
-    screen.unmount();
-    favouritesStore.getState().reset();
+  });
+
+  it('none saved, in Icelandic: "Útivist" and its empty state', async () => {
     setCurrentLanguage('is');
     await renderProfile('saved');
     expect(screen.getByText('ÚTIVIST')).toBeOnTheScreen();
     expect(screen.getByText('Ekkert vistað hér enn')).toBeOnTheScreen();
     expect(screen.getByText('Gönguleiðir og áhugaverðir staðir sem þú vistar með hjartanu birtast hér.')).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: 'Skoða gönguleiðir og áhugaverða staði' })).toBeOnTheScreen();
   });
 });

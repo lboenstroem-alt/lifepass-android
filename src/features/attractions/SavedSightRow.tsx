@@ -33,6 +33,8 @@ import AttractionRing from './AttractionRing';
 import SightImage from './detail/SightImage';
 import { creditLine, trailFacts } from './format';
 import { isHike, PLATE_PAPER } from './model';
+import { kindLabel, regionLabel } from './rules';
+import { SIGHT_HEART_SIZE } from './SightHeart';
 
 /** What a saved place's tile shows (see the file comment). */
 export type SavedSightPicture =
@@ -53,10 +55,18 @@ export function savedSightPicture(
   return { kind: 'ring' };
 }
 
-/** "Waterfall · South Iceland", the server's own words; either alone when the other is missing. */
-export function savedSightKindRegion(place: Pick<FavouriteAttraction, 'kindLabel' | 'regionLabel'>): string | null {
-  const line = [place.kindLabel, place.regionLabel].filter((part): part is string => !!part).join(' · ');
-  return line || null;
+/**
+ * "Waterfall · South Iceland": the server's own words in the list's language,
+ * else the app's labels for the kind and region (an unknown region is left
+ * out), as iOS words a saved place.
+ */
+export function savedSightKindRegion(
+  place: Pick<FavouriteAttraction, 'kind' | 'kindLabel' | 'region' | 'regionLabel'>,
+  lookup: (key: string) => string,
+): string {
+  const kind = place.kindLabel ?? kindLabel(place.kind, lookup);
+  const region = place.regionLabel ?? regionLabel(place.region, lookup);
+  return region ? `${kind} · ${region}` : kind;
 }
 
 /** A walk's "7.1 km one way · 3 h there and back", as the sight card writes it; null without figures. */
@@ -83,7 +93,7 @@ export default function SavedSightRow({ place, onOpen, onRemove, testID }: Saved
   const picture = savedSightPicture(place);
   const showsPhoto = picture.kind === 'photo' && !photoFailed;
   const credit = showsPhoto && picture.kind === 'photo' ? creditLine(t('attraction.photo'), picture.credit, picture.license) : null;
-  const kindRegion = savedSightKindRegion(place);
+  const kindRegion = savedSightKindRegion(place, (key) => t(key));
   const facts = savedSightFacts(place, t);
   const ring = <AttractionRing isTrailhead={isHike(place)} frame={34} testID={`${id}.ring`} />;
 
@@ -122,18 +132,16 @@ export default function SavedSightRow({ place, onOpen, onRemove, testID }: Saved
           <LPText size={15} weight="semibold" color={colors.paper} numberOfLines={2}>
             {place.name}
           </LPText>
-          {kindRegion ? (
-            <LPText size={12} color={colors.paper3} testID={`${id}.kind`}>
-              {kindRegion}
-            </LPText>
-          ) : null}
+          <LPText size={12} color={colors.paper3} testID={`${id}.kind`}>
+            {kindRegion}
+          </LPText>
           {facts ? (
-            <LPText size={11} color={colors.paper3} testID={`${id}.facts`}>
+            <LPText size={10} color={colors.paper3} tracking={1.1} style={MONO} testID={`${id}.facts`}>
               {facts}
             </LPText>
           ) : null}
           {credit ? (
-            <LPText size={10} color={colors.paper3} testID={`${id}.credit`}>
+            <LPText size={11} color={colors.paper3} testID={`${id}.credit`}>
               {credit}
             </LPText>
           ) : null}
@@ -143,15 +151,18 @@ export default function SavedSightRow({ place, onOpen, onRemove, testID }: Saved
         onPress={onRemove}
         accessibilityRole="button"
         accessibilityLabel={t('favourites.card.removeNamed', { name: place.name })}
-        hitSlop={8}
+        hitSlop={7}
         style={({ pressed }) => [styles.remove, pressed && styles.pressed]}
         testID={`${id}.remove`}
       >
-        <Ionicons name="heart" size={14} color={colors.rust2} />
+        <Ionicons name="heart" size={15} color={colors.rust2} />
       </Pressable>
     </View>
   );
 }
+
+/** The sights' monospaced figures (iOS `LPFont.mono`), as the card's walk rows. */
+const MONO = { fontFamily: 'monospace' } as const;
 
 const styles = StyleSheet.create({
   row: {
@@ -175,11 +186,14 @@ const styles = StyleSheet.create({
   },
   plateTile: { backgroundColor: PLATE_PAPER },
   texts: { flex: 1, gap: 3 },
+  // The place's heart, filled (./SightHeart.tsx): the same glyph takes it off.
   remove: {
-    width: 32,
-    height: 32,
+    width: SIGHT_HEART_SIZE,
+    height: SIGHT_HEART_SIZE,
     marginLeft: 8,
-    borderRadius: 16,
+    borderRadius: SIGHT_HEART_SIZE / 2,
+    borderWidth: 1,
+    borderColor: colors.line2,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.ink3,

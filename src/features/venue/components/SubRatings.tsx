@@ -7,7 +7,8 @@
  * without either. Drawn in the venue page's reviews section (from the venue
  * row) and under the reviews page's average (from the reviews summary).
  *
- * TalkBack reads each row as one element: "Equipment, 4.5 out of 5 stars".
+ * TalkBack reads each row as one element, in iOS's words: "Equipment: 4.4
+ * out of 5, from 12 ratings" / "Tækjabúnaður: 4,4 af 5, út frá 12 einkunnum".
  */
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
@@ -46,7 +47,7 @@ export default function SubRatings({
   readonly style?: StyleProp<ViewStyle>;
   readonly testID?: string;
 }) {
-  const { t, language } = useT();
+  const { t, tp, language } = useT();
   const rows = subRatingRows(equipment, cleanliness);
   if (rows.length === 0) return null;
   return (
@@ -60,7 +61,7 @@ export default function SubRatings({
             style={styles.row}
             accessible
             accessibilityRole="text"
-            accessibilityLabel={`${label}, ${t('venue2.a11y.rating', { count: average })}`}
+            accessibilityLabel={tp('venue.ratings.sub_a11y', row.value.count, { label, average })}
             testID={`${testID}.${row.key}`}
           >
             <LPText size={12} color={colors.paper3}>

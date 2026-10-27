@@ -8,7 +8,8 @@
   "Venue hours kicker: Usual hours / Almennur opnunartími, not This week / Þessa viku, key venue.hours_this_week to venue.hours_usual (lifepass-ios feat/venue-usual-hours-is-description bb92f16)",
   "Class room row: Room / Salur, key booking.room.label (API 0.44.0; lifepass-ios feat/member-feedback, the app version after 3.1.0)",
   "Venue rating numbers: the stars' count is every rating, 4.6 · 23 ratings / 4,6 · 23 einkunnir (venue.ratings.count.one/.many), and the Equipment / Cleanliness averages, Tækjabúnaður / Hreinlæti (venue.ratings.equipment, venue.ratings.cleanliness) (API 0.46.0; lifepass-ios feat/member-feedback, the app version after 3.1.0)",
-  "Save hikes and sights: the heart's name, its failures, and Favourites' third section Hikes & sights / Útivist (favourites.heart.save, .saveFailed, .removeFailed, favourites.tabs.outdoors, favourites.empty.outdoors.title/.body, favourites.card.removeNamed) (API 0.45.0; lifepass-ios feat/member-feedback, the app version after 3.1.0)"
+  "Save hikes and sights: the heart's name, its failures, and Favourites' third section Hikes & sights / Útivist (favourites.heart.save, .saveFailed, .removeFailed, favourites.tabs.outdoors, favourites.empty.outdoors.title/.body, favourites.card.removeNamed) (API 0.45.0; lifepass-ios feat/member-feedback, the app version after 3.1.0)",
+  "Member feedback, iOS parity: Favourites' empty Hikes & sights offers the map (favourites.empty.outdoors.cta), and the sub-scores' spoken and row words (venue.ratings.sub_a11y.one/.many, venue.ratings.sub_value), as lifepass-ios feat/member-feedback words them (API 0.45.0 and 0.46.0, the app version after 3.1.0)"
  ],
  "dictionaries": [
   {
@@ -703,6 +704,7 @@
     "explore.walk_ins",
     "favourites.card.removeNamed",
     "favourites.empty.outdoors.body",
+    "favourites.empty.outdoors.cta",
     "favourites.empty.outdoors.title",
     "favourites.heart.removeFailed",
     "favourites.heart.save",
@@ -1095,6 +1097,9 @@
     "venue.ratings.count.many",
     "venue.ratings.count.one",
     "venue.ratings.equipment",
+    "venue.ratings.sub_a11y.many",
+    "venue.ratings.sub_a11y.one",
+    "venue.ratings.sub_value",
     "venue.review_comments",
     "venue.review_empty",
     "venue.review_err_comment",
@@ -2435,7 +2440,7 @@
   }
  ],
  "counts": {
-  "en": 2372,
-  "is": 2372
+  "en": 2376,
+  "is": 2376
  }
 }

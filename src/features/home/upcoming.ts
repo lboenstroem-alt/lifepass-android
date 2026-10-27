@@ -27,7 +27,7 @@
 // only, so Foundation formats that date in English for an Icelandic account
 // too.
 import { apiGet } from '../../api';
-import { parseIsoDate } from '../../api/wire';
+import { parseIsoDate, readRoom } from '../../api/wire';
 import { addServerDays, formatDatePattern, isInvalidDate, serverDay, venueTime } from '../../i18n/format';
 
 /** What the card shows of a booking. */
@@ -35,6 +35,12 @@ export interface UpcomingBooking {
   readonly id: string;
   readonly venueName: string;
   readonly startsAt: Date;
+  /**
+   * A class booking's room ("Salur 3", API 0.44.0), from this read of
+   * `GET /bookings` (it follows a class the club moves), or null. Read
+   * fail-soft: it never costs the card its booking.
+   */
+  readonly room: string | null;
 }
 
 /** `t`, or a `useT().t`. */
@@ -67,7 +73,7 @@ export function decodeUpcomingPage(data: unknown): UpcomingBooking[] {
     const start = typeof startsAt === 'string' ? parseIsoDate(startsAt) : null;
     if (!start) throw new UpcomingBookingDecodeError(`${path}.startsAt`);
     if (!isRecord(venue) || typeof venue.name !== 'string') throw new UpcomingBookingDecodeError(`${path}.venue.name`);
-    return { id, venueName: venue.name, startsAt: start };
+    return { id, venueName: venue.name, startsAt: start, room: readRoom(row.room) };
   });
 }
 

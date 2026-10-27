@@ -91,6 +91,25 @@
      "favourites.card.removeNamed": "Fjarlægja úr uppáhalds: {name}"
     }
    }
+  },
+  {
+   "change": "Member feedback, iOS parity: Favourites' empty Hikes & sights offers the map (favourites.empty.outdoors.cta), and the sub-scores' spoken and row words (venue.ratings.sub_a11y.one/.many, venue.ratings.sub_value), as lifepass-ios feat/member-feedback words them (API 0.45.0 and 0.46.0, the app version after 3.1.0)",
+   "dictionary": "base",
+   "ios": {},
+   "android": {
+    "en": {
+     "favourites.empty.outdoors.cta": "Find hikes and sights",
+     "venue.ratings.sub_a11y.one": "{label}: {average} out of 5, from {count} rating",
+     "venue.ratings.sub_a11y.many": "{label}: {average} out of 5, from {count} ratings",
+     "venue.ratings.sub_value": "{label}: {value} out of 5"
+    },
+    "is": {
+     "favourites.empty.outdoors.cta": "Skoða gönguleiðir og áhugaverða staði",
+     "venue.ratings.sub_a11y.one": "{label}: {average} af 5, út frá {count} einkunn",
+     "venue.ratings.sub_a11y.many": "{label}: {average} af 5, út frá {count} einkunnum",
+     "venue.ratings.sub_value": "{label}: {value} af 5"
+    }
+   }
   }
  ]
 }

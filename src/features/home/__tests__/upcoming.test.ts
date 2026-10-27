@@ -50,7 +50,7 @@ describe('fetchUpcomingBookings', () => {
     );
     const list = await fetchUpcomingBookings();
     expect(list.map((b) => b.id)).toEqual(['b-soon', 'b-mid', 'b-late']);
-    expect(list[0]).toEqual({ id: 'b-soon', venueName: 'Soon', startsAt: new Date('2026-10-18T09:30:00Z') });
+    expect(list[0]).toEqual({ id: 'b-soon', venueName: 'Soon', startsAt: new Date('2026-10-18T09:30:00Z'), room: null });
   });
 
   it('fails the read on a row it cannot show (strict, as iOS decodes)', async () => {
@@ -65,10 +65,23 @@ describe('fetchUpcomingBookings', () => {
 });
 
 describe('decodeUpcomingPage and sortedUpcoming', () => {
-  it('reads id, start and venue name only', () => {
+  it('reads id, start, venue name and the room only', () => {
     expect(decodeUpcomingPage({ data: [row('b-1', '2026-10-18T09:30:00Z', 'Sky Lagoon')], pagination: {} })).toEqual([
-      { id: 'b-1', venueName: 'Sky Lagoon', startsAt: new Date('2026-10-18T09:30:00Z') },
+      { id: 'b-1', venueName: 'Sky Lagoon', startsAt: new Date('2026-10-18T09:30:00Z'), room: null },
     ]);
+  });
+
+  it('reads a class booking’s room (API 0.44.0) fail-soft: never the location prose, never a lost booking', () => {
+    const [withRoom, prose, malformed] = decodeUpcomingPage({
+      data: [
+        { ...row('b-1', '2026-10-18T09:30:00Z', 'Hress'), room: 'Salur 3', location: 'Salur  3' },
+        { ...row('b-2', '2026-10-18T10:30:00Z', 'Grandi 101'), room: null, location: 'Grandi101' },
+        { ...row('b-3', '2026-10-18T11:30:00Z', 'Hress'), room: 3 },
+      ],
+    });
+    expect(withRoom.room).toBe('Salur 3');
+    expect(prose.room).toBeNull();
+    expect(malformed.room).toBeNull();
   });
 
   it('refuses a page without data, a row without a venue name or an id', () => {
@@ -78,8 +91,8 @@ describe('decodeUpcomingPage and sortedUpcoming', () => {
   });
 
   it('keeps the server order for two bookings at the same time', () => {
-    const a = { id: 'a', venueName: 'A', startsAt: new Date('2026-10-18T09:30:00Z') };
-    const b = { id: 'b', venueName: 'B', startsAt: new Date('2026-10-18T09:30:00Z') };
+    const a = { id: 'a', venueName: 'A', startsAt: new Date('2026-10-18T09:30:00Z'), room: null };
+    const b = { id: 'b', venueName: 'B', startsAt: new Date('2026-10-18T09:30:00Z'), room: null };
     expect(sortedUpcoming([a, b]).map((x) => x.id)).toEqual(['a', 'b']);
   });
 });

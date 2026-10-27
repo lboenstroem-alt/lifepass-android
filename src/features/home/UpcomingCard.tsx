@@ -2,13 +2,16 @@
 // in one of two modes:
 //   - the member's soonest booking: the HERO's photo as its thumbnail (the
 //     booking read carries no venue image, and a stock photo is never shown
-//     as a venue), the venue in italics, when it is, and "View" to Profile;
+//     as a venue), the venue in italics (with a class's room after it, "Hress
+//     · Salur 3", API 0.44.0, on a second line if it needs one), when it is,
+//     and "View" to Profile;
 //   - none: a calendar tile, "No upcoming bookings", "Explore venues nearby"
 //     and "Explore" to the Explore tab.
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { LPText, VenueImage } from '../../components/ui';
+import { venueWithRoom } from '../../copy/classRoom';
 import { useT } from '../../i18n';
 import { colors, hairline, minTouch } from '../../theme';
 import { bookingWhen, type UpcomingBooking } from './upcoming';
@@ -30,7 +33,7 @@ type Props = {
 
 export default function UpcomingCard({ booking, thumbnailUrl, onView, onExplore, now }: Props) {
   const { t } = useT();
-  const title = booking ? booking.venueName : t('home.no_upcoming');
+  const title = booking ? venueWithRoom(booking.venueName, booking.room) : t('home.no_upcoming');
   const subtitle = booking ? bookingWhen(booking.startsAt, t, now) : t('home.explore_nearby');
   const cta = booking ? t('common.view') : t('explore.title');
 
@@ -48,7 +51,7 @@ export default function UpcomingCard({ booking, thumbnailUrl, onView, onExplore,
         <LPText size={9} weight="bold" tracking={1} color={white(0.55)}>
           {t('home.upcoming').toUpperCase()}
         </LPText>
-        <LPText size={17} weight="medium" italic color={WHITE} numberOfLines={1}>
+        <LPText size={17} weight="medium" italic color={WHITE} numberOfLines={booking?.room ? 2 : 1} testID="home.upcoming.title">
           {title}
         </LPText>
         <LPText size={12} color={white(0.7)} numberOfLines={1}>

@@ -29,9 +29,9 @@
  * on top) reads it again quietly, as iOS's `.task` does on reappear, keeping
  * the card on screen; the card holds nothing a restart must restore.
  *
- * THE HEART (API 0.45.0). Beside Done, once the card has loaded: saves the
- * place to the member's Favourites ("Hikes & sights"), for every place, hikes
- * and sights alike (./SightHeart.tsx).
+ * THE HEART (API 0.45.0). Beside the place's name, as on its web page and
+ * on iOS: saves the place to the member's Favourites ("Hikes & sights"), for
+ * every place, hikes and sights alike (./SightHeart.tsx).
  *
  * Directions offers Google Maps and "another app" (a `geo:` pin): there is no
  * Apple Maps on Android (plan 5.6). `mapsLinks.apple` is not used. Both
@@ -205,21 +205,18 @@ export default function AttractionDetailScreen({ navigation, route }: SharedRout
           ) : (
             <View />
           )}
-          <View style={styles.barTrailing}>
-            {detail ? <SightHeart slug={detail.slug} name={detail.name} variant="bar" testID="attraction.heart" /> : null}
-            <Pressable
-              onPress={done}
-              accessibilityRole="button"
-              accessibilityLabel={t('common.done')}
-              hitSlop={10}
-              style={({ pressed }) => [styles.done, pressed && styles.pressed]}
-              testID="attraction.done"
-            >
-              <LPText size={17} weight="semibold" color={colors.rust}>
-                {t('common.done')}
-              </LPText>
-            </Pressable>
-          </View>
+          <Pressable
+            onPress={done}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.done')}
+            hitSlop={10}
+            style={({ pressed }) => [styles.done, pressed && styles.pressed]}
+            testID="attraction.done"
+          >
+            <LPText size={17} weight="semibold" color={colors.rust}>
+              {t('common.done')}
+            </LPText>
+          </Pressable>
         </View>
       </View>
 
@@ -288,9 +285,12 @@ function Content({
       <View style={styles.header}>
         {detail.tier === 'top' ? <TopPickBadge /> : null}
         <KindRegionKicker detail={detail} />
-        <LPText serif size={34} weight="semibold" color={colors.paper} accessibilityRole="header" testID="attraction.name">
-          {detail.name}
-        </LPText>
+        <View style={styles.nameRow}>
+          <LPText serif size={34} weight="semibold" color={colors.paper} accessibilityRole="header" style={styles.name} testID="attraction.name">
+            {detail.name}
+          </LPText>
+          <SightHeart slug={detail.slug} name={detail.name} testID="attraction.heart" />
+        </View>
         {/* The Icelandic name always shows: it is what the road signs say. */}
         {detail.name !== detail.localName ? (
           <LPText size={14} color={colors.paper3} testID="attraction.local_name">
@@ -342,11 +342,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  barTrailing: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   done: { minHeight: 36, justifyContent: 'center' },
   pressed: { opacity: 0.7 },
   scroll: { flex: 1 },
   header: { paddingHorizontal: 20, paddingTop: 18, gap: 14 },
+  nameRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  name: { flex: 1 },
   body: { paddingHorizontal: 20, paddingTop: 22 },
   loading: { paddingTop: 80, alignItems: 'center' },
   failed: { paddingHorizontal: 32, paddingTop: 80, gap: 12, alignItems: 'center' },

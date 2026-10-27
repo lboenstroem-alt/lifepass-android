@@ -69,10 +69,15 @@ describe('the picture', () => {
 });
 
 describe('the words', () => {
-  it('"Waterfall · South Iceland", the server’s own words, either alone when the other is missing', () => {
-    expect(savedSightKindRegion(place())).toBe('Waterfall · South Iceland');
-    expect(savedSightKindRegion(place({ regionLabel: null }))).toBe('Waterfall');
-    expect(savedSightKindRegion(place({ kindLabel: null, regionLabel: null }))).toBeNull();
+  it('"Waterfall · South Iceland": the server’s own words, else the app’s labels, as iOS words it', () => {
+    const lookup = (key: string) => translate(key, 'en');
+    expect(savedSightKindRegion(place({ kindLabel: 'Foss', regionLabel: 'Suðurland' }), lookup)).toBe('Foss · Suðurland');
+    expect(savedSightKindRegion(place({ kindLabel: null, regionLabel: null }), lookup)).toBe('Waterfall · South Iceland');
+    // An unknown region is left out; an unknown kind is a sight.
+    expect(savedSightKindRegion(place({ kind: 'hike', kindLabel: null, region: 'moon', regionLabel: null }), lookup)).toBe('Hike');
+    expect(savedSightKindRegion(place({ kind: 'spaceport', kindLabel: null, regionLabel: null }), (key) => translate(key, 'is'))).toBe(
+      `${translate('attraction.kind.other', 'is')} · ${translate('attraction.region.south', 'is')}`,
+    );
   });
 
   it('a walk’s figures as the sight card writes them, one way and there and back', () => {

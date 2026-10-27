@@ -18,18 +18,19 @@
  * "Vista í uppáhalds: Skógafoss" (the name is never declined), that never
  * changes with the state; the state is the toggle's own checked state.
  *
- *   `bar`    a 36 dp circle for the card's top bar, beside Done
- *   `row`    a 32 dp circle at the end of a list row
- *   `float`  a 32 dp frosted circle over a picture (the Coach's plan sights)
+ *   `row`    a 34 dp circle beside a name or at the end of a row (iOS `.inline`)
+ *   `float`  a 34 dp frosted circle over a picture, the Coach's plan sights
+ *            (iOS `.frosted`)
+ * Either is touched over at least 48 dp.
  */
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet } from 'react-native';
 
 import { useT } from '../../i18n';
-import { colors, hairline } from '../../theme';
+import { colors } from '../../theme';
 import { useSavedAttraction } from '../favourites';
 
-export type SightHeartVariant = 'bar' | 'row' | 'float';
+export type SightHeartVariant = 'row' | 'float';
 
 export interface SightHeartProps {
   /** The place's slug: what the saved set keys on. */
@@ -57,13 +58,13 @@ export default function SightHeart({ slug, name, variant = 'row', testID }: Sigh
       accessibilityRole="togglebutton"
       accessibilityLabel={t('favourites.heart.save', { name })}
       accessibilityState={{ checked: heart.saved, busy: heart.toggling }}
-      hitSlop={variant === 'bar' ? 6 : 8}
+      hitSlop={7}
       style={({ pressed }) => [styles.base, styles[variant], pressed && styles.pressed]}
       testID={id}
     >
       <Ionicons
         name={heart.saved ? 'heart' : 'heart-outline'}
-        size={variant === 'bar' ? 17 : 15}
+        size={15}
         color={heart.saved ? colors.rust2 : variant === 'float' ? colors.paper : colors.paper2}
         testID={`${id}.${heart.saved ? 'filled' : 'outline'}`}
       />
@@ -71,29 +72,19 @@ export default function SightHeart({ slug, name, variant = 'row', testID }: Sigh
   );
 }
 
+export const SIGHT_HEART_SIZE = 34;
+
 const styles = StyleSheet.create({
-  base: { alignItems: 'center', justifyContent: 'center' },
-  bar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.ink2,
-    borderWidth: hairline,
-    borderColor: colors.line,
-  },
-  row: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.ink3,
-  },
-  float: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: FROSTED,
+  base: {
+    width: SIGHT_HEART_SIZE,
+    height: SIGHT_HEART_SIZE,
+    borderRadius: SIGHT_HEART_SIZE / 2,
     borderWidth: 1,
     borderColor: colors.line2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  row: { backgroundColor: colors.ink3 },
+  float: { backgroundColor: FROSTED },
   pressed: { opacity: 0.7 },
 });

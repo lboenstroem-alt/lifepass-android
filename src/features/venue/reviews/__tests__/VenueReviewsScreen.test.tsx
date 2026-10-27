@@ -136,7 +136,7 @@ it("the summary is the server's, which counts every rating (API 0.46.0): average
   expect(screen.getByTestId('reviews-bar-fill-5')).toHaveStyle({ width: '62.5%' });
   // Equipment from 3 ratings up; no Cleanliness row without one.
   const equipment = summary.getByTestId('reviews-summary-subratings.equipment');
-  expect(equipment.props.accessibilityLabel).toBe('Equipment, 4.7 out of 5 stars');
+  expect(equipment.props.accessibilityLabel).toBe('Equipment: 4.7 out of 5, from 3 ratings');
   expect(within(equipment).getByText('Equipment')).toBeOnTheScreen();
   expect(within(equipment).getByText('4.7')).toBeOnTheScreen();
   expect(summary.queryByTestId('reviews-summary-subratings.cleanliness')).toBeNull();
@@ -166,9 +166,28 @@ it('in Icelandic: the decimal comma, "einkunnir", and the sub-scores in their ow
   expect(summary.getByText('Hreinlæti')).toBeOnTheScreen();
   expect(summary.getByText('4,8')).toBeOnTheScreen();
   expect(summary.getByTestId('reviews-summary-subratings.cleanliness').props.accessibilityLabel).toBe(
-    'Hreinlæti, 4,8 af 5 stjörnum',
+    'Hreinlæti: 4,8 af 5, út frá 12 einkunnum',
   );
   expect(screen.getByRole('header', { name: 'Umsagnir' })).toBeOnTheScreen();
+});
+
+it('a visit rating’s card shows the Equipment and Cleanliness stars the member gave, each only when given', async () => {
+  api.on(
+    'GET',
+    '/venues/:venueId/reviews',
+    answer([
+      { ...row('11111111-0000-4000-8000-000000000001', 5, 'Spotless showers.'), kind: 'quick', equipmentRating: 4, cleanlinessRating: 5 },
+      { ...row('11111111-0000-4000-8000-000000000002', 4, 'Good classes.'), kind: 'quick', equipmentRating: null, cleanlinessRating: 3 },
+      row('11111111-0000-4000-8000-000000000003', 3, 'Written the long way, with no sub-stars at all.'),
+    ]),
+  );
+  await renderPage();
+  const both = screen.getByTestId('review-11111111-0000-4000-8000-000000000001-substars');
+  expect(within(both).getByLabelText('Equipment: 4 out of 5')).toBeOnTheScreen();
+  expect(within(both).getByLabelText('Cleanliness: 5 out of 5')).toBeOnTheScreen();
+  expect(screen.queryByTestId('review-11111111-0000-4000-8000-000000000002-equipment')).toBeNull();
+  expect(screen.getByTestId('review-11111111-0000-4000-8000-000000000002-cleanliness')).toBeOnTheScreen();
+  expect(screen.queryByTestId('review-11111111-0000-4000-8000-000000000003-substars')).toBeNull();
 });
 
 it('says "1 einkunn" for one rating', async () => {

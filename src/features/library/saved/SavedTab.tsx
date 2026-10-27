@@ -41,13 +41,15 @@ export interface SavedTabProps {
   readonly onOpenVenue: (slug: string) => void;
   /** Opens a saved hike's or sight's card. */
   readonly onOpenSight: (slug: string) => void;
+  /** Leave Profile, then Explore's map with the sights showing ("Find hikes and sights"). */
+  readonly onFindSights: () => void;
   /** Leave Profile, then switch to Explore ("Find venues"). */
   readonly onFindVenues: () => void;
   /** Room under the list for the floating tab bar. */
   readonly bottomSpace: number;
 }
 
-export default function SavedTab({ saved, onOpenVenue, onOpenSight, onFindVenues, bottomSpace }: SavedTabProps) {
+export default function SavedTab({ saved, onOpenVenue, onOpenSight, onFindSights, onFindVenues, bottomSpace }: SavedTabProps) {
   const { t } = useT();
   const suggestions = saved.allVenues.length > 0 ? suggestionsFor(saved.allVenues, savedVenueIds(saved)) : [];
 
@@ -94,7 +96,13 @@ export default function SavedTab({ saved, onOpenVenue, onOpenSight, onFindVenues
         </View>
       )}
 
-      <SavedSightsSection attractions={saved.attractions} onOpenSight={onOpenSight} testID="library.sights" />
+      <SavedSightsSection
+        attractions={saved.attractions}
+        loading={saved.favouritesLoading}
+        onOpenSight={onOpenSight}
+        onFindSights={onFindSights}
+        testID="library.sights"
+      />
 
       {suggestions.length > 0 ? (
         <View style={styles.shelf} testID="library.suggestions">

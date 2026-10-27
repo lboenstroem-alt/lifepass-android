@@ -36,6 +36,8 @@ export interface SavedLoad {
   readonly activities: readonly FavouriteActivity[];
   /** The saved hikes and sights (API 0.45.0), less any just unsaved. */
   readonly attractions: readonly FavouriteAttraction[];
+  /** No read of the favourites has answered yet (the places' section shows a spinner). */
+  readonly favouritesLoading: boolean;
   /** `GET /venues`, the suggestions' pool. */
   readonly allVenues: readonly Venue[];
   readonly isLoading: boolean;
@@ -53,6 +55,7 @@ export function useSavedLoad(deps: SavedLoadDeps = defaultDeps): SavedLoad {
   const venues = useStore(favouritesStore, (s) => s.venues);
   const activities = useStore(favouritesStore, (s) => s.activities);
   const attractions = useStore(favouritesStore, (s) => s.attractions);
+  const favouritesLoading = useStore(favouritesStore, (s) => !s.loaded && s.status !== 'failed');
   const [allVenues, setAllVenues] = useState<readonly Venue[]>([]);
   const [isLoading, setLoading] = useState(false);
   const mounted = useRef(true);
@@ -88,6 +91,7 @@ export function useSavedLoad(deps: SavedLoadDeps = defaultDeps): SavedLoad {
     venues,
     activities,
     attractions,
+    favouritesLoading,
     allVenues,
     isLoading,
     load,
