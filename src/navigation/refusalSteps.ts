@@ -175,8 +175,9 @@ export function takeRefusalStep(
       openSharedRoute(navigation, 'Account');
       break;
     case 'deletion':
-      // The deletion sheet when ACCT-4 has it (closing it re-checks, as the
-      // Kenni sheet does); Account (where deletion lives) until then.
+      // The deletion sheet over the screen (the tabs shell mounts its host;
+      // closing it re-checks, as the Kenni sheet does). Account, where the
+      // same sheet lives, only if no host is mounted to draw it.
       if ((deps.openDeletion ?? openAccountDeletion)({ onClose: () => options.onClosed?.() })) {
         return 'deletionSheet';
       }
