@@ -380,7 +380,7 @@ function LoadedCard({
         <View style={[styles.weekOne, { backgroundColor: colours.rows }]}>
           {proposal.week1.map((session, index) => {
             const rest = isRestRow(session);
-            const tappable = !rest && preview.available;
+            const tappable = !rest;
             return (
               <Pressable
                 key={session.id}

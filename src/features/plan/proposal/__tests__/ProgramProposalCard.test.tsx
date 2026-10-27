@@ -22,12 +22,12 @@ import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMo
 import { decodeHealthDay, decodeHealthProposal, ReminderKeys, useHealthStore } from '../../../../health';
 import { translate } from '../../../../i18n';
 import { setAnalyticsObserver } from '../../../../lib/analytics';
+import { useAppStore } from '../../../../stores/appStore';
 import { useIntentStore } from '../../../../stores/intentStore';
 import { ChangeDaysHost } from '../../days';
 import { readAdoptedBannerKey, reminderDeniedKey } from '../../shell/adoptedBanner';
 import { dayJSON, freshPlan, MEMBER, recordAnalytics, settle, signIn, TODAY } from '../../__tests__/planFixtures';
 import ProgramProposalCard, { type ProgramProposalCardProps } from '../ProgramProposalCard';
-import { setPreviewInstalled } from '../../programOverview/__tests__/fakePreviewSheet';
 import { reminderDraft, reportProposalOutcome, resetProposalBridges } from '../proposalActions';
 
 jest.mock('@gorhom/bottom-sheet', () =>
@@ -35,12 +35,6 @@ jest.mock('@gorhom/bottom-sheet', () =>
   require('../../../../components/ui/testing/bottomSheetMock').bottomSheetModule,
 );
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
-// PLAN-2's sheet is on its own branch: a stand-in that keeps its promises.
-jest.mock('../../programOverview/sessionPreview', () => {
-  const actual = jest.requireActual('../../programOverview/sessionPreview');
-  const fake = jest.requireActual('../../programOverview/__tests__/fakePreviewSheet');
-  return { ...actual, useSessionPreview: (testID?: string) => actual.useSessionPreview(testID, fake.installedSheet()) };
-});
 
 stubApiClientPerTest();
 
@@ -113,7 +107,6 @@ async function renderCard(props: Partial<ProgramProposalCardProps> = {}) {
 beforeEach(() => {
   freshPlan();
   resetProposalBridges();
-  setPreviewInstalled(true);
   bottomSheetMock.reset();
   resetUiKit();
   notificationsState.reset();
@@ -161,24 +154,24 @@ describe('what it shows', () => {
     expect(api.sent(`/health/programs/${PROPOSAL}`, 'GET').query.locale).toBe('en');
   });
 
-  it('a session row opens its preview (no Start from a proposal); a rest row is not a button', async () => {
-    api.on('GET', '/health/sessions/s-1', Reply.ok({ session: { id: 's-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Legs', blocks: [] } }));
+  it('a session row opens the session preview (no Start, no Change with Coach from a proposal); a rest row is not a button', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on(
+      'GET',
+      '/health/sessions/s-1',
+      Reply.ok({ session: { id: 's-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Legs', blocks: [{ exerciseId: 'squat', name: 'Goblet squat', sets: 3, reps: 10 }] } }),
+    );
     setDay();
     await renderCard();
     expect(screen.getByRole('button', { name: 'Mon, Legs, 40 min' })).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: 'Tue, Rest day' })).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Mon, Legs, 40 min' }));
-    expect(await screen.findByText('preview:s-1')).toBeOnTheScreen();
-    expect(screen.queryByRole('button', { name: 'preview start' })).toBeNull();
+    // The real sheet (../preview), as on Plan's Today card.
+    expect(await screen.findByRole('header', { name: 'Legs' })).toBeOnTheScreen();
+    expect(screen.getByText('Goblet squat')).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: en('plan.start') })).toBeNull();
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
     expect(api.sent('/health/sessions/s-1', 'GET').query.locale).toBe('en');
-  });
-
-  it("until PLAN-2's sheet is merged the rows are not buttons at all", async () => {
-    setPreviewInstalled(false);
-    setDay();
-    await renderCard();
-    expect(screen.queryByRole('button', { name: 'Mon, Legs, 40 min' })).toBeNull();
-    expect(screen.getByLabelText('Mon, Legs, 40 min')).toBeOnTheScreen();
   });
 
   it('on Plan, Not now never collapses the card: Plan reads again', async () => {

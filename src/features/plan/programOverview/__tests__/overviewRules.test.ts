@@ -1,11 +1,11 @@
 /**
  * The programme overview's rules (iOS ProgramOverviewView): the selected
- * week clamps to a week the plan has, the deload line shows only on the last
- * week, and Start is offered only for today's planned session a member may
- * run.
+ * week clamps to a week the plan has, and the deload line shows only on the
+ * last week. Start in a preview is the Today card's rule
+ * (../../today/__tests__/todayRules.test.ts).
  */
 import { decodeProgramDetail } from '../../../../health';
-import { canStartFromOverview, clampWeek, initialWeek, showsDeloadNote, shownWeek, sortedWeeks, weekNote } from '../overviewRules';
+import { clampWeek, initialWeek, showsDeloadNote, shownWeek, sortedWeeks, weekNote } from '../overviewRules';
 
 const detail = (json: Record<string, unknown>) => decodeProgramDetail({ id: 'p-1', ...json }, 'program');
 
@@ -58,35 +58,5 @@ describe('the notes', () => {
     expect(weekNote(shownWeek(weeks, 3))).toBe('Heavier now');
     expect(weekNote(shownWeek(weeks, 1))).toBeNull();
     expect(weekNote(shownWeek(weeks, 2))).toBeNull();
-  });
-});
-
-describe('Start from a previewed day', () => {
-  const today = '2026-10-21';
-  const context = { readOnly: false, programPaused: false, today, outboxPending: false };
-  const session = { kind: 'strength' as const, scheduledFor: today, status: 'planned' as const };
-
-  it("today's planned strength, cardio or mobility session may start", () => {
-    expect(canStartFromOverview(session, context)).toBe(true);
-    expect(canStartFromOverview({ ...session, kind: 'cardio' }, context)).toBe(true);
-    expect(canStartFromOverview({ ...session, kind: 'mobility' }, context)).toBe(true);
-    expect(canStartFromOverview({ ...session, status: null }, context)).toBe(true);
-  });
-
-  it('not a swim, a class or a rest day', () => {
-    expect(canStartFromOverview({ ...session, kind: 'swim' }, context)).toBe(false);
-    expect(canStartFromOverview({ ...session, kind: 'class' }, context)).toBe(false);
-    expect(canStartFromOverview({ ...session, kind: null }, context)).toBe(false);
-  });
-
-  it('not another day, nor a session already done', () => {
-    expect(canStartFromOverview({ ...session, scheduledFor: '2026-10-22' }, context)).toBe(false);
-    expect(canStartFromOverview({ ...session, status: 'done' }, context)).toBe(false);
-  });
-
-  it('not read only, not on a paused plan, not with the workout waiting to sync', () => {
-    expect(canStartFromOverview(session, { ...context, readOnly: true })).toBe(false);
-    expect(canStartFromOverview(session, { ...context, programPaused: true })).toBe(false);
-    expect(canStartFromOverview(session, { ...context, outboxPending: true })).toBe(false);
   });
 });

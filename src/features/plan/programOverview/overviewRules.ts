@@ -1,10 +1,11 @@
 /**
  * The programme overview's rules (iOS ProgramOverviewView.swift), pure so
  * they can be tested on their own: the weeks in order, which week opens,
- * which week a choice lands on, the deload note, and whether a previewed
- * session may be started from here.
+ * which week a choice lands on and the deload note. Whether a previewed
+ * session may be started is ../preview's `canStartRunnerToday`, the Today
+ * card's rule.
  */
-import type { ProgramDetail, ProgramWeekPlan, SessionKind, SessionView } from '../../../health';
+import type { ProgramDetail, ProgramWeekPlan } from '../../../health';
 
 /** The weeks, by number. */
 export function sortedWeeks(detail: Pick<ProgramDetail, 'weekPlans'> | null): ProgramWeekPlan[] {
@@ -41,36 +42,4 @@ export function showsDeloadNote(weeks: readonly ProgramWeekPlan[], shown: Progra
 export function weekNote(shown: ProgramWeekPlan | null): string | null {
   const note = shown?.note ?? null;
   return note && note.length > 0 ? note : null;
-}
-
-/**
- * The kinds the runner runs (iOS `WorkoutRunnerEligibility.kinds`):
- * strength, cardio and mobility. A swim day is not here: whether a pool day
- * gets Start is the owner's call, on iOS too.
- */
-const RUNNER_KINDS: readonly SessionKind[] = ['strength', 'cardio', 'mobility'];
-
-/**
- * Start in the preview of a day row (iOS `canStartSession` with
- * `WorkoutRunnerEligibility.canStartToday`): today's planned session, for a
- * member who may write, on a plan that is not paused, a kind the runner
- * runs, and not already saved on this phone waiting to sync.
- *
- * PLAN-2 owns this rule (`canStartRunnerToday`, same arguments) and lands on
- * its own branch; this copy stands in until it is merged, reached only
- * through ./sessionPreview.tsx `canStartToday`, which the merge points at
- * PLAN-2's. Delete it then.
- */
-export function canStartFromOverview(
-  session: Pick<SessionView, 'kind' | 'scheduledFor' | 'status'>,
-  context: { readonly readOnly: boolean; readonly programPaused: boolean; readonly today: string; readonly outboxPending: boolean },
-): boolean {
-  return (
-    !context.readOnly &&
-    !context.programPaused &&
-    RUNNER_KINDS.includes(session.kind ?? 'rest') &&
-    session.scheduledFor === context.today &&
-    (session.status ?? 'planned') === 'planned' &&
-    !context.outboxPending
-  );
 }

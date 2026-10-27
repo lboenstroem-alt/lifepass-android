@@ -11,8 +11,10 @@
  *   week note   the week's own note, and the deload line on the LAST week only
  *   day rows    weekday, date (not for a proposal: it has none yet), kind,
  *               title, length, status mark; a rest row is dimmed and not a
- *               button; a session loads and opens its preview (Start only
- *               for today's planned session of a live plan)
+ *               button; a session loads and opens its preview (../preview,
+ *               the Today card's sheet). Live plan only: Start for today's
+ *               planned session, "Do it today" taken into Plan, and Change
+ *               with Coach where the server changes plans by chat
  *   changes     live:     the changes made in chat (OP-62), with Undo on those
  *                         the server can still undo (COACH-6; ./PlanEditChanges.tsx)
  *   actions     live:     Change training days (not on a custom plan),
@@ -62,6 +64,7 @@ import {
   type ProgramSummary,
   type SessionBrief,
 } from '../../../health';
+import { usePlanEditReady } from '../../coach/planEdit';
 import { useT } from '../../../i18n';
 import { duration, shortDay, todayServerDay, weekdayAbbreviation } from '../../../i18n/format';
 import { track } from '../../../lib/analytics';
@@ -75,8 +78,9 @@ import { ProgramUpdate, type ProgramStatusChange } from '../overview/programUpda
 import { loadReminderPreferences, reminderDraft, reportProposalOutcome } from '../proposal/proposalActions';
 import { overviewStartDecision, startKey, type ProposalOutcome } from '../proposal/proposalRules';
 import { useProposalFlow } from '../proposal/useProposalFlow';
-import { currentPlanView, popPlanToRoot, presentPlanRunner, reloadPlan } from '../shell';
+import { applySessionAction, currentPlanView, popPlanToRoot, presentPlanRunner, reloadPlan } from '../shell';
 import { sessionKindIcon } from '../shell/sessionKindIcon';
+import { changeWithCoach } from '../today/todayHandlers';
 import StatusMark from '../week/StatusMark';
 
 import { clampWeek, initialWeek, showsDeloadNote, shownWeek, sortedWeeks, weekNote } from './overviewRules';
@@ -157,7 +161,7 @@ export default function ProgramOverviewScreen({ route, navigation }: SharedRoute
         <Header program={program} mode={mode} />
         <WeekPicker weeks={weeks.map((week) => week.weekNo)} selected={shown?.weekNo ?? selectedWeek} onSelect={setSelectedWeek} />
         <WeekNotes note={weekNote(shown)} deload={showsDeloadNote(weeks, shown)} />
-        <DayRows days={shown?.days ?? []} mode={mode} />
+        <DayRows days={shown?.days ?? []} mode={mode} programPaused={program.status === 'paused'} onRowsMoved={() => void load()} />
         {mode === 'live' ? <PlanEditChanges program={program} onPlanChanged={() => void load()} /> : null}
         {mode === 'live' ? <LiveActions program={program} onUpdated={applyDetail} /> : null}
         {mode === 'proposal' ? (
@@ -262,10 +266,22 @@ function WeekNotes({ note, deload }: { note: string | null; deload: boolean }) {
   );
 }
 
-function DayRows({ days, mode }: { days: readonly SessionBrief[]; mode: 'live' | 'proposal' | 'past' }) {
+function DayRows({
+  days,
+  mode,
+  programPaused,
+  onRowsMoved,
+}: {
+  days: readonly SessionBrief[];
+  mode: 'live' | 'proposal' | 'past';
+  /** The plan on screen is paused: nothing is changed from its rows. */
+  programPaused: boolean;
+  /** A pull moved a row to today: the weeks are read again. */
+  onRowsMoved: () => void;
+}) {
   const { t, language } = useT();
   const preview = useSessionPreview('programOverview.preview');
-  const previewAvailable = preview.available;
+  const planEditReady = usePlanEditReady();
   const opening = useRef(false);
 
   const open = async (day: SessionBrief) => {
@@ -274,9 +290,11 @@ function DayRows({ days, mode }: { days: readonly SessionBrief[]; mode: 'live' |
     try {
       const session = await fetchSession(day.id, language);
       const view = currentPlanView();
+      const live = mode === 'live';
+      const paused = programPaused || view.shownDay?.program?.status === 'paused';
       // Only a live plan's overview offers Start (iOS `mode == .live && canStartSession`).
       const canStart =
-        mode === 'live' &&
+        live &&
         canStartToday(session, {
           readOnly: view.isReadOnly,
           programPaused: view.shownDay?.program?.status === 'paused',
@@ -291,6 +309,27 @@ function DayRows({ days, mode }: { days: readonly SessionBrief[]; mode: 'live' |
           popPlanToRoot();
           void presentPlanRunner(session);
         },
+        // "Do it today" from a live plan: Plan takes the answer in (its day,
+        // week and upcoming) and these rows, one of which just moved, are
+        // read again. A proposal's or a past plan's rows are nobody's day.
+        onPulled: live
+          ? (response) => {
+              applySessionAction(response);
+              onRowsMoved();
+            }
+          : undefined,
+        // Change with Coach (COACH-6), live only, on a server that changes
+        // plans by chat (iOS PlanView `planEditAvailability.isReady`), and
+        // not for a member who may only read or on a paused plan. Back to
+        // Plan's root first, then the Coach (iOS `openCoachToChange` resets
+        // `planPath`), so coming back to Plan is not this screen.
+        onChangeWithCoach:
+          live && planEditReady && !view.isReadOnly && !paused
+            ? () => {
+                popPlanToRoot();
+                changeWithCoach(session);
+              }
+            : undefined,
       });
     } catch {
       // A preview that cannot load opens nothing, as on iOS.
@@ -306,7 +345,7 @@ function DayRows({ days, mode }: { days: readonly SessionBrief[]; mode: 'live' |
       <Card style={styles.dayCard}>
         {days.map((day, index) => {
           const rest = isRestRow(day);
-          const tappable = !rest && previewAvailable;
+          const tappable = !rest;
           return (
             <Pressable
               key={day.id}
