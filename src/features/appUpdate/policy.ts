@@ -76,3 +76,45 @@ export function decideUpdatePrompt(input: UpdatePromptInput): UpdatePrompt {
   if (dismissed && compareAppVersions(dismissed, latest) >= 0) return NO_UPDATE_PROMPT;
   return { kind: 'available', latestVersion: formatAppVersion(latest) };
 }
+
+// ---------------------------------------------------------------------------
+// When "A new version is available" may go up (iOS `AppUpdatePrompts`)
+
+/**
+ * How long the screen has to stay free before the soft prompt goes up (iOS
+ * `softAlertSettle`). A sheet armed with the launch (the Kenni nudge) comes a
+ * beat after the tabs appear, and a check-in that has just ended may hand
+ * straight on to the next screen; the prompt must not take their place.
+ */
+export const SOFT_PROMPT_SETTLE_MS = 1_000;
+
+export interface SoftPromptMoment {
+  /** The launch screen is still up. */
+  readonly launching: boolean;
+  /** The app is in the foreground. */
+  readonly appActive: boolean;
+  /** A sheet is armed to open over the app: the Kenni nudge, or a new password after a reset link. */
+  readonly sheetPending: boolean;
+  /**
+   * A check-in is on its way (intent store `isCheckInUnderway`: a door link
+   * parked, a walk-in in the scanner in front, the Scan camera live).
+   */
+  readonly checkInUnderway: boolean;
+}
+
+/**
+ * Whether nothing is on screen, or about to be, that the soft prompt would
+ * cover (iOS `softAlertMayShow`). A member at the door comes first: a
+ * walk-in's sheet is shown only after its preview request returns, so
+ * without `checkInUnderway` the prompt could take the screen in between and
+ * cover them.
+ *
+ * iOS also waits while any sheet, cover or alert is presented
+ * (`AppWindows.isPresenting`), because a second presentation fails or knocks
+ * the first one out there. Android has no app-wide "something is presented"
+ * reading, and every React Native Modal is a window of its own that opens on
+ * top of the ones already up, so the prompt never stops a sheet from showing.
+ */
+export function softPromptMayShow(moment: SoftPromptMoment): boolean {
+  return !moment.launching && moment.appActive && !moment.sheetPending && !moment.checkInUnderway;
+}

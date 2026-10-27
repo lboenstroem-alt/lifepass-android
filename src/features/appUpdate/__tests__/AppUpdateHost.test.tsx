@@ -2,9 +2,11 @@
  * The update prompt on screen: the block below the minimum (Update opens
  * Google Play, in Icelandic too, and nothing behind it can be reached; at the
  * largest font size its words scroll and Update stays pinned below them), the
- * soft prompt once the launch screen has gone (only an answer keeps it away
- * for that version), and nothing at all when the check fails, including a
- * failed re-check under a block.
+ * soft prompt once the screen has been free for a second (the launch screen
+ * gone, no sheet armed, the app in front, and no check-in on its way: a door
+ * link, a walk-in, the Scan camera; iOS AppUpdatePrompts and 3.1.0 follow-up
+ * 2), only an answer keeping it away for that version, and nothing at all
+ * when the check fails, including a failed re-check under a block.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
@@ -17,8 +19,10 @@ import { FONT_SCALE_CAP } from '../../../hooks/useA11ySize';
 import { lookup, setCurrentLanguage } from '../../../i18n';
 import { resetNavPrefsForTests, setLaunchTab, useNavPrefs } from '../../../navigation/navPrefs';
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
+import { resetIntentStoreForTests, useIntentStore } from '../../../stores/intentStore';
 import AppUpdateHost from '../AppUpdateHost';
 import { marketUrl, openPlayStore } from '../openStore';
+import { SOFT_PROMPT_SETTLE_MS } from '../policy';
 import {
   DISMISSED_LATEST_VERSION_KEY,
   resetAppUpdateForTests,
@@ -40,14 +44,21 @@ function serve(minimumVersion: string | null, latestVersion: string | null) {
 }
 
 async function settle() {
-  for (let i = 0; i < 5; i += 1) await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  for (let i = 0; i < 5; i += 1) await act(async () => jest.advanceTimersByTimeAsync(0));
+}
+
+/** Time passes (the clock is Jest's: the soft prompt's settle is counted exactly). */
+async function wait(ms: number) {
+  await act(async () => jest.advanceTimersByTimeAsync(ms));
 }
 
 let openURL: jest.SpyInstance;
 
 beforeEach(() => {
+  jest.useFakeTimers();
   resetAppUpdateForTests();
   resetAppStoreForTests();
+  resetIntentStoreForTests();
   setAppUpdateDepsForTests({ currentVersion: () => '2.5.6' });
   // The launch screen has gone: the session is resolved and the tab chosen.
   useAppStore.setState({ isLoading: false });
@@ -60,7 +71,9 @@ afterEach(() => {
   restoreTestFontScale();
   resetAppUpdateForTests();
   resetAppStoreForTests();
+  resetIntentStoreForTests();
   resetNavPrefsForTests();
+  jest.useRealTimers();
 });
 
 /** What this phone keeps of the soft prompt's answer. */
@@ -186,6 +199,11 @@ it('a newer version: "A new version is available", once the launch screen has go
   expect(screen.queryByTestId('appupdate.available')).toBeNull();
 
   await act(async () => setLaunchTab('Explore'));
+  // The launch screen has gone; the screen has to stay free for a second
+  // (a sheet armed with the launch comes a beat later).
+  await wait(SOFT_PROMPT_SETTLE_MS - 1);
+  expect(screen.queryByTestId('appupdate.available')).toBeNull();
+  await wait(1);
   expect(screen.getByText(en('appupdate.available.title'))).toBeOnTheScreen();
   expect(screen.getByText(en('appupdate.available.body'))).toBeOnTheScreen();
   expect(screen.queryByTestId('appupdate.required')).toBeNull();
@@ -203,6 +221,7 @@ it('a soft prompt the member never answered comes back at the next launch', asyn
   serve(null, '2.6.0');
   const first = await render(<AppUpdateHost />);
   await settle();
+  await wait(SOFT_PROMPT_SETTLE_MS);
   expect(screen.getByTestId('appupdate.available')).toBeOnTheScreen();
   // The app is closed with the prompt still up.
   await first.unmount();
@@ -212,6 +231,7 @@ it('a soft prompt the member never answered comes back at the next launch', asyn
   setAppUpdateDepsForTests({ currentVersion: () => '2.5.6' });
   await render(<AppUpdateHost />);
   await settle();
+  await wait(SOFT_PROMPT_SETTLE_MS);
   expect(screen.getByTestId('appupdate.available')).toBeOnTheScreen();
 });
 
@@ -219,6 +239,7 @@ it('back on the soft prompt answers Not now', async () => {
   serve(null, '2.6.0');
   await render(<AppUpdateHost />);
   await settle();
+  await wait(SOFT_PROMPT_SETTLE_MS);
   await fireEvent(screen.getByTestId('appupdate.available'), 'requestClose');
   await settle();
   expect(screen.queryByTestId('appupdate.available')).toBeNull();
@@ -230,6 +251,7 @@ it('Update on the soft prompt opens the store and retires it too', async () => {
   serve(null, '2.6.0');
   await render(<AppUpdateHost />);
   await settle();
+  await wait(SOFT_PROMPT_SETTLE_MS);
   await fireEvent.press(screen.getByTestId('appupdate.available.update'));
   await settle();
   expect(openURL).toHaveBeenCalledWith(MARKET);
@@ -254,6 +276,133 @@ it('nothing at all when the check fails or the app is current', async () => {
   await settle();
   expect(screen.queryByTestId('appupdate.required')).toBeNull();
   expect(screen.queryByTestId('appupdate.available')).toBeNull();
+});
+
+describe('a check-in on its way holds "A new version is available" (iOS 3.1.0 follow-up 2)', () => {
+  const VENUE = '3f2b8c1e-7d4a-4b6e-9c2f-1a2b3c4d5e6f';
+  const intents = () => useIntentStore.getState();
+
+  const underway: readonly (readonly [string, () => void, () => void])[] = [
+    ['the Scan camera is live', () => intents().setScanCameraLive(true), () => intents().setScanCameraLive(false)],
+    ['a door link is parked', () => void intents().parkScanVenue(VENUE), () => void intents().takeScanVenue()],
+    ['a walk-in is on its way in the scanner in front', () => intents().setWalkInActive(true), () => intents().setWalkInActive(false)],
+  ];
+
+  it.each(underway)('not while %s; up a second after it ends', async (_case, start, end) => {
+    await act(async () => start());
+    serve(null, '2.6.0');
+    await render(<AppUpdateHost />);
+    await settle();
+    expect(useAppUpdate.getState().prompt.kind).toBe('available');
+    await wait(10 * SOFT_PROMPT_SETTLE_MS);
+    expect(screen.queryByTestId('appupdate.available')).toBeNull();
+
+    await act(async () => end());
+    await wait(SOFT_PROMPT_SETTLE_MS - 1);
+    expect(screen.queryByTestId('appupdate.available')).toBeNull();
+    await wait(1);
+    expect(screen.getByTestId('appupdate.available')).toBeOnTheScreen();
+    // Held is not answered.
+    expect(await answered()).toBeNull();
+  });
+
+  it('the second starts over whenever a check-in starts again before it is up', async () => {
+    serve(null, '2.6.0');
+    await act(async () => intents().setWalkInActive(true));
+    await render(<AppUpdateHost />);
+    await settle();
+
+    // The preview returned and the sheet is up: still on its way.
+    await act(async () => intents().setWalkInActive(false));
+    await wait(SOFT_PROMPT_SETTLE_MS / 2);
+    // The member scans again at once.
+    await act(async () => intents().setScanCameraLive(true));
+    await wait(SOFT_PROMPT_SETTLE_MS);
+    expect(screen.queryByTestId('appupdate.available')).toBeNull();
+    await act(async () => intents().setScanCameraLive(false));
+    await wait(SOFT_PROMPT_SETTLE_MS / 2);
+    expect(screen.queryByTestId('appupdate.available')).toBeNull();
+    await wait(SOFT_PROMPT_SETTLE_MS / 2);
+    expect(screen.getByTestId('appupdate.available')).toBeOnTheScreen();
+  });
+
+  it('a door link that arrives while it is up sends it away unanswered; it comes back once the member is through', async () => {
+    serve(null, '2.6.0');
+    await render(<AppUpdateHost />);
+    await settle();
+    await wait(SOFT_PROMPT_SETTLE_MS);
+    expect(screen.getByTestId('appupdate.available')).toBeOnTheScreen();
+
+    await act(async () => void intents().parkScanVenue(VENUE));
+    expect(screen.queryByTestId('appupdate.available')).toBeNull();
+    expect(useAppUpdate.getState().prompt.kind).toBe('available');
+    expect(await answered()).toBeNull();
+
+    // The Scan tab takes the venue and asks "Check in at ...?" (a walk-in in hand).
+    await act(async () => {
+      intents().takeScanVenue();
+      intents().setWalkInActive(true);
+    });
+    await wait(SOFT_PROMPT_SETTLE_MS);
+    expect(screen.queryByTestId('appupdate.available')).toBeNull();
+    await act(async () => intents().setWalkInActive(false));
+    await wait(SOFT_PROMPT_SETTLE_MS);
+    expect(screen.getByTestId('appupdate.available')).toBeOnTheScreen();
+  });
+
+  it('never holds the block', async () => {
+    await act(async () => {
+      intents().setScanCameraLive(true);
+      intents().setWalkInActive(true);
+    });
+    serve('2.6.0', '2.6.0');
+    await render(<AppUpdateHost />);
+    await settle();
+    expect(screen.getByTestId('appupdate.required')).toBeOnTheScreen();
+  });
+});
+
+describe('the rest of its moment (iOS softAlertMayShow)', () => {
+  it.each([
+    ['the Kenni nudge', { pendingKennitalaPrompt: true }, { pendingKennitalaPrompt: false }],
+    ['the new-password screen', { pendingPasswordRecovery: true }, { pendingPasswordRecovery: false }],
+  ] as const)('not while %s is armed', async (_case, armed, done) => {
+    await act(async () => useAppStore.setState(armed));
+    serve(null, '2.6.0');
+    await render(<AppUpdateHost />);
+    await settle();
+    await wait(10 * SOFT_PROMPT_SETTLE_MS);
+    expect(screen.queryByTestId('appupdate.available')).toBeNull();
+    await act(async () => useAppStore.setState(done));
+    await wait(SOFT_PROMPT_SETTLE_MS);
+    expect(screen.getByTestId('appupdate.available')).toBeOnTheScreen();
+  });
+
+  it('not in the background: a second after the app is back in front', async () => {
+    const addEventListener = jest.mocked(AppState.addEventListener);
+    const own = addEventListener.getMockImplementation();
+    const listeners = new Set<(state: AppStateStatus) => void>();
+    addEventListener.mockImplementation((_type, listener) => {
+      listeners.add(listener as (state: AppStateStatus) => void);
+      return { remove: () => void listeners.delete(listener as (state: AppStateStatus) => void) } as NativeEventSubscription;
+    });
+    try {
+      serve(null, '2.6.0');
+      await render(<AppUpdateHost />);
+      await act(async () => [...listeners].forEach((listener) => listener('background')));
+      await settle();
+      await wait(10 * SOFT_PROMPT_SETTLE_MS);
+      expect(screen.queryByTestId('appupdate.available')).toBeNull();
+
+      await act(async () => [...listeners].forEach((listener) => listener('active')));
+      await settle();
+      await wait(SOFT_PROMPT_SETTLE_MS);
+      expect(screen.getByTestId('appupdate.available')).toBeOnTheScreen();
+    } finally {
+      if (own) addEventListener.mockImplementation(own);
+      else addEventListener.mockReset();
+    }
+  });
 });
 
 describe('the store links', () => {
