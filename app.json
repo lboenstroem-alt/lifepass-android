@@ -2,7 +2,7 @@
   "expo": {
     "name": "LifePass",
     "slug": "lifepass-iceland",
-    "version": "2.5.6",
+    "version": "3.1.0",
     "scheme": "lifepass",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

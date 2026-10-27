@@ -47,11 +47,11 @@ const pluginOptions = (c: Json, name: string): Json | undefined => {
 };
 
 describe('app identity', () => {
-  it('is the LifePass Android app at version 2.5.6 (D22), with the EAS project kept', () => {
+  it('is the LifePass Android app at version 3.1.0 (the iOS 3.1.0 features; D22), with the EAS project kept', () => {
     expect(config.name).toBe('LifePass');
     expect(config.android.package).toBe('is.lifepass.android');
-    expect(config.version).toBe('2.5.6');
-    expect(readJson<Json>('package.json').version).toBe('2.5.6');
+    expect(config.version).toBe('3.1.0');
+    expect(readJson<Json>('package.json').version).toBe('3.1.0');
     expect(config.scheme).toBe('lifepass');
     expect(config.owner).toBe('lifepass');
     expect(config.slug).toBe('lifepass-iceland');
