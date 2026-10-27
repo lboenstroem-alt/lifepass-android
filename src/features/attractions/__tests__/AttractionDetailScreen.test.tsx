@@ -73,18 +73,35 @@ async function renderCard({ slug = 'seljalandsfoss', key = 'AttractionDetail-1' 
   await waitFor(() => expect(screen.queryByTestId('attraction.loading')).toBeNull());
 }
 
+type Node = ReturnType<typeof screen.getByTestId>;
+
+/** The first element at or under `node` that `match` accepts. */
+function findUnder(node: Node, match: (node: Node) => boolean): Node | null {
+  if (match(node)) return node;
+  for (const child of node.children) {
+    const found = typeof child === 'string' ? null : findUnder(child as Node, match);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * The Mapbox map under `testID`, if one was built: its sizing wrapper (which
+ * listens for layout) before it has a size, the native map once it has.
+ */
+function mapViewUnder(testID: string): Node | null {
+  return findUnder(
+    screen.getByTestId(testID, { includeHiddenElements: true }),
+    (node) => typeof node.props.onLayout === 'function' || String(node.type).startsWith('RNMBX'),
+  );
+}
+
 /** Mapbox draws a map's contents once its view has a size: give it one. */
 async function layOutMap(testID: string) {
-  type Node = ReturnType<typeof screen.getByTestId>;
-  const withLayout = (node: Node): Node | null => {
-    if (typeof node.props.onLayout === 'function') return node;
-    for (const child of node.children) {
-      const found = typeof child === 'string' ? null : withLayout(child as Node);
-      if (found) return found;
-    }
-    return null;
-  };
-  const view = withLayout(screen.getByTestId(testID, { includeHiddenElements: true }));
+  const view = findUnder(
+    screen.getByTestId(testID, { includeHiddenElements: true }),
+    (node) => typeof node.props.onLayout === 'function',
+  );
   if (!view) throw new Error(`no map view under ${testID}`);
   await fireEvent(view, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 240 } } });
   return within(screen.getByTestId(testID, { includeHiddenElements: true }));
@@ -386,6 +403,52 @@ describe('walks', () => {
     expect(navigation.push).toHaveBeenCalledWith('AttractionDetail', { slug: 'glymur' });
     await fireEvent.press(screen.getByTestId('attraction.trail.glymur-trail'));
     expect(navigation.push).toHaveBeenCalledWith('AttractionDetail', { slug: 'glymur-trail' });
+  });
+});
+
+describe('a build without a Mapbox token', () => {
+  const original = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
+  afterEach(() => {
+    process.env.EXPO_PUBLIC_MAPBOX_TOKEN = original;
+  });
+
+  /** A walk with no picture: both of the card's still maps are asked for. */
+  const pictureless = {
+    kind: 'hike',
+    images: [],
+    routeGeojson: { type: 'LineString', coordinates: [[-21.1, 64.1], [-21.0, 64.2]] },
+    lengthM: 7100,
+    durationMinutes: 180,
+    outAndBack: true,
+  };
+
+  it('builds both maps when the build has one', async () => {
+    serve(pictureless);
+    await renderCard();
+    expect(mapViewUnder('attraction.hero.map')).not.toBeNull();
+    expect(mapViewUnder('attraction.route.map')).not.toBeNull();
+  });
+
+  it('leaves the hero and the route bands empty and never builds a Mapbox map (which would throw without one)', async () => {
+    process.env.EXPO_PUBLIC_MAPBOX_TOKEN = '';
+    serve(pictureless);
+    await renderCard();
+    expect(screen.getByTestId('attraction.hero.map', { includeHiddenElements: true })).toBeOnTheScreen();
+    expect(mapViewUnder('attraction.hero.map')).toBeNull();
+    expect(screen.getByTestId('attraction.route.map', { includeHiddenElements: true })).toBeOnTheScreen();
+    expect(mapViewUnder('attraction.route.map')).toBeNull();
+    expect(screen.queryByTestId('attraction.map.name', { includeHiddenElements: true })).toBeNull();
+    // The rest of the card is unchanged: the walk's facts and its credit.
+    expect(screen.getByText('Route: © OpenStreetMap contributors, ODbL')).toBeOnTheScreen();
+    expect(within(screen.getByTestId('attraction.facts')).getByText('7.1 km one way')).toBeOnTheScreen();
+  });
+
+  it.each(['   ', '$(MAPBOX_TOKEN)'])('treats the token %j (blank or an unresolved placeholder) as none', async (token) => {
+    process.env.EXPO_PUBLIC_MAPBOX_TOKEN = token;
+    serve(pictureless);
+    await renderCard();
+    expect(mapViewUnder('attraction.hero.map')).toBeNull();
+    expect(mapViewUnder('attraction.route.map')).toBeNull();
   });
 });
 
