@@ -1,5 +1,4 @@
 import type { ComponentProps } from 'react';
-import type { ImageSourcePropType } from 'react-native';
 import type { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 // ─── The Coach's category tiles (iOS CoachView.swift `coachCategories`) ───────
@@ -39,59 +38,4 @@ export const COACH_CATEGORY_TILES: readonly CoachCategoryTile[] = [
   { id: 'spa', labelKey: 'coach.cat.spa', icon: { family: 'ionicons', name: 'sparkles' } },
   // figure.mind.and.body
   { id: 'yoga', labelKey: 'coach.cat.yoga', icon: { family: 'material', name: 'yoga' } },
-];
-
-// ─── LEGACY: the first build's Home cards ─────────────────────────────────────
-//
-// @deprecated Read only by the first build's Home screen
-// (src/screens/home/HomeScreen.tsx), which HOME-1 replaces; the new Home parks
-// its own prompt for the Coach. Delete with that screen (QA-1).
-// Image files live in assets/categories/ — filename should match `id`.
-
-export type CoachCategory = {
-  id: string;
-  label: string;
-  image: ImageSourcePropType;
-  /** Sent to Coach when this card is tapped. */
-  prompt: string;
-};
-
-/** @deprecated See above. */
-export const coachCategories: CoachCategory[] = [
-  {
-    id: 'pools',
-    label: 'Icelandic Pools',
-    image: require('../../assets/categories/pools.jpg'),
-    prompt: 'I want to try Icelandic swimming pools. Which ones are best to start with this week?',
-  },
-  {
-    id: 'gyms',
-    label: 'Gyms & Classes',
-    image: require('../../assets/categories/gyms.jpg'),
-    prompt: 'Suggest gym classes I should try this week.',
-  },
-  {
-    id: 'wellness',
-    label: 'Wellness',
-    image: require('../../assets/categories/wellness.jpg'),
-    prompt: "I'd like a relaxing wellness day. What do you suggest?",
-  },
-  {
-    id: 'golf',
-    label: 'Golf',
-    image: require('../../assets/categories/golf.jpg'),
-    prompt: 'Tell me about golf options available through LifePass.',
-  },
-  {
-    id: 'spa',
-    label: 'Spa & Lagoons',
-    image: require('../../assets/categories/spa.jpg'),
-    prompt: 'Plan a perfect spa or lagoon evening for me.',
-  },
-  {
-    id: 'yoga',
-    label: 'Yoga & Pilates',
-    image: require('../../assets/categories/yoga.jpg'),
-    prompt: "I'm new to yoga. Where should I start in Reykjavík?",
-  },
 ];
