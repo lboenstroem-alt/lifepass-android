@@ -4,7 +4,15 @@
  * below the minimum, the soft prompt once per new version, and FAIL OPEN on
  * everything unknown or unreadable.
  */
-import { compareAppVersions, decideUpdatePrompt, formatAppVersion, parseAppVersion, type AppVersion } from '../policy';
+import {
+  compareAppVersions,
+  decideUpdatePrompt,
+  formatAppVersion,
+  parseAppVersion,
+  SOFT_PROMPT_SETTLE_MS,
+  softPromptMayShow,
+  type AppVersion,
+} from '../policy';
 
 describe('versions', () => {
   it.each([
@@ -97,5 +105,28 @@ describe('the decision', () => {
     expect(decideUpdatePrompt({ ...base, currentVersion: '3.0.0-dev', minimumVersion: '9.0.0' })).toEqual({ kind: 'none' });
     expect(decideUpdatePrompt({ ...base, minimumVersion: 'v9' })).toEqual({ kind: 'none' });
     expect(decideUpdatePrompt({ ...base, latestVersion: 'soon' })).toEqual({ kind: 'none' });
+  });
+});
+
+// iOS AppUpdatePolicyTests.testTheAlertWaitsForAFreeScreen (its `presenting`
+// case has no Android reading: see `softPromptMayShow`).
+describe('when the soft prompt may go up', () => {
+  const free = { launching: false, appActive: true, sheetPending: false, checkInUnderway: false };
+
+  it('on a free screen', () => {
+    expect(softPromptMayShow(free)).toBe(true);
+  });
+
+  it.each([
+    ['the launch screen', { launching: true }],
+    ['in the background', { appActive: false }],
+    ['a sheet is armed', { sheetPending: true }],
+    ['a check-in is on its way', { checkInUnderway: true }],
+  ] as const)('not over %s', (_case, change) => {
+    expect(softPromptMayShow({ ...free, ...change })).toBe(false);
+  });
+
+  it('after a second of it (iOS softAlertSettle)', () => {
+    expect(SOFT_PROMPT_SETTLE_MS).toBe(1_000);
   });
 });
