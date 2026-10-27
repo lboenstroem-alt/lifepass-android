@@ -201,6 +201,39 @@ describe('action answers patch today without a second read', () => {
     expect(store().days[TODAY].day?.session?.status).toBe('done');
   });
 
+  it("an answer's week reaches the other remembered days of that week, not another week's (API 0.35.0, iOS LogWorkoutTests)", () => {
+    // Yesterday's card logs an extra: the answer's week (the same week as
+    // today's) reaches yesterday's remembered read too, whose strip is the
+    // one on screen; another week's read, and another plan's, are left alone.
+    const week = (weekStartsOn: string, programId: string | null = 'prog-1') => ({ programId, weekNo: 2, weeks: 4, weekStartsOn, days: [], planned: 3, done: 1 });
+    const yesterday = addServerDays(TODAY, -1)!;
+    const lastWeek = addServerDays(TODAY, -8)!;
+    const otherPlan = addServerDays(TODAY, -2)!;
+    const thisWeekStart = '2026-09-28';
+    const remember = (date: string, weekJSON: Record<string, unknown>) => decodeHealthDay(dayJSON(date, { week: weekJSON }));
+    const today = remember(TODAY, week(thisWeekStart));
+    useHealthStore.setState({
+      today,
+      days: {
+        [TODAY]: today,
+        [yesterday]: remember(yesterday, week(thisWeekStart)),
+        [lastWeek]: remember(lastWeek, week('2026-09-21')),
+        [otherPlan]: remember(otherPlan, week(thisWeekStart, 'prog-2')),
+      },
+    });
+
+    const answered = decodeHealthDay(dayJSON(TODAY, { week: { ...week(thisWeekStart), extrasDone: 1, workoutsDone: 2 } })).week!;
+    store().applyActionResult({ week: answered });
+
+    expect(store().today?.week?.extrasDone).toBe(1);
+    expect(store().days[TODAY].week?.extrasDone).toBe(1);
+    expect(store().days[yesterday].week?.extrasDone).toBe(1);
+    expect(store().days[yesterday].week?.workoutsDone).toBe(2);
+    expect(store().days[yesterday].day?.session?.id).toBe(`s-${yesterday}`);
+    expect(store().days[lastWeek].week?.extrasDone).toBeNull();
+    expect(store().days[otherPlan].week?.extrasDone).toBeNull();
+  });
+
   it("a move's partner on today's date is the row today shows", () => {
     const moved = decodeSessionView({ id: 'other', scheduledFor: addServerDays(TODAY, 1), status: 'planned' }, 's');
     const partner = decodeSessionView({ id: 'partner', scheduledFor: TODAY, status: 'planned', title: 'Swim' }, 's');

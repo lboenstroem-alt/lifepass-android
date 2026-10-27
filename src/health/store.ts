@@ -415,7 +415,19 @@ export const useHealthStore = create<HealthStore>()((set, get) => {
       // Plan draws `days[selectedDate] ?? today`, and a read of today fills
       // BOTH: updating only `today` left the page drawing the day as it was
       // before the action until the next read.
-      const days = get().days[rebuilt.date] ? { ...get().days, [rebuilt.date]: rebuilt } : get().days;
+      let days = get().days[rebuilt.date] ? { ...get().days, [rebuilt.date]: rebuilt } : get().days;
+      // The other remembered days of the same week draw the same strip, and
+      // since API 0.35.0 its total moves with an extra logged or removed on
+      // any of them (yesterday's card): they take the answer's week too. A
+      // remembered read of another week, or of another plan, is left alone.
+      const start = week?.weekStartsOn ?? null;
+      if (week && start !== null) {
+        for (const [date, remembered] of Object.entries(days)) {
+          if (date === rebuilt.date || !remembered.week) continue;
+          if (remembered.week.weekStartsOn !== start || remembered.week.programId !== week.programId) continue;
+          days = { ...days, [date]: replacingInDay(remembered, { week }) };
+        }
+      }
       set({ today: rebuilt, days });
       writeCache(rebuilt);
     },

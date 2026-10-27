@@ -124,6 +124,22 @@ describe('the week strip', () => {
     expect(screen.getByText(en('plan.week.progress', { done: 1, planned: 3 }))).toBeOnTheScreen();
   });
 
+  it('counts an extra workout toward the week, keeping the plan line done of planned (API 0.35.0)', async () => {
+    await renderStrip({ week: week({ done: 1, planned: 3, extrasDone: 1, workoutsDone: 2 }) });
+    expect(screen.getByTestId('plan.week.progress')).toHaveTextContent('2 workouts this week: 1 of 3 planned + 1 extra');
+    await screen.rerender(
+      <PlanWeekStrip
+        week={week({ done: 1, planned: 3, extrasDone: 0, workoutsDone: 1 })}
+        selectedDate="2026-09-17"
+        todayDate="2026-09-17"
+        isPaused={false}
+        onSelect={() => undefined}
+        onMoveWeek={() => undefined}
+      />,
+    );
+    expect(screen.getByTestId('plan.week.progress')).toHaveTextContent(en('plan.week.progress', { done: 1, planned: 3 }));
+  });
+
   it('draws each status as a shape, hidden from TalkBack', async () => {
     await renderStrip();
     expect(screen.getByTestId('plan.week.day.2026-09-14.mark.done', { includeHiddenElements: true })).toBeTruthy();
