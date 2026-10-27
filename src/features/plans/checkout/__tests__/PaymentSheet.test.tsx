@@ -192,6 +192,29 @@ describe('the payment sheet', () => {
     expect(currentRoute()).toBe('Plans');
     expect(checkouts()).toHaveLength(0);
   });
+
+  it('puts TalkBack back on Continue once the sheet has gone (VoiceOver returns to the presenting button)', async () => {
+    // The test renderer has no native views: only Continue gets a tag, so a
+    // focus call with it can only mean Continue.
+    const reactNative: typeof ReactNative = jest.requireActual('react-native');
+    const isContinue = (instance: unknown) =>
+      (instance as { props?: { testID?: string } } | null)?.props?.testID === 'plans.continue';
+    const nodeHandle = jest
+      .spyOn(reactNative, 'findNodeHandle')
+      .mockImplementation(((instance: unknown) => (isContinue(instance) ? 88 : null)) as typeof ReactNative.findNodeHandle);
+    try {
+      await renderPlans();
+      await fireEvent.press(continueButton());
+      expect(sheetFor('plan-plus')).toBeOnTheScreen();
+      expect(setFocus).not.toHaveBeenCalledWith(88);
+
+      await pressBack();
+      expect(sheetFor('plan-plus')).toBeNull();
+      await waitFor(() => expect(setFocus).toHaveBeenCalledWith(88));
+    } finally {
+      nodeHandle.mockRestore();
+    }
+  });
 });
 
 describe('the discount code', () => {
