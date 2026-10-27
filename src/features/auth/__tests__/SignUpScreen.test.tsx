@@ -2,12 +2,14 @@
  * Create account (iOS SignUpView + AuthViewModel.signUp): Create refused
  * until Terms is ticked, the checks in iOS order and the screen's language,
  * the nationality prefilled from the email, exactly iOS's metadata with
- * `signup_source: 'android'`, the check-your-email alert, and its Android
- * fallback.
+ * `signup_source: 'android'`, the check-your-email alert, its Android
+ * fallback, and Create and the provider sign-ins blocking each other (iOS's
+ * one `isLoading`).
  */
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { Linking } from 'react-native';
 
+import { setEnv } from '@test/harness';
 import { api, Reply, supabase as authHost, type StubReply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../api/testing';
@@ -24,6 +26,8 @@ import {
 } from '../../../stores/__tests__/storeHarness';
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
 import { supabase } from '../../../supabase/lib/client';
+import { resetSocialProviderSettingsForTests } from '../providerSettings';
+import { signInWithSocialProvider, useSocialSignInStore } from '../social';
 import { authNavigation, authStack, renderAuth } from './authHarness';
 
 jest.mock('@gorhom/bottom-sheet', () =>
@@ -31,6 +35,13 @@ jest.mock('@gorhom/bottom-sheet', () =>
   require('../../../components/ui/testing/bottomSheetMock').bottomSheetModule,
 );
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
+// The provider flow itself (Custom Tab, exchange) is socialSignIn.test.ts's; here only whether it starts.
+jest.mock('../social', () => ({
+  ...jest.requireActual('../social'),
+  signInWithSocialProvider: jest.fn(),
+}));
+
+const startSocial = jest.mocked(signInWithSocialProvider);
 
 stubApiClientPerTest();
 freshStorePerTest();
@@ -299,6 +310,61 @@ describe('Create account', () => {
       await waitFor(() => expect(screen.getByText(en('auth.err.unconfirmed'))).toBeOnTheScreen());
       expect(useAppStore.getState().isAuthenticated).toBe(false);
     });
+  });
+});
+
+describe('one sign-in at a time (iOS: one isLoading for the screen)', () => {
+  beforeEach(() => {
+    resetSocialProviderSettingsForTests();
+    useSocialSignInStore.setState({ busy: false, unreportedFailure: false });
+    startSocial.mockReset().mockResolvedValue('cancelled');
+    setEnv({ EXPO_PUBLIC_SOCIAL_SIGN_IN: 'YES' });
+    authHost.on('GET', '/auth/v1/settings', Reply.json(200, { external: { email: true, apple: true, google: true } }));
+  });
+
+  async function fillValid() {
+    await fill({ name: 'Jón Jónsson', email: 'member@example.is', password: 'a long password' });
+    await tickTerms();
+  }
+
+  it('while Create runs, Apple and Google are disabled and dimmed', async () => {
+    await openSignUp();
+    await screen.findByTestId('auth.google');
+    let answer: (reply: StubReply) => void = () => undefined;
+    authHost.on('POST', '/auth/v1/signup', () => new Promise<StubReply>((resolve) => (answer = resolve)));
+
+    await fillValid();
+    await fireEvent.press(createButton());
+    await waitFor(() => expect(screen.getByRole('button', { name: en('auth.creating') })).toBeDisabled());
+    expect(screen.getByTestId('auth.social')).toHaveStyle({ opacity: 0.6 });
+    for (const id of ['auth.apple', 'auth.google']) {
+      expect(screen.getByTestId(id)).toHaveProp('accessibilityState', { disabled: true, busy: false });
+    }
+    await fireEvent.press(screen.getByTestId('auth.apple'));
+    expect(startSocial).not.toHaveBeenCalled();
+
+    await act(async () => {
+      answer(Reply.json(429, { code: 429, error_code: 'over_email_send_rate_limit', msg: 'email rate limit exceeded' }));
+    });
+    await waitFor(() => expect(screen.getByText(en('auth.err.rate_limited'))).toBeOnTheScreen());
+    expect(screen.getByTestId('auth.apple')).toHaveProp('accessibilityState', { disabled: false, busy: false });
+    await fireEvent.press(screen.getByTestId('auth.apple'));
+    expect(startSocial).toHaveBeenCalledWith('apple');
+  });
+
+  it('while a provider sign-in runs, Create says "Creating…" and takes no press', async () => {
+    await openSignUp();
+    await screen.findByTestId('auth.google');
+    await fillValid();
+
+    await act(() => useSocialSignInStore.setState({ busy: true }));
+    expect(screen.getByRole('button', { name: en('auth.creating') })).toBeDisabled();
+    await fireEvent.press(createButton());
+    await act(async () => undefined);
+    expect(authHost.sentAll('/auth/v1/signup', 'POST')).toHaveLength(0);
+
+    await act(() => useSocialSignInStore.setState({ busy: false }));
+    expect(screen.getByRole('button', { name: en('auth.create') })).toBeEnabled();
   });
 });
 
