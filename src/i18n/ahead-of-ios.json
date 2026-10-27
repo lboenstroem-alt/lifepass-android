@@ -110,6 +110,19 @@
      "venue.ratings.sub_value": "{label}: {value} af 5"
     }
    }
+  },
+  {
+   "change": "Rate LifePass / Gefa LifePass einkunn, the Account row's title (account.rateApp.title; Android's subtitle and hint name Google Play in the ACCT-1 pack) (API 0.46.0; the app version after 3.1.0)",
+   "dictionary": "base",
+   "ios": {},
+   "android": {
+    "en": {
+     "account.rateApp.title": "Rate LifePass"
+    },
+    "is": {
+     "account.rateApp.title": "Gefa LifePass einkunn"
+    }
+   }
   }
  ]
 }

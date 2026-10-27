@@ -84,6 +84,11 @@ export function currentClassSheetRequest(): ClassSheetRequest | null {
   return requests.get().request;
 }
 
+/** Hears a sheet open or close, outside React (what waits for no booking on screen). */
+export function subscribeClassSheetRequests(listener: () => void): () => void {
+  return requests.subscribe(listener);
+}
+
 /** The open sheet's booking started or ended (only the open request's report counts). */
 export function setClassSheetBusy(id: number, busy: boolean): void {
   const state = requests.get();

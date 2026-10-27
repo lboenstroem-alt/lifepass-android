@@ -18,6 +18,7 @@ import { stubNetwork } from './test/server';
 import { fileSystemState } from './test/mocks/expoFileSystem';
 import { notificationsState } from './test/mocks/expoNotifications';
 import { secureStoreState } from './test/mocks/expoSecureStore';
+import { storeReviewState } from './test/mocks/expoStoreReview';
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 
@@ -44,6 +45,10 @@ jest.mock('expo-file-system/src/legacy/ExponentFileSystem', () => ({
 
 // Local notifications: scheduled, presented, tapped (test/mocks/expoNotifications).
 jest.mock('expo-notifications', () => require('./test/mocks/expoNotifications'));
+
+// Google Play's in-app review card: available, and every ask counted
+// (test/mocks/expoStoreReview).
+jest.mock('expo-store-review', () => require('./test/mocks/expoStoreReview'));
 
 // NetInfo: the library's mock (online, wifi).
 jest.mock('@react-native-community/netinfo', () =>
@@ -102,6 +107,7 @@ afterEach(async () => {
   setCurrentLanguage('en');
   stubNetwork.reset();
   notificationsState.reset();
+  storeReviewState.reset();
   secureStoreState.reset();
   fileSystemState.reset();
   await AsyncStorage.clear();

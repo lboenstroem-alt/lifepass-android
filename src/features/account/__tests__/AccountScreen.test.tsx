@@ -5,9 +5,11 @@
  * both languages, the slots' mount points, the company fallback row, the
  * referral row, the language switch, sign-out, and the links.
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
 import { Linking, Share } from 'react-native';
 
+import { storeReviewState } from '@test/mocks/expoStoreReview';
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../api/testing';
@@ -186,6 +188,7 @@ describe('the rows, in iOS’s order', () => {
       'Language, English',
       'Notifications',
       'Help & support, support@lifepass.is',
+      'Rate LifePass, On Google Play',
       'Log out',
       '[DeletionRow]',
     ]);
@@ -207,6 +210,7 @@ describe('the rows, in iOS’s order', () => {
       'Tungumál, Íslenska',
       'Tilkynningar',
       'Aðstoð, support@lifepass.is',
+      'Gefa LifePass einkunn, Á Google Play',
       'Skrá út',
       '[DeletionRow]',
     ]);
@@ -492,6 +496,39 @@ describe('the other rows', () => {
     }
   });
 
+  it('Rate LifePass opens LifePass in the Play Store app, and is never an ask', async () => {
+    await renderAccount();
+    const row = screen.getByTestId('account.row.rateApp');
+    expect(row.props.accessibilityHint).toBe('Opens LifePass in Google Play');
+    await fireEvent.press(row);
+    await settle();
+    expect(openURL).toHaveBeenCalledWith('market://details?id=is.lifepass.android');
+    expect(openURL).toHaveBeenCalledTimes(1);
+    // Not Google Play's review card: the 4 months are untouched.
+    expect(storeReviewState.requests()).toBe(0);
+    expect(await AsyncStorage.getAllKeys()).not.toContainEqual(expect.stringMatching(/^storeReview\./));
+  });
+
+  it('Rate LifePass falls back to the web listing on a phone without the Play Store app', async () => {
+    openURL.mockRejectedValueOnce(new Error('no activity for market://'));
+    await renderAccount();
+    await fireEvent.press(screen.getByTestId('account.row.rateApp'));
+    await settle();
+    expect(openURL.mock.calls.map((call) => call[0])).toEqual([
+      'market://details?id=is.lifepass.android',
+      'https://play.google.com/store/apps/details?id=is.lifepass.android',
+    ]);
+  });
+
+  it('Rate LifePass in Icelandic', async () => {
+    signedInAs(profileJSON({ locale: 'is' }));
+    await renderAccount();
+    const row = screen.getByTestId('account.row.rateApp');
+    expect(within(row).getByText('Gefa LifePass einkunn')).toBeOnTheScreen();
+    expect(within(row).getByText('Á Google Play')).toBeOnTheScreen();
+    expect(row.props.accessibilityHint).toBe('Opnar LifePass á Google Play');
+  });
+
   it('a phone that cannot open the mail app stays quiet', async () => {
     openURL.mockRejectedValueOnce(new Error('no activity'));
     await renderAccount();
@@ -522,6 +559,7 @@ describe('the WhatsApp row (API 0.39.0)', () => {
       'Notifications',
       'Help & support, support@lifepass.is',
       'Chat on WhatsApp',
+      'Rate LifePass, On Google Play',
       'Log out',
       '[DeletionRow]',
     ]);

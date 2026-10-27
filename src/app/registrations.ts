@@ -107,6 +107,7 @@ export const FEATURE_REGISTER_FILES: Readonly<Record<string, Load>> = {
   plan: () => require('../features/plan/register'),
   plans: () => require('../features/plans/register'),
   runner: () => require('../features/runner/register'),
+  storeReview: () => require('../features/storeReview/register'),
   venue: () => require('../features/venue/register'),
 };
 

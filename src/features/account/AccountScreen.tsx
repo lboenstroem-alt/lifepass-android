@@ -16,7 +16,9 @@
  *   Account      BODY-1's slots/BodyGoalsRow, Refer a friend (once a link has
  *                loaded), AUTH-3's slots/IdentityRow, Language, Notifications
  *                (Android only, decision D4), Help & support, Chat on
- *                WhatsApp (only while GET /profile carries the chat), Log out, and
+ *                WhatsApp (only while GET /profile carries the chat), Rate
+ *                LifePass (always: LifePass in Google Play, API 0.46.0; not
+ *                an ask, src/features/storeReview), Log out, and
  *                ACCT-4's slots/DeletionRow
  *   footer       Terms · Privacy · Contact, and the legal name
  *
@@ -68,6 +70,7 @@ import { useLanguageSwitch } from './languageSwitch';
 import {
   COMPANY_DASHBOARD_URL,
   openExternal,
+  openRateLifePass,
   PRIVACY_URL,
   SUPPORT_EMAIL,
   SUPPORT_MAILTO,
@@ -223,6 +226,13 @@ export default function AccountScreen({ navigation }: SharedRouteProps<'Account'
               testID="account.row.whatsapp"
             />
           ) : null}
+          <AccountRowButton
+            title={t('account.rateApp.title')}
+            subtitle={t('account.android.rateApp.subtitle')}
+            accessibilityHint={t('account.android.rateApp.hint')}
+            onPress={() => void openRateLifePass()}
+            testID="account.row.rateApp"
+          />
           <AccountRowButton
             title={t('account.logout')}
             dim

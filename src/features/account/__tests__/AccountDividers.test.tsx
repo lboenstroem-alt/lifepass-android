@@ -72,6 +72,8 @@ it('a subscriber with a referral link: one line between every row of both cards'
     '—',
     'Help & support, support@lifepass.is',
     '—',
+    'Rate LifePass, On Google Play',
+    '—',
     'Log out',
     '—',
     'Delete account',

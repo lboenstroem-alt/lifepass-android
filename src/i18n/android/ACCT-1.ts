@@ -18,6 +18,11 @@
 //   `account.whatsapp` twice: delete it from this pack then, and keep the
 //   hint (iOS has no hint; the row leaves the app for WhatsApp or the
 //   browser, as the Notifications row leaves for the phone's settings).
+// - account.android.rateApp.subtitle, account.android.rateApp.hint: the
+//   "Rate LifePass" row (API 0.46.0, owner decision 27 October 2026). Its
+//   title is iOS's (account.rateApp.title); iOS's subtitle names the App
+//   Store (account.rateApp.subtitle), so Android says Google Play here, and
+//   the hint says the row leaves the app for it.
 import { definePack } from './pack';
 
 export default definePack({
@@ -26,11 +31,15 @@ export default definePack({
     'account.android.notifications_hint': 'Opens the notification settings on your phone',
     'account.whatsapp': 'Chat on WhatsApp',
     'account.android.whatsapp_hint': 'Opens a chat with LifePass support in WhatsApp',
+    'account.android.rateApp.subtitle': 'On Google Play',
+    'account.android.rateApp.hint': 'Opens LifePass in Google Play',
   },
   is: {
     'account.android.notifications': 'Tilkynningar',
     'account.android.notifications_hint': 'Opnar stillingar tilkynninga í símanum',
     'account.whatsapp': 'Spjalla á WhatsApp',
     'account.android.whatsapp_hint': 'Opnar spjall við þjónustuver LifePass í WhatsApp',
+    'account.android.rateApp.subtitle': 'Á Google Play',
+    'account.android.rateApp.hint': 'Opnar LifePass á Google Play',
   },
 });

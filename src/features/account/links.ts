@@ -7,6 +7,7 @@
  */
 import { Linking } from 'react-native';
 
+import { ANDROID_PACKAGE_NAME, PLAY_STORE_URL } from '../../api/appVersion';
 import type { WhatsAppSupport } from '../../api/profile';
 import { MerchantInfo } from '../../config/merchantInfo';
 import type { Lang } from '../../i18n';
@@ -58,5 +59,36 @@ export async function openExternal(url: string): Promise<void> {
     await Linking.openURL(url);
   } catch {
     // Nothing handles this URL on the phone.
+  }
+}
+
+/**
+ * "Rate LifePass" (API 0.46.0, docs/05 "Rating the app"): LifePass's page in
+ * Google Play, where the member can rate the app whenever they like. The Play
+ * Store app first (`market://`), else the listing on the web, which Android
+ * hands to the Play Store app when it is installed and to the browser when
+ * it is not. Not an ask: the row never counts towards the 4 months between
+ * Google Play's review cards (src/features/storeReview).
+ */
+export const RATE_APP_MARKET_URL = `market://details?id=${ANDROID_PACKAGE_NAME}`;
+
+/** The same page on the web. */
+export const RATE_APP_WEB_URL = PLAY_STORE_URL;
+
+/** Opens LifePass in Google Play; resolves false when neither link opened. Never throws. */
+export async function openRateLifePass(
+  open: (url: string) => Promise<unknown> = (url) => Linking.openURL(url),
+): Promise<boolean> {
+  try {
+    await open(RATE_APP_MARKET_URL);
+    return true;
+  } catch {
+    // No Play Store app (or it refused): the web listing.
+  }
+  try {
+    await open(RATE_APP_WEB_URL);
+    return true;
+  } catch {
+    return false;
   }
 }

@@ -43,6 +43,7 @@ import { LPText } from '../../../components/ui';
 import { FONT_SCALE_CAP, useA11ySize } from '../../../hooks/useA11ySize';
 import { useT } from '../../../i18n';
 import { colors } from '../../../theme';
+import { useProofOnScreen } from './onScreen';
 import {
   partyBreakdownLine,
   partyChargedLine,
@@ -93,6 +94,8 @@ export default function CheckInProofDisplay({
 }: CheckInProofDisplayProps) {
   const { t, language } = useT();
   const compact = useA11ySize().isAccessibilitySize;
+  // Nothing may cover the screen reception reads (./onScreen.ts).
+  useProofOnScreen();
 
   const time = proofTime(checkedInAt);
   const day = proofDay(checkedInAt, language);

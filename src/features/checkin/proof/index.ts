@@ -9,8 +9,10 @@
  *   SealMark               the re-offered proof's still seal
  *   proofFormat            the words: Reykjavík time, the day in the
  *                          account's language, the summary, the receipt
+ *   proofOnScreen          a proof is up (nothing may cover it)
  */
 export { default as CheckInProofDisplay, type CheckInProofDisplayProps } from './CheckInProofDisplay';
 export { default as CheckInProofCover, type CheckInProofCoverProps } from './CheckInProofCover';
 export { SealMark, sealMarkSize } from './marks';
 export * from './proofFormat';
+export { proofOnScreen, subscribeProofOnScreen, useProofOnScreen } from './onScreen';
