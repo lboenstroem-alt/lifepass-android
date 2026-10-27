@@ -1,7 +1,8 @@
 /**
  * The seven days of the programme week holding the selected date (iOS
  * PlanWeekStrip.swift, `ios-ux.md` 3.8), and under it "{done} of {planned}
- * sessions done this week".
+ * sessions done this week", or, with an extra workout logged that week,
+ * "4 workouts this week: 3 of 3 planned + 1 extra" (./weekTotals.ts).
  *
  * It is the only way to look at another day, so it has to survive the
  * narrowest phone: seven columns plus two 36 dp chevrons inside 360 dp leave
@@ -27,6 +28,7 @@ import { colors, radius } from '../../../theme';
 
 import StatusMark from './StatusMark';
 import { cellAccessibilityLabel, cellStatus, cellWeekday, dayNumber, swipeWeekDelta } from './weekRules';
+import { weekStripLine } from './weekTotals';
 
 export type PlanWeekStripProps = {
   week: WeekView;
@@ -51,7 +53,8 @@ export default function PlanWeekStrip({
   onMoveWeek,
   testID = 'plan.week',
 }: PlanWeekStripProps) {
-  const { t } = useT();
+  const translator = useT();
+  const { t } = translator;
   const days = week.days ?? [];
   const canGoBack = week.canGoBack ?? false;
   const canGoForward = week.canGoForward ?? false;
@@ -112,7 +115,7 @@ export default function PlanWeekStrip({
         </View>
       </GestureDetector>
       <LPText size={12} color={colors.paper2} style={styles.progress} testID={`${testID}.progress`}>
-        {t('plan.week.progress', { done: week.done ?? 0, planned: week.planned ?? 0 })}
+        {weekStripLine(week, translator)}
       </LPText>
     </View>
   );

@@ -11,6 +11,7 @@
 import type { HealthAccess, HealthDay, WeeklyReviewView } from '../../../health';
 import type { Translator } from '../../../i18n';
 import { decimal, integer } from '../../../i18n/format';
+import { weekReviewLine } from '../week/weekTotals';
 
 /**
  * What the review slot draws for the day on screen: the check-in prompt
@@ -47,8 +48,11 @@ export function reviewLines(review: WeeklyReviewView, translator: Translator): s
 
   if (review.hasPlan === false) {
     lines.push(t('review.no_plan'));
-  } else if (review.sessionsDone !== null && review.sessionsPlanned !== null) {
-    lines.push(t('review.sessions', { done: String(review.sessionsDone), planned: String(review.sessionsPlanned) }));
+  } else {
+    // "3 of 3 sessions done", or with an extra workout that week "4 workouts:
+    // 3 of 3 planned + 1 extra" (iOS `WeekTotalsCopy.reviewLine`).
+    const sessions = weekReviewLine(review, translator);
+    if (sessions !== null) lines.push(sessions);
   }
 
   const direction = review.weightDirection;

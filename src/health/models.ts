@@ -781,6 +781,15 @@ export interface WeekView {
   readonly missed: number | null;
   readonly canGoBack: boolean | null;
   readonly canGoForward: boolean | null;
+  // WEEK TOTALS (API 0.35.0). A workout logged as an extra counts toward the
+  // week's total and never toward a streak; `planned`, `done`, `skipped` and
+  // `missed` stay the plan's own progress. Null from an older server, which
+  // keeps the plan's line alone (src/features/plan/week/weekTotals.ts). Read
+  // fail-soft: an odd value costs that value, never the week.
+  /** The live extras on the week's rows, a rest day's included, removed ones not. */
+  readonly extrasDone: number | null;
+  /** `done` + `extrasDone`: the week's workout total. */
+  readonly workoutsDone: number | null;
 }
 
 const decodeWeekDayCell: Reader<WeekDayCell> = (value, path) => {
@@ -812,6 +821,8 @@ export const decodeWeekView: Reader<WeekView> = (value, path) => {
     missed: opt(json, 'missed', path, integer),
     canGoBack: opt(json, 'canGoBack', path, boolean),
     canGoForward: opt(json, 'canGoForward', path, boolean),
+    extrasDone: soft(json, 'extrasDone', path, integer),
+    workoutsDone: soft(json, 'workoutsDone', path, integer),
   };
 };
 
@@ -1055,6 +1066,15 @@ export interface WeeklyReviewView {
   readonly insight: LocalizedLine | null;
   readonly nextWeekChange: ProgressionChange | null;
   readonly createdAt: Date | null;
+  /**
+   * WEEK TOTALS (API 0.35.0): the live extras on that programme's rows in the
+   * week, worked out when the review is read (a removed extra drops out).
+   * Null from an older server. `sessionsDone` stays the plan's count. Read
+   * fail-soft.
+   */
+  readonly extrasDone: number | null;
+  /** `sessionsDone` + `extrasDone`. */
+  readonly workoutsDone: number | null;
 }
 
 export const decodeWeeklyReview: Reader<WeeklyReviewView> = (value, path) => {
@@ -1077,6 +1097,8 @@ export const decodeWeeklyReview: Reader<WeeklyReviewView> = (value, path) => {
     insight: opt(json, 'insight', path, decodeLocalizedLine),
     nextWeekChange: opt(json, 'nextWeekChange', path, decodeProgressionChange),
     createdAt: opt(json, 'createdAt', path, instant),
+    extrasDone: soft(json, 'extrasDone', path, integer),
+    workoutsDone: soft(json, 'workoutsDone', path, integer),
   };
 };
 

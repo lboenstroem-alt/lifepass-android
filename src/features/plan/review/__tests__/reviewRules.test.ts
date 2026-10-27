@@ -34,6 +34,8 @@ const EMPTY: WeeklyReviewView = {
   insight: null,
   nextWeekChange: null,
   createdAt: null,
+  extrasDone: null,
+  workoutsDone: null,
 };
 
 const review = (patch: Partial<WeeklyReviewView>): WeeklyReviewView => ({ ...EMPTY, ...patch });
@@ -75,6 +77,16 @@ describe('the lines', () => {
     expect(lines).toEqual([
       'Þyngd: upp um 1,2 kg (7 daga meðaltal)',
       'Matur: um 1.950 kcal og 89 g prótein á dag þá daga sem þú skráðir',
+    ]);
+  });
+
+  it('an extra workout that week adds to the sessions line, in both languages (API 0.35.0)', () => {
+    const extra = review({ hasPlan: true, sessionsPlanned: 3, sessionsDone: 3, extrasDone: 1, workoutsDone: 4, streakWeeks: 2 });
+    expect(reviewLines(extra, translator('en'))).toEqual(['4 workouts: 3 of 3 planned + 1 extra', '2 full weeks in a row']);
+    expect(reviewLines(extra, translator('is'))[0]).toBe('4 æfingar: 3 af 3 á áætlun + 1 aukaæfing');
+    // None that week, or an older server: the plan's line as before.
+    expect(reviewLines(review({ sessionsPlanned: 3, sessionsDone: 3, extrasDone: 0, workoutsDone: 3 }), translator('en'))).toEqual([
+      '3 of 3 sessions done',
     ]);
   });
 

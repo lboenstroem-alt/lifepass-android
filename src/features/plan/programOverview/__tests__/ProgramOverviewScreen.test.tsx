@@ -2,8 +2,9 @@
  * The programme overview (iOS ProgramOverviewView) in a real stack against
  * the stub server: the read in the account language (a late older read
  * dropped, a cancelled one keeping the skeleton), the error, the header, the
- * week picker and its notes, the day rows and their preview (PLAN-2's sheet
- * stood in for), and the three modes' actions (live: days, pause, resume,
+ * week picker and its notes, the day rows and their preview (the real
+ * SessionPreviewSheet: Start, Do it today and Change with Coach on a live
+ * plan only), and the three modes' actions (live: days, pause, resume,
  * end; proposal from a card: Start through the card's flow, Discard;
  * proposal from Plan's review row: both only go back; past: none).
  */
@@ -29,19 +30,11 @@ import { noteReminderDraft, onProposalOutcome, resetProposalBridges } from '../.
 import { dayJSON, freshPlan, MEMBER, memberProfile, settle, signIn, TODAY } from '../../__tests__/planFixtures';
 import ProgramOverviewScreen from '../ProgramOverviewScreen';
 
-import { setPreviewInstalled } from './fakePreviewSheet';
-
 jest.mock('@gorhom/bottom-sheet', () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require('../../../../components/ui/testing/bottomSheetMock').bottomSheetModule,
 );
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
-// PLAN-2's sheet is on its own branch: a stand-in that keeps its promises.
-jest.mock('../sessionPreview', () => {
-  const actual = jest.requireActual('../sessionPreview');
-  const fake = jest.requireActual('./fakePreviewSheet');
-  return { ...actual, useSessionPreview: (testID?: string) => actual.useSessionPreview(testID, fake.installedSheet()) };
-});
 // The runner is a root modal this stack does not have: what Start asks of it is enough.
 jest.mock('../../../runner', () => ({ ...jest.requireActual('../../../runner'), openRunner: jest.fn() }));
 // The read itself, so one test can hand it a cancellation.
@@ -122,7 +115,6 @@ async function renderOverview(mode: 'live' | 'proposal' | 'past', options: { fro
 beforeEach(() => {
   freshPlan();
   resetProposalBridges();
-  setPreviewInstalled(true);
   jest.mocked(openRunner).mockClear();
   notificationsState.reset();
   bottomSheetMock.reset();
@@ -209,19 +201,36 @@ describe('the weeks', () => {
     expect(screen.getByText(en('plan.deload_note'))).toBeOnTheScreen();
   });
 
-  it("a session opens its preview, with Start for today's planned session of a live plan", async () => {
+  it("a session row is a button that opens the session preview, with Start for today's planned session of a live plan", async () => {
     api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
-    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' } }));
+    api.on(
+      'GET',
+      '/health/sessions/w2-1',
+      Reply.ok({
+        session: {
+          id: 'w2-1',
+          kind: 'strength',
+          scheduledFor: TODAY,
+          status: 'planned',
+          title: 'Upper body',
+          minutes: 35,
+          blocks: [{ exerciseId: 'press', name: 'Overhead press', sets: 3, reps: 8 }],
+        },
+      }),
+    );
     await renderOverview('live');
     expect(screen.queryByRole('button', { name: 'Thu, Rest day' })).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
-    expect(await screen.findByText('preview:w2-1')).toBeOnTheScreen();
+    // The real sheet (../preview), the one the Today card opens: what the session asks of you.
+    expect(await screen.findByRole('header', { name: 'Upper body' })).toBeOnTheScreen();
+    expect(screen.getByText('Overhead press')).toBeOnTheScreen();
+    expect(screen.getByTestId('programOverview.preview')).toBeOnTheScreen();
     expect(api.sent('/health/sessions/w2-1', 'GET').query.locale).toBe('en');
 
     // Start: the sheet goes first, then the runner opens on today's session.
-    await fireEvent.press(screen.getByRole('button', { name: 'preview start' }));
+    await fireEvent.press(button('plan.start'));
     await waitFor(() => expect(openRunner).toHaveBeenCalledWith(expect.objectContaining({ id: 'w2-1' }), 'today'));
-    expect(screen.queryByText('preview:w2-1')).toBeNull();
+    expect(screen.queryByRole('header', { name: 'Upper body' })).toBeNull();
   });
 
   it('a session another day offers no Start; each opening is its own sheet', async () => {
@@ -230,20 +239,66 @@ describe('the weeks', () => {
     await renderOverview('live');
     await fireEvent.press(screen.getByTestId('programOverview.week.1'));
     await fireEvent.press(screen.getByRole('button', { name: 'Mon, Legs, 40 min, done' }));
-    expect(await screen.findByText('preview:w1-1')).toBeOnTheScreen();
-    expect(screen.queryByRole('button', { name: 'preview start' })).toBeNull();
-    await fireEvent.press(screen.getByRole('button', { name: 'preview close' }));
-    expect(screen.queryByText('preview:w1-1')).toBeNull();
+    expect(await screen.findByRole('header', { name: 'Legs' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: en('plan.start') })).toBeNull();
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+    // The member pulls it down.
+    await act(async () => {
+      bottomSheetMock.latest()?.onDismiss?.();
+      await settle();
+    });
+    expect(screen.queryByRole('header', { name: 'Legs' })).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Mon, Legs, 40 min, done' }));
-    expect(await screen.findByText('preview:w1-1')).toBeOnTheScreen();
+    expect(await screen.findByRole('header', { name: 'Legs' })).toBeOnTheScreen();
   });
 
-  it("until PLAN-2's sheet is merged the rows are not buttons at all", async () => {
-    setPreviewInstalled(false);
+  it('Do it today on a live plan: Plan takes the answer in and the weeks are read again', async () => {
+    const LATER = '2099-01-07';
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: LATER, status: 'planned', title: 'Upper body', canPull: true } }));
+    api.on(
+      'POST',
+      '/health/sessions/w2-1',
+      Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' }, upcoming: [] }),
+    );
+    await renderOverview('live');
+    expect(api.sentAll(programPath, 'GET')).toHaveLength(1);
+    await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
+    await fireEvent.press(await screen.findByRole('button', { name: en('plan.do_today') }));
+    await waitFor(() => expect(useHealthStore.getState().today?.day?.session?.id).toBe('w2-1'));
+    expect(api.sent('/health/sessions/w2-1', 'POST').body).toEqual({ action: 'pull' });
+    await waitFor(() => expect(api.sentAll(programPath, 'GET')).toHaveLength(2));
+    expect(screen.queryByRole('button', { name: en('plan.do_today') })).toBeNull();
+  });
+
+  it('Change with Coach from a day row goes to the Coach about that day, where the server changes plans by chat', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' } }));
+    await renderOverview('live');
+    await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
+    await fireEvent.press(await screen.findByRole('button', { name: en('coach.planEdit.changeWithCoach') }));
+    await waitFor(() => expect(useIntentStore.getState().pendingCoachPlanEdit).toEqual({ sessionId: 'w2-1', sessionTitle: 'Upper body' }));
+    expect(useIntentStore.getState().pendingTab).toBe('Coach');
+  });
+
+  it('no Change with Coach on a server that does not change plans by chat', async () => {
+    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' } }));
     api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
     await renderOverview('live');
-    expect(screen.getByLabelText('Wed, Upper body, 35 min, planned')).toBeOnTheScreen();
-    expect(screen.queryByRole('button', { name: 'Wed, Upper body, 35 min, planned' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
+    expect(await screen.findByRole('header', { name: 'Upper body' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+  });
+
+  it('no Change with Coach on a paused plan', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' } }));
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'paused' }) }));
+    await renderOverview('live');
+    await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
+    expect(await screen.findByRole('header', { name: 'Upper body' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
   });
 });
 
@@ -396,18 +451,20 @@ describe("proposal mode, from a card's See all weeks (the card's flow)", () => {
 });
 
 describe('past mode', () => {
-  it('a past plan: its kicker and title, no actions, no Start in a preview', async () => {
+  it('a past plan: its kicker and title, no actions, no Start nor Change with Coach in a preview', async () => {
     signIn(memberProfile());
     api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'completed' }) }));
-    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned' } }));
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' } }));
     await renderOverview('past');
     expect(screen.getByRole('header', { name: en('plan.past_plan').toUpperCase() })).toBeOnTheScreen();
     expect(screen.getAllByText(en('plan.past_plan').toUpperCase())).toHaveLength(2);
     expect(screen.queryByRole('button', { name: en('plan.overview.end') })).toBeNull();
     expect(screen.queryByRole('button', { name: en('program.proposal.start') })).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
-    expect(await screen.findByText('preview:w2-1')).toBeOnTheScreen();
-    expect(screen.queryByRole('button', { name: 'preview start' })).toBeNull();
+    expect(await screen.findByRole('header', { name: 'Upper body' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: en('plan.start') })).toBeNull();
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
   });
 });
 
@@ -479,6 +536,29 @@ describe('changes made in chat (COACH-6)', () => {
     await renderOverview('live');
     expect(api.sentAll(editsPath)).toHaveLength(0);
     expect(screen.queryByText(en('coach.planEdit.changesList').toUpperCase())).toBeNull();
+  });
+
+  it('a change applied in the Coach while the weeks are open: the rows and the Changes list read again at once', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', editsPath, Reply.ok({ edits: [] }));
+    await renderOverview('live');
+    expect(screen.getByLabelText('Wed, Upper body, 35 min, planned')).toBeOnTheScreen();
+    expect(screen.queryByText(en('coach.planEdit.changesList').toUpperCase())).toBeNull();
+
+    // The Coach applies "lunges instead of squats", reads the plan again and
+    // says so (coach/planEdit refreshPlan; its own test pins that it does).
+    const changed = JSON.parse(JSON.stringify(detailJSON()).replace('"Upper body"', '"Lunges and press"')) as Record<string, unknown>;
+    api.on('GET', programPath, Reply.ok({ program: { ...changed, lastEdit: { editId: EDIT, undoUntil: '2099-10-28T10:00:00.000Z', undoable: true } } }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit()] }));
+    await act(async () => {
+      useHealthStore.getState().notePlanChanged();
+      await settle();
+    });
+
+    expect(await screen.findByLabelText('Wed, Lunges and press, 35 min, planned')).toBeOnTheScreen();
+    expect(screen.getByTestId('programOverview.week.2').props.accessibilityState.selected).toBe(true);
+    expect(await screen.findByTestId(`programOverview.change.${EDIT}.undo`)).toBeOnTheScreen();
   });
 
   it('a plan that carries a change is read even after the feature was turned off, so it can still be undone', async () => {
