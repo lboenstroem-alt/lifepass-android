@@ -2,7 +2,7 @@
  * Where something asked the app to GO: the Android port of the routing half
  * of iOS `AppState` (pendingTab, pendingPlanAction, pendingCoachPrompt,
  * pendingCoachProgram, pendingExploreSights, pendingScanVenueId,
- * exploreLaunchPresentation, scanCameraLive).
+ * exploreLaunchPresentation, scanCameraLive, walkInActive, checkInUnderway).
  *
  * WHY A STORE OF INTENTS. Only the tabs shell owns the selected tab, and only
  * a screen knows when it is ready to act (Plan after its read, the Coach
@@ -144,6 +144,13 @@ export interface IntentState {
   readonly launchPresentationCancelled: boolean;
   /** The Scan tab is showing a live camera: the tab bar turns dark over it. */
   readonly scanCameraLive: boolean;
+  /**
+   * A walk-in is running or on screen in the scanner the member is looking
+   * at: its preview request, a sheet, an alert, the pay page, the proof (the
+   * flow is not idle). Published by that scanner while it is focused
+   * (iOS `walkInActive`, set by `CheckInView`); see `isCheckInUnderway`.
+   */
+  readonly walkInActive: boolean;
 }
 
 export interface IntentActions {
@@ -192,6 +199,8 @@ export interface IntentActions {
   takeExploreLaunchPresentation(): boolean;
   /** The Scan tab's camera went live or stopped. */
   setScanCameraLive(live: boolean): void;
+  /** The scanner in front has a walk-in in hand, or no longer has one. */
+  setWalkInActive(active: boolean): void;
   /** Everything a member parked is forgotten (sign-out). */
   resetForSignOut(): void;
 }
@@ -211,6 +220,7 @@ const initialState: IntentState = {
   exploreLaunchPresentation: false,
   launchPresentationCancelled: false,
   scanCameraLive: false,
+  walkInActive: false,
 };
 
 /** What every "the member went elsewhere first" writes (iOS clears the flag; see `launchPresentationCancelled`). */
@@ -331,6 +341,10 @@ export const useIntentStore = create<IntentStore>()((set, get) => ({
     if (get().scanCameraLive !== live) set({ scanCameraLive: live });
   },
 
+  setWalkInActive(active) {
+    if (get().walkInActive !== active) set({ walkInActive: active });
+  },
+
   resetForSignOut() {
     // `scanArrivedThisSession`, `scanLinkCount` and
     // `launchPresentationCancelled` stay: they describe this app session, not
@@ -345,9 +359,24 @@ export const useIntentStore = create<IntentStore>()((set, get) => ({
       pendingScanVenueId: null,
       exploreLaunchPresentation: false,
       scanCameraLive: false,
+      walkInActive: false,
     });
   },
 }));
+
+/**
+ * A check-in is on its way or about to be (iOS `AppState.checkInUnderway`):
+ * a door link parked and not yet taken, a walk-in running in the scanner in
+ * front (whose sheet comes only after a network call), or the Scan camera
+ * live, aimed at a door code. "A new version is available" waits until none
+ * of these holds (src/features/appUpdate/AppUpdateHost.tsx): it must not
+ * cover a member at the door, nor sit in the way of a walk-in's sheet.
+ */
+export function isCheckInUnderway(
+  state: Pick<IntentState, 'pendingScanVenueId' | 'walkInActive' | 'scanCameraLive'>,
+): boolean {
+  return state.pendingScanVenueId !== null || state.walkInActive || state.scanCameraLive;
+}
 
 registerKennitalaPromptBlocker(scanLinkBlocksKennitalaPrompt);
 

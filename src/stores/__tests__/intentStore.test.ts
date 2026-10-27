@@ -11,7 +11,13 @@ import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../api/testing';
 import { KENNITALA_PROMPT_DISMISSED_KEY, useAppStore } from '../appStore';
-import { isPlanActionFresh, PLAN_ACTION_WINDOW_MS, resetIntentStoreForTests, useIntentStore } from '../intentStore';
+import {
+  isCheckInUnderway,
+  isPlanActionFresh,
+  PLAN_ACTION_WINDOW_MS,
+  resetIntentStoreForTests,
+  useIntentStore,
+} from '../intentStore';
 import { freshStorePerTest, MEMBER_A, PLUS_SUBSCRIPTION, profileJSON } from './storeHarness';
 
 stubApiClientPerTest();
@@ -190,6 +196,7 @@ describe('sign-out', () => {
     intents().parkCoachProgram({ kind: 'planTab' });
     intents().requestExploreSights();
     intents().setScanCameraLive(true);
+    intents().setWalkInActive(true);
     intents().setExploreLaunchPresentation(true);
 
     await app().handleSignOut();
@@ -203,7 +210,33 @@ describe('sign-out', () => {
       pendingScanVenueId: null,
       exploreLaunchPresentation: false,
       scanCameraLive: false,
+      walkInActive: false,
       scanArrivedThisSession: true,
     });
+    expect(isCheckInUnderway(intents())).toBe(false);
+  });
+});
+
+// iOS AppUpdatePolicyTests.testEveryCheckInOnItsWayHoldsTheAlert.
+describe('a check-in on its way', () => {
+  it('is a door link parked, a walk-in in the scanner in front, or the Scan camera live', () => {
+    expect(isCheckInUnderway(intents())).toBe(false);
+    intents().parkScanVenue(VENUE);
+    expect(isCheckInUnderway(intents())).toBe(true);
+    intents().takeScanVenue();
+    intents().setWalkInActive(true);
+    expect(isCheckInUnderway(intents())).toBe(true);
+    intents().setWalkInActive(false);
+    intents().setScanCameraLive(true);
+    expect(isCheckInUnderway(intents())).toBe(true);
+    intents().setScanCameraLive(false);
+    expect(isCheckInUnderway(intents())).toBe(false);
+  });
+
+  it('a link that arrived earlier this session is not one once it has been taken', () => {
+    intents().parkScanVenue(VENUE);
+    intents().takeScanVenue();
+    expect(intents().scanArrivedThisSession).toBe(true);
+    expect(isCheckInUnderway(intents())).toBe(false);
   });
 });
