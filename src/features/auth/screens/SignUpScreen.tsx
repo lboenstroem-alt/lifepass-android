@@ -18,6 +18,11 @@
  * a browser refuse to hand that link to the app, the alert's Android-only
  * "I've confirmed, sign me in" signs in with what the member just typed.
  * A session straight away (confirmation off) signs in at once.
+ *
+ * iOS keeps ONE `isLoading` for the screen, so the two ways in block each
+ * other: while Create (or the alert's sign-in) runs the provider buttons are
+ * disabled and dimmed (their `disabled`), and while a provider sign-in runs
+ * Create says "Creating…" and takes no press (`useSocialSignInBusy`).
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
@@ -35,6 +40,7 @@ import { signIn, signUp } from '../../../supabase/services/auth';
 import { colors } from '../../../theme';
 import { nationalityFromEmail, normalizeNationality } from '../../../utils/nationality';
 import { MarketingToggle, NationalityPicker, TermsRow } from '../components/SignUpControls';
+import { useSocialSignInBusy } from '../social';
 import SocialSignInButtons from '../SocialSignInButtons';
 import { useLoginOnLinkError } from '../useLoginOnLinkError';
 import { humaniseSignInError, humaniseSignUpError, signUpProblem } from '../validation';
@@ -82,7 +88,11 @@ export default function SignUpScreen({ navigation }: AuthStackScreenProps<'SignU
     setNationality(code);
   }
 
-  const busy = creating || confirmingSignIn;
+  /** This screen's own email request is on its way. */
+  const emailBusy = creating || confirmingSignIn;
+  // A Google or Apple sign-in of the block above; with `emailBusy`, iOS's one `isLoading`.
+  const socialBusy = useSocialSignInBusy();
+  const busy = emailBusy || socialBusy;
   // Back waits for Create to answer: leaving mid-request would lose the check-your-email alert.
   useBusyGuard(creating);
 
@@ -127,6 +137,7 @@ export default function SignUpScreen({ navigation }: AuthStackScreenProps<'SignU
 
   /** The Android fallback on the check-your-email alert: sign in with what was just typed. */
   async function signInAfterConfirming() {
+    if (busy) return;
     setConfirmingSignIn(true);
     setError(null);
     try {
@@ -139,7 +150,11 @@ export default function SignUpScreen({ navigation }: AuthStackScreenProps<'SignU
     }
   }
 
-  const ctaTitle = confirmingSignIn ? t('auth.signing_in') : creating ? t('auth.creating') : t('auth.create');
+  const ctaTitle = confirmingSignIn
+    ? t('auth.signing_in')
+    : creating || socialBusy
+      ? t('auth.creating')
+      : t('auth.create');
 
   return (
     <View style={styles.page}>
@@ -172,7 +187,7 @@ export default function SignUpScreen({ navigation }: AuthStackScreenProps<'SignU
             </LPText>
           </View>
 
-          <SocialSignInButtons divider="below" />
+          <SocialSignInButtons divider="below" disabled={emailBusy} />
 
           <View style={styles.fields}>
             <AuthField

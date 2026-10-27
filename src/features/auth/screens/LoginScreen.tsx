@@ -7,6 +7,12 @@
  * Apple under an "or" (AUTH-2's slot), "Forgot password?" (a sheet seeded
  * with the typed email) and "Don't have an account? Sign up".
  *
+ * iOS keeps ONE `isLoading` for the screen, so the two ways in block each
+ * other: while the email sign-in runs the provider buttons are disabled and
+ * dimmed (their `disabled`), and while a provider one runs (its page open,
+ * then the exchange and the metadata write) Sign in says "Signing in…" and
+ * takes no press or keyboard Go (`useSocialSignInBusy`).
+ *
  * Checks before the request, in iOS's order: both fields filled, then the
  * email's structure (./validation.ts). Supabase's refusals read as iOS
  * reads them: an unconfirmed email and wrong credentials have their own
@@ -34,6 +40,7 @@ import { colors } from '../../../theme';
 import DeepLinkBanner from '../components/DeepLinkBanner';
 import PasswordResetSheet from '../components/PasswordResetSheet';
 import RustGlow from '../components/RustGlow';
+import { useSocialSignInBusy } from '../social';
 import SocialSignInButtons from '../SocialSignInButtons';
 import { humaniseSignInError, signInProblem } from '../validation';
 
@@ -45,6 +52,9 @@ export default function LoginScreen({ navigation }: AuthStackScreenProps<'Login'
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
+  // A Google or Apple sign-in of the block below; with `loading`, iOS's one `isLoading`.
+  const socialBusy = useSocialSignInBusy();
+  const busy = loading || socialBusy;
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -61,7 +71,7 @@ export default function LoginScreen({ navigation }: AuthStackScreenProps<'Login'
   }
 
   async function submit() {
-    if (loading) return;
+    if (busy) return;
     const problem = signInProblem(email, password);
     if (problem) {
       setError(t(problem));
@@ -137,15 +147,15 @@ export default function LoginScreen({ navigation }: AuthStackScreenProps<'Login'
           <DeepLinkBanner style={styles.banner} />
 
           <PrimaryButton
-            title={loading ? t('auth.signing_in') : t('auth.signin')}
+            title={busy ? t('auth.signing_in') : t('auth.signin')}
             onPress={() => void submit()}
-            disabled={loading}
+            disabled={busy}
             style={styles.cta}
             testID="auth.login.submit"
           />
 
           <View style={styles.social}>
-            <SocialSignInButtons divider="above" />
+            <SocialSignInButtons divider="above" disabled={loading} />
           </View>
 
           <View style={styles.links}>
