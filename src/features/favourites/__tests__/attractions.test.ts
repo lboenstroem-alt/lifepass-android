@@ -170,6 +170,34 @@ describe('the heart', () => {
     expect(alerts).toEqual([]);
   });
 
+  it('a 401 the client did not resend (its session refresh worked) is sent once more, as iOS does', async () => {
+    let sends = 0;
+    const { store, alerts } = setup({
+      addAttraction: async () => {
+        sends += 1;
+        if (sends === 1) throw refused(401);
+      },
+    });
+    await store.getState().load();
+    await expect(store.getState().toggleAttraction(SKOGAFOSS)).resolves.toBe('added');
+    expect(sends).toBe(2);
+    expect(alerts).toEqual([]);
+  });
+
+  it('a second 401 is a refused write: back, and said', async () => {
+    let sends = 0;
+    const removeAttraction = async () => {
+      sends += 1;
+      throw refused(401);
+    };
+    const { store, alerts } = setup({ removeAttraction }, [SKOGAFOSS]);
+    await store.getState().load();
+    await expect(store.getState().toggleAttraction(SKOGAFOSS)).resolves.toBe('failed');
+    expect(sends).toBe(2);
+    expect(store.getState().isAttractionSaved(SKOGAFOSS)).toBe(true);
+    expect(alerts).toEqual(['Could not remove favourite. Please try again.']);
+  });
+
   it('a call the app cancelled says nothing either', async () => {
     const { store, alerts } = setup({ addAttraction: async () => Promise.reject(new TransportError('cancelled')) });
     await store.getState().load();

@@ -45,6 +45,10 @@
  *   - a write refused because the session has ended says nothing: the app is
  *     already on its way to sign-in (`NotAuthenticatedError`), as a call the
  *     app cancelled says nothing;
+ *   - a 401 whose session refresh succeeded is sent once more: the client
+ *     resends only reads and keyed writes by itself, and both place writes
+ *     are idempotent by contract, so a second send cannot double anything
+ *     (as iOS `SavedAttractionsStore.write`);
  *   - (a) the set is the member's: `reset()` forgets it with the rest;
  *   - (b) a heart pressed before the list has arrived is a guess, so the list
  *     is read again after that write, whether it was accepted or refused.
@@ -53,7 +57,7 @@
  */
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
-import { errorMessage, isCancellation, NotAuthenticatedError } from '../../api';
+import { errorMessage, HttpStatusError, isCancellation, NotAuthenticatedError, ProblemError } from '../../api';
 // The dialog module itself, not the UI kit's barrel: the barrel pulls in the
 // icon fonts, and this store loads with the sign-out cleaners (./register.ts).
 import { showDialog } from '../../components/ui/Dialog';
@@ -213,6 +217,17 @@ function computeSavedSlugs(
  */
 function tellsMember(error: unknown): boolean {
   return !isCancellation(error) && !(error instanceof NotAuthenticatedError);
+}
+
+/**
+ * A 401 the client handed back after refreshing the session: it does not
+ * resend a write without an Idempotency-Key itself. A 401 whose refresh
+ * failed is a `NotAuthenticatedError` instead (the session has ended).
+ */
+function isUnauthorizedRefusal(error: unknown): boolean {
+  if (error instanceof ProblemError) return error.httpStatus === 401 || error.status === 401;
+  if (error instanceof HttpStatusError) return error.httpStatus === 401;
+  return false;
 }
 
 function without<T>(record: Readonly<Record<string, T>>, id: string): Record<string, T> {
@@ -389,8 +404,15 @@ export function createFavouritesStore(options: FavouritesStoreOptions = {}): Fav
         attractionOverrides: { ...state.attractionOverrides, [slug]: target },
         attractionInFlight: { ...state.attractionInFlight, [slug]: true },
       });
+      const send = () => (target ? api.addAttraction(slug) : api.removeAttraction(slug));
       try {
-        await (target ? api.addAttraction(slug) : api.removeAttraction(slug));
+        try {
+          await send();
+        } catch (error) {
+          // Once more after a 401 the client did not resend (see the file comment).
+          if (!isUnauthorizedRefusal(error) || gen !== generation) throw error;
+          await send();
+        }
       } catch (error) {
         if (gen !== generation) return 'failed';
         const now = get();
