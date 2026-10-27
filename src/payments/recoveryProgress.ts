@@ -10,9 +10,9 @@
  * just paid sees an app that ignores them, and taps Buy or Book again.
  *
  * WHO DRAWS IT. `RecoveryProgressHost` (./RecoveryProgressHost), which the
- * app shell mounts once beside the UI kit's hosts (F4 contract request).
- * Until a host is mounted, a toast says it (the UI kit's), so the member is
- * never left with nothing. Cancel hides it and the check keeps running, as
+ * app shell (App.tsx) mounts once inside the UI kit's provider. Should no
+ * host be mounted, a toast says it (the UI kit's), so the member is never
+ * left with nothing. Cancel hides it and the check keeps running, as
  * iOS's Cancel does; the outcome still comes when it settles.
  *
  * When it shows: while the recovery settles a booking, walk-in or plan record
@@ -53,7 +53,7 @@ export function startRecoveryProgress(progress: RecoveryProgress): void {
   dismissed = null;
   emit();
   if (hosts === 0) {
-    // No host in this build yet: a toast, long enough for a booking's asks.
+    // No host mounted (a test, or a shell without one): a toast, long enough for a booking's asks.
     showToast(t('plans.confirming'), { durationMs: 8_000 });
   }
 }

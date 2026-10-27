@@ -10,9 +10,13 @@
  * tests the route and the analytics, not that a real button calls it.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { act, fireEvent, screen } from '@testing-library/react-native';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
+import { api, Reply } from '@test/server';
 
+import { stubApiClientPerTest } from '../../api/testing';
 import { handleNotificationResponse, useNotificationRouter } from '../../app/notificationRouter';
+import { isAccountDeletionHostMounted } from '../../features/account/deletion';
+import { closeAccountDeletion } from '../../features/account/deletion/presenter';
 import { usePlanShell } from '../../features/plan/shell';
 import { setAnalyticsObserver, type AnalyticsParams } from '../../lib/analytics';
 import { useAppStore } from '../../stores/appStore';
@@ -20,6 +24,7 @@ import { useIntentStore } from '../../stores/intentStore';
 import { TAB_BAR_HEIGHT } from '../CustomTabBar';
 import { navigateInCurrentTab, openRootModal } from '../navigationRef';
 import { SELECTED_TAB_KEY, useNavPrefs } from '../navPrefs';
+import { takeRefusalStep, type RefusalStepOutcome } from '../refusalSteps';
 import { SHARED_ROUTE_NAMES } from '../sharedRoutes';
 import { MAIN_TABS, TAB_ROOT_SCREEN, type RootModalName, type SharedRouteName } from '../types';
 import { currentRouteName, currentTab, navigationRef, renderShell, signedIn } from './shellHarness';
@@ -279,6 +284,48 @@ describe('the tab on screen', () => {
     await act(async () => undefined);
     expect(await AsyncStorage.getItem(SELECTED_TAB_KEY)).toBe('Plan');
     expect(await AsyncStorage.getItem('nav.planTabSeen')).toBe('true');
+  });
+});
+
+describe('the app-wide sheets', () => {
+  stubApiClientPerTest();
+
+  // A member whose deletion is scheduled: a booking refused with
+  // account_deletion_scheduled offers "Cancel deletion".
+  const PENDING = {
+    accountStatus: 'deletion_pending',
+    deletionRequestedAt: '2026-10-20T10:00:00Z',
+    erasureScheduledAt: '2026-11-13T10:00:00Z',
+    obligations: [],
+  };
+
+  it('mount the deletion host, so "Cancel deletion" opens the sheet over the refusing screen (iOS RefusalStepPresenter)', async () => {
+    api.on('GET', '/account/deletion', Reply.ok(PENDING));
+    signedIn('Home');
+    expect(isAccountDeletionHostMounted()).toBe(false);
+    await renderShell();
+    expect(isAccountDeletionHostMounted()).toBe(true);
+
+    // A refusing screen takes the step: the sheet, not Account.
+    const navigation = { navigate: jest.fn() };
+    const onClosed = jest.fn();
+    let outcome: RefusalStepOutcome | null = null;
+    await act(async () => {
+      outcome = takeRefusalStep('cancelDeletion', { navigation }, { onClosed });
+    });
+    expect(outcome).toBe('deletionSheet');
+    // This file runs on the library's sheet mock, which draws the sheet where
+    // it is declared (inside the screens' layer, hidden from TalkBack while a
+    // sheet is up); on a phone it is drawn in the provider's portal.
+    const hidden = { includeHiddenElements: true };
+    expect(await screen.findByTestId('deletion.pending', hidden)).toBeOnTheScreen();
+    expect(navigation.navigate).not.toHaveBeenCalled();
+    expect([currentTab(), currentRouteName()]).toEqual(['Home', 'HomeMain']);
+
+    // Closing it (hardware back, a pan down) is the refusing screen's cue to re-check.
+    await act(async () => closeAccountDeletion());
+    await waitFor(() => expect(onClosed).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+    expect(screen.queryByTestId('deletion.pending', hidden)).toBeNull();
   });
 });
 

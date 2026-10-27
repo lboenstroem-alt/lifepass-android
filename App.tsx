@@ -13,8 +13,10 @@
  * - the update check (src/features/appUpdate): below the owner's minimum
  *   version the app is blocked behind an Update button, and a newer version
  *   on Google Play is offered once. It fails open: no answer, no prompt.
- * - "Confirming your payment…" (src/payments RecoveryProgressHost) while a
- *   payment the app lost behind the hosted page is confirmed at launch.
+ * - "Confirming your payment…" (src/payments/RecoveryProgressHost): when
+ *   Android killed the app behind the payment page and the return link
+ *   cold-starts it, the recovery confirms the payment while the member
+ *   watches, with a Cancel, as iOS keeps the waiting screen up.
  *
  * Notification permission is NOT asked here: iOS never asks at launch, only
  * in context (a first booking, a reminder switch), and a member who has not
@@ -124,10 +126,11 @@ export default function App() {
         <StatusBar style="dark" />
         <UiKitProvider>
           <RootNavigator />
-          {/* "Confirming your payment…" while a payment the app lost behind
-              the page is confirmed after a cold start (src/payments); without
-              it the member gets only a short toast. Its own window, so it
-              shows over whichever tab the app opened on. */}
+          {/* "Confirming your payment…" while a payment lost behind the page is
+              confirmed after a cold start, over whichever tab the app landed on
+              (its own window, as the UI kit's dialog); without it the member
+              gets only a short toast. Here and not in the UI kit, so the kit
+              never imports the payment rails. */}
           <RecoveryProgressHost />
         </UiKitProvider>
       </NavigationContainer>

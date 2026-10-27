@@ -24,9 +24,9 @@
  * - F4's deep-link router: `handlePaymentReturnUrl(url)` for every link
  *   (`isPaymentReturnUrl` says which are ours). A payment or card return is
  *   not a launch onto Explore (iOS clears `exploreLaunchPresentation`).
- * - F4's app shell: mount `RecoveryProgressHost` once, beside the UI kit's
- *   DialogHost ("Confirming your payment…" while a payment the app lost is
- *   confirmed after a cold start).
+ * - F4's app shell: `RecoveryProgressHost`, mounted once in App.tsx inside
+ *   the UI kit's provider ("Confirming your payment…" while a payment the
+ *   app lost is confirmed after a cold start).
  * - Any rail may call `unresolvedPayments(memberId)` before its first create
  *   to see an earlier payment before it makes a session; the page openers
  *   apply the same rules themselves.
