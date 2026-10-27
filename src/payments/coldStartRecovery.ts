@@ -6,11 +6,12 @@
  * HOW A RETURN REACHES IT
  * - The link: `handlePaymentReturnUrl(url)`, which F4's deep-link router
  *   calls for every `lifepass://payment-*` and `card-setup-*` link
- *   (`Linking.getInitialURL()` at launch and the `url` event after). A page
- *   still open in this process takes its own link (./hostedPage). Any other
- *   link is remembered as the return's leg (success or cancel) for the
- *   recovery below. Until F4's router exists, the launch link is also read
- *   here, once per process, when the first profile has loaded.
+ *   (`Linking.getInitialURL()` at each start and the `url` event after;
+ *   ./register hands it over). A page still open in this process takes its
+ *   own link (./hostedPage). Any other link is remembered as the return's
+ *   leg (success or cancel) for the recovery below. The launch link is also
+ *   read here, once per process, when the first profile has loaded, in case
+ *   it lands before the session hooks have loaded.
  * - The member: recovery needs to know who paid (the records are per
  *   member), so it runs from F3's activation hook: once the first profile of
  *   a launch or sign-in has loaded, and on every return to the foreground.
