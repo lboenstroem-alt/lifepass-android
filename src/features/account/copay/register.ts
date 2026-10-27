@@ -3,12 +3,12 @@
  * when a co-pay page Android closed the app behind is settled at the next
  * launch, and when a dunning episode ends.
  *
- * Loaded by the Account slots that use the flows (their import puts these in
- * place at app start, since the Account route is imported with the
- * navigator), and meant to be loaded by Account's own register file too
- * (`import './copay/register'` in src/features/account/register.ts, ACCT-1's:
- * contract request), so the hooks never depend on a screen. A module runs
- * once however many files import it.
+ * Loaded at startup by Account's own register file
+ * (src/features/account/register.ts, in its own try), so the hooks never
+ * depend on a screen, and by the Account slots that use the flows. A module
+ * runs once however many files import it. It reaches no screen: the flows'
+ * state comes from ./flowState.ts, not the flows (which import the Kenni
+ * sheet's barrel and the UI kit's dialog).
  */
 import { isSubscriptionPastDue } from '../../../api/subscriptions';
 import { registerSignOutCleaner } from '../../../app/signOut';
@@ -17,7 +17,7 @@ import { useAppStore } from '../../../stores/appStore';
 import { endRetryEpisodesExcept } from '../../../supabase/services/companyPlans';
 
 import { reloadCopayContext, resetCopayContext } from './contextSource';
-import { forgetCopayFlows } from './copayFlows';
+import { forgetCopayFlows } from './flowState';
 
 /** The store subscription below, once per process. */
 let unsubscribeEpisodes: (() => void) | null = null;

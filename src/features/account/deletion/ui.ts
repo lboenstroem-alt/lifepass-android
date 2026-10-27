@@ -6,7 +6,8 @@
 //     import { AccountDeletionHost } from '../features/account/deletion/ui';
 //     <AccountDeletionHost />
 //
-//   Until it is mounted `openAccountDeletion` answers false.
+//   It is (TabsLayout). Without it `openAccountDeletion` answers false
+//   (src/navigation/__tests__/deletionRefusal.test.tsx guards the wiring).
 // - `AccountDeletionSheet`: the sheet itself, for a screen that hosts it
 //   (the Account row does, as iOS `AccountView` does).
 //
