@@ -1,7 +1,8 @@
 /**
  * The app root: the launch screen until the session is resolved and launch
- * has chosen its tab, then the sign-in screens or the tabs; and nothing asks
- * for notification permission at launch (iOS asks only in context).
+ * has chosen its tab, then the sign-in screens or the tabs; nothing asks
+ * for notification permission at launch (iOS asks only in context); and
+ * "Confirming your payment…" is drawn over the app, not said in a toast.
  */
 import { act, render, screen } from '@testing-library/react-native';
 
@@ -9,9 +10,12 @@ import { notificationsState } from '@test/mocks/expoNotifications';
 
 import App, { resetLaunchForTests } from '../../../App';
 import { stubApiClientPerTest } from '../../api/testing';
+import { resetUiKit } from '../../components/ui/reset';
+import { lookup } from '../../i18n';
 import { resetNavPrefsForTests, useNavPrefs } from '../../navigation/navPrefs';
 import { resetAppStoreForTests, useAppStore } from '../../stores/appStore';
 import { resetIntentStoreForTests } from '../../stores/intentStore';
+import { endRecoveryProgress, resetRecoveryProgress, startRecoveryProgress } from '../../payments/recoveryProgress';
 import * as locationStore from '../../stores/locationStore';
 import { resetDeepLinksForTests } from '../deepLinks';
 
@@ -51,6 +55,8 @@ beforeEach(() => {
 
 afterEach(() => {
   resetAppStoreForTests();
+  resetRecoveryProgress();
+  resetUiKit();
 });
 
 it('shows the launch screen, then the sign-in screens for a phone with no member', async () => {
@@ -77,4 +83,21 @@ it('starts location at launch, whichever tab opens first (F6)', async () => {
   await view.unmount();
   expect(stop).toHaveBeenCalledTimes(1);
   start.mockRestore();
+});
+
+it('draws "Confirming your payment…" over the app while a lost booking payment is confirmed, with no toast', async () => {
+  await render(<App />);
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  const confirming = lookup('plans.confirming', 'en');
+  // The recovery after `lifepass://payment-success` cold-started the app.
+  await act(async () => startRecoveryProgress({ attemptId: 'attempt-1', rail: 'booking' }));
+  expect(screen.getByTestId('payments.recoveryProgress')).toBeOnTheScreen();
+  expect(screen.getByTestId('payments.recoveryProgress.cancel')).toBeOnTheScreen();
+  // Said once, by the overlay: the 8 s toast fallback is for a shell with no host.
+  expect(screen.getAllByText(confirming)).toHaveLength(1);
+  expect(screen.queryByTestId('toast')).toBeNull();
+  // Gone just before the outcome is shown.
+  await act(async () => endRecoveryProgress('attempt-1'));
+  expect(screen.queryByTestId('payments.recoveryProgress')).toBeNull();
+  expect(screen.queryByText(confirming)).toBeNull();
 });

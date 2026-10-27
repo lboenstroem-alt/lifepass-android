@@ -13,6 +13,10 @@
  * - the update check (src/features/appUpdate): below the owner's minimum
  *   version the app is blocked behind an Update button, and a newer version
  *   on Google Play is offered once. It fails open: no answer, no prompt.
+ * - "Confirming your payment…" (src/payments/RecoveryProgressHost): when
+ *   Android killed the app behind the payment page and the return link
+ *   cold-starts it, the recovery confirms the payment while the member
+ *   watches, with a Cancel, as iOS keeps the waiting screen up.
  *
  * Notification permission is NOT asked here: iOS never asks at launch, only
  * in context (a first booking, a reminder switch), and a member who has not
@@ -54,6 +58,7 @@ import { onUnhandledNavigationAction } from './src/navigation/legacyRoutes';
 import { navigationRef } from './src/navigation/navigationRef';
 import { setLaunchTab } from './src/navigation/navPrefs';
 import RootNavigator from './src/navigation/RootNavigator';
+import { RecoveryProgressHost } from './src/payments';
 import { useAppStore } from './src/stores/appStore';
 import { startLocationAtLaunch } from './src/stores/locationStore';
 import { colors } from './src/theme';
@@ -121,6 +126,11 @@ export default function App() {
         <StatusBar style="dark" />
         <UiKitProvider>
           <RootNavigator />
+          {/* "Confirming your payment…" while a payment lost behind the page is
+              confirmed after a cold start, over whichever tab the app landed on
+              (its own window, as the UI kit's dialog). Here and not in the UI
+              kit, so the kit never imports the payment rails. */}
+          <RecoveryProgressHost />
         </UiKitProvider>
       </NavigationContainer>
       {/* Over everything, the sign-in screens and the launch screen too. */}

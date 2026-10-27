@@ -5,8 +5,8 @@
  * spinner, the serif title, the sans subtitle and a Cancel capsule that hides
  * it while the check keeps running.
  *
- * The app shell mounts ONE, beside the UI kit's DialogHost (F4 contract
- * request), above the navigator, so it shows over whichever tab the app
+ * The app shell (App.tsx) mounts ONE, inside the UI kit's provider after
+ * the navigator; it is a Modal, so it shows over whichever tab the app
  * landed on. Hardware back is Cancel. TalkBack hears the title when it
  * appears and stays inside it.
  */
