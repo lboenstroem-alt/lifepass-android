@@ -16,7 +16,6 @@
  * (`account.cancel_failed_title`), with the message iOS shows under it.
  */
 import { useEffect, useRef } from 'react';
-import { create } from 'zustand';
 
 import { errorMessage, isCancellation, isProblem } from '../../../api';
 import { isSubscriptionPastDue } from '../../../api/subscriptions';
@@ -37,34 +36,19 @@ import {
 import { openKenniSheet, useKenniSheetRequest } from '../../kenni';
 
 import { copayContext, reloadCopayContext } from './contextSource';
+import {
+  copayFlowSession,
+  endEpisodeOnceIdle,
+  takeEndEpisodeWhenIdle,
+  useCopayBusy,
+  type CopayBusyState,
+} from './flowState';
 
-// MARK: - Busy state
+// The state lives in ./flowState.ts (so the session hooks reach no screen);
+// the screens and tests keep reading it from here.
+export { forgetCopayFlows, resetCopayBusyForTests, useCopayBusy, type CopayBusyState } from './flowState';
 
-export interface CopayBusyState {
-  /** An activation is running (iOS `isActivating`): the CTA reads "Processing…". */
-  readonly activating: boolean;
-  /** A past-due payment is running (iOS `isRetryingPayment`): "Fix payment" reads "Processing…". */
-  readonly retrying: boolean;
-}
-
-const idle: CopayBusyState = { activating: false, retrying: false };
-
-/**
- * In a store, not the button: a second tap (or the slot drawn again) while a
- * flow runs must find it running. Unlike iOS, the flag stays up until the
- * page has closed and the payment is confirmed, not only for the request:
- * Android cannot open a second page while F8 settles the first, so the
- * button says what is happening instead of answering a tap with nothing.
- */
-export const useCopayBusy = create<CopayBusyState>()(() => idle);
-
-/**
- * Bumped at every sign-out (`forgetCopayFlows`). A flow started before it
- * may still be settling for the member who left; whatever it does when it
- * ends (clearing a busy flag, ending an episode) must not touch the next
- * member's buttons.
- */
-let session = 0;
+// MARK: - Busy state (./flowState.ts)
 
 function setBusy(patch: Partial<CopayBusyState>): void {
   useCopayBusy.setState(patch);
@@ -223,7 +207,7 @@ export async function activateCopayPlan(): Promise<void> {
   if (!activation || !memberId || useCopayBusy.getState().activating) return;
   // A page already up cannot be joined by a second one: mint no session for it.
   if (isHostedPageOpen()) return;
-  const started = session;
+  const started = copayFlowSession();
   setBusy({ activating: true });
   try {
     let result: CopayActivation;
@@ -260,7 +244,7 @@ export async function activateCopayPlan(): Promise<void> {
     if (page.kind === 'neverOpened') showCopayProblem(t('error.generic'));
     await reloadCopayContext();
   } finally {
-    if (started === session) setBusy({ activating: false });
+    if (started === copayFlowSession()) setBusy({ activating: false });
   }
 }
 
@@ -287,9 +271,6 @@ async function retryRefused(error: unknown, memberId: string): Promise<void> {
 /** Account visits showing "Fix payment" now (`useRetryEpisodeVisit` mounts). */
 let openVisits = 0;
 
-/** The last visit went while its payment was still running: end the episode when it finishes. */
-let endEpisodeWhenIdle = false;
-
 /**
  * Ties the dunning episode to the Account visit, as iOS ties its key to the
  * AccountView (`@State retryIdempotencyKey`, gone when Account is left):
@@ -307,7 +288,7 @@ export function useRetryEpisodeVisit(): void {
     return () => {
       openVisits -= 1;
       if (openVisits > 0) return;
-      if (useCopayBusy.getState().retrying) endEpisodeWhenIdle = true;
+      if (useCopayBusy.getState().retrying) endEpisodeOnceIdle();
       else endRetryEpisodesExcept(null);
     };
   }, []);
@@ -326,7 +307,7 @@ export async function fixPastDuePayment(): Promise<void> {
   if (!subscription || !isSubscriptionPastDue(subscription) || !memberId) return;
   if (useCopayBusy.getState().retrying) return;
   if (isHostedPageOpen()) return;
-  const started = session;
+  const started = copayFlowSession();
   setBusy({ retrying: true });
   try {
     let checkout: CopayRetry;
@@ -356,31 +337,9 @@ export async function fixPastDuePayment(): Promise<void> {
       }
     }
   } finally {
-    if (started === session) {
+    if (started === copayFlowSession()) {
       setBusy({ retrying: false });
-      if (endEpisodeWhenIdle) {
-        endEpisodeWhenIdle = false;
-        endRetryEpisodesExcept(null);
-      }
+      if (takeEndEpisodeWhenIdle()) endRetryEpisodesExcept(null);
     }
   }
-}
-
-// MARK: - Sign-out
-
-/**
- * The sign-out cleaner's part (./register.ts): the buttons are the next
- * member's at once, idle, whatever a flow of the last member is still
- * settling (it no longer touches them when it ends).
- */
-export function forgetCopayFlows(): void {
-  session += 1;
-  endEpisodeWhenIdle = false;
-  useCopayBusy.setState(idle, true);
-}
-
-/** Tests only. */
-export function resetCopayBusyForTests(): void {
-  useCopayBusy.setState(idle, true);
-  endEpisodeWhenIdle = false;
 }
