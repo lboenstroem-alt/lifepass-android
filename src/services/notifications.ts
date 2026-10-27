@@ -1,10 +1,8 @@
 /* eslint lifepass/no-literal-copy: "error" */
-// FIRST: the background task's definition. WorkManager starts the bundle with
-// no screen and runs only what the entry's imports evaluate, so the task must
-// be defined at load. index.ts imports App.tsx, which imports this module, so
-// this is the earliest F7-owned file every run (headless ones included)
-// loads. When QA-1 deletes this shim, the line moves to the top of index.ts
-// (F4 contract request; src/background/task.ts says why).
+// The background task's definition. index.ts imports it directly before
+// `registerRootComponent` (src/background/task.ts says why); this second
+// import is the older path, harmless because defining is idempotent, and
+// goes when QA-1 deletes this shim.
 import '../background/task';
 
 /**
