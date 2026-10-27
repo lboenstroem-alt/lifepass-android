@@ -49,7 +49,8 @@ module.exports = {
   // legacy money and session services) and '/android/' src/i18n/android/**
   // (every package's copy pack), or every test in a checkout under a folder
   // named `android`. test/config/__tests__/jestConfig.test.ts holds the line.
-  // The top-level `supabase/` is the old Edge Function QA-1 deletes.
+  // The top-level `supabase/` held the first build's Edge Function (deleted);
+  // the guard stays so nothing put there again is run as an app test.
   testPathIgnorePatterns: ['/node_modules/', '<rootDir>/android/', '<rootDir>/ios/', '<rootDir>/e2e/', '<rootDir>/supabase/'],
   // Every `.mjs` file is transformed too (the preset's rule covers `.js`).
   transformIgnorePatterns: [`node_modules/(?!(${transpiledPackages.join('|')})).*(?<!\\.mjs)$`],

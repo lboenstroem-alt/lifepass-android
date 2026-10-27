@@ -1,9 +1,6 @@
 /* eslint lifepass/no-literal-copy: "error" */
-// The background task's definition. index.ts imports it directly before
-// `registerRootComponent` (src/background/task.ts says why); this second
-// import is the older path, harmless because defining is idempotent, and
-// goes when QA-1 deletes this shim.
-import '../background/task';
+// The background task's definition is not here any more: index.ts imports
+// src/background/task.ts itself (that file says why).
 
 /**
  * The first Android build's notification module, kept as a thin shim over

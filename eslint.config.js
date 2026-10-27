@@ -3,28 +3,24 @@
 // Base: eslint-config-expo (TypeScript, React, hooks, import). On top:
 //
 // 1. Copy rules:
-//    - `react-native/no-raw-text`, on EVERY source file (legacy ones too):
-//      text outside a <Text> crashes the app on Android ("Text strings must
-//      be rendered within a <Text> component").
-//    - `lifepass/no-literal-copy`, on every source file outside the legacy
-//      list below: any member-facing literal at all; words come from
-//      t()/tp() with the generated iOS keys, or from the package's Android
-//      pack (eslint/lifepass-plugin.js explains why both).
+//    - `react-native/no-raw-text`, on EVERY source file: text outside a
+//      <Text> crashes the app on Android ("Text strings must be rendered
+//      within a <Text> component").
+//    - `lifepass/no-literal-copy`, on EVERY app source file: any
+//      member-facing literal at all; words come from t()/tp() with the
+//      generated iOS keys, or from the package's Android pack
+//      (eslint/lifepass-plugin.js explains why both).
 // 2. `lifepass/feature-boundaries` for src/features: another feature only
 //    through its index.ts or a published slot (plan 3.0.3).
 // 3. Device runtime: the phone runs Hermes, not Node. `crypto`, `Buffer`,
 //    `AbortSignal.timeout` and `AbortSignal.any` do not exist there (Jest
 //    removes them too, test/setup/env.ts), so app code may not use them.
 //
-// LEGACY FILES. The files in LEGACY_COPY_FILES predate the parity build and
-// still hold English literals; each belongs to the package named next to it
-// (plan 3.0.1), which replaces or rewrites it. A package that rewrites one
-// turns the copy rule back on for it with this first line, without touching
-// this file:
-//
-//   /* eslint lifepass/no-literal-copy: "error" */
-//
-// QA-1 empties the list (and so turns the rule on everywhere) at the end.
+// NO LEGACY FILES. The first build's files with English literals were exempt
+// one by one (plan 3.0.1) until their packages rewrote or deleted them; the
+// list is empty now and gone, so the rule applies everywhere. The first line
+// many files still carry, `/* eslint lifepass/no-literal-copy: "error" */`,
+// was how a rewritten file opted back in; it now only repeats the default.
 //
 // TEXT COMPONENTS. Raw text is safe inside a component that renders its
 // children in a <Text>. F5 owns the UI kit and lists those components in
@@ -43,38 +39,6 @@ const globals = require('globals');
 const lifepass = require('./eslint/lifepass-plugin');
 
 const SOURCE = ['**/*.{js,jsx,ts,tsx,mjs,cjs}'];
-
-/** Legacy files with English literals, each with its owner (plan 3.0.1). */
-const LEGACY_COPY_OWNERS = {
-  'src/api/gateRefusal.ts': 'F2',
-  'src/components/BookItPill.tsx': 'F5',
-  'src/components/CheckInProofBanner.tsx': 'CHECKIN-1',
-  'src/components/CreditPill.tsx': 'F5',
-  'src/components/KenniVerificationModal.tsx': 'AUTH-3',
-  'src/components/PopularVenueRow.tsx': 'HOME-1',
-  'src/data/coachCategories.ts': 'COACH-1',
-  'src/data/coachQuestions.ts': 'COACH-2',
-  'src/data/mockCoach.ts': 'COACH-1',
-  'src/hooks/useWeather.ts': 'HOME-1',
-  'src/navigation/CustomTabBar.tsx': 'F4',
-  'src/screens/account/AccountScreen.tsx': 'ACCT-1',
-  'src/screens/account/TopUpScreen.tsx': 'PLANS-1',
-  'src/screens/booking/BookingFlowScreen.tsx': 'BOOK-1',
-  'src/screens/bookings/BookingsScreen.tsx': 'LIB-1',
-  'src/screens/checkin/CheckInScreen.tsx': 'CHECKIN-1',
-  'src/screens/coach/ChatDrawer.tsx': 'COACH-1',
-  'src/screens/coach/CoachScreen.tsx': 'COACH-1',
-  'src/screens/coach/MicButton.tsx': 'COACH-1',
-  'src/screens/coach/QuestionBubbleMessage.tsx': 'COACH-2',
-  'src/screens/coach/VenueCarouselMessage.tsx': 'COACH-1',
-  'src/screens/explore/ExploreScreen.tsx': 'EXPL-1',
-  'src/screens/home/HomeScreen.tsx': 'HOME-1',
-  'src/screens/venue/VenueDetailScreen.tsx': 'VENUE-1',
-  'src/services/notifications.ts': 'F7',
-  'src/supabase/hooks/useFavourites.ts': 'VENUE-2',
-  'src/utils/nationality.ts': 'AUTH-1',
-};
-const LEGACY_COPY_FILES = Object.keys(LEGACY_COPY_OWNERS);
 
 /**
  * Where the copy rules never apply: the string tables themselves (generated
@@ -139,8 +103,6 @@ module.exports = defineConfig([
     'web-build/**',
     '.expo/**',
     'coverage/**',
-    // Deleted by QA-1; not part of the app (plan 3.0.1).
-    'supabase/functions/**',
     // Generated.
     'src/api/openapi.d.ts',
   ]),
@@ -149,7 +111,6 @@ module.exports = defineConfig([
 
   {
     files: SOURCE,
-    // Registered everywhere so a legacy file can opt back in with an inline comment.
     plugins: { 'react-native': reactNative, lifepass },
     rules: {
       // A web (HTML entity) rule; an apostrophe in RN text is just text.
@@ -200,10 +161,14 @@ module.exports = defineConfig([
       'react-native/no-raw-text': ['error', { skip: readTextComponents() }],
     },
   },
-  // ... and no literal copy outside the legacy files.
+  // ... and no literal copy, in every app file. The first build's files
+  // were exempt one by one (plan 3.0.1) until each was rewritten or deleted
+  // (QA-1); none is now. A literal that really is the same in both
+  // languages, as on iOS, says so where it stands, with an eslint-disable
+  // and its reason.
   {
     files: ['**/*.{ts,tsx,jsx}'],
-    ignores: [...LEGACY_COPY_FILES, ...NOT_MEMBER_FACING],
+    ignores: NOT_MEMBER_FACING,
     rules: {
       'lifepass/no-literal-copy': 'error',
     },
@@ -227,7 +192,5 @@ module.exports = defineConfig([
   },
 ]);
 
-module.exports.LEGACY_COPY_OWNERS = LEGACY_COPY_OWNERS;
-module.exports.LEGACY_COPY_FILES = LEGACY_COPY_FILES;
 module.exports.TEXT_COMPONENTS_FILE = TEXT_COMPONENTS_FILE;
 module.exports.readTextComponents = readTextComponents;

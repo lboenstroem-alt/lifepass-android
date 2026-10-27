@@ -18,9 +18,7 @@
 //
 //   // the block at the foot of the page (title, "Write one" / "See all", the
 //   // quote card or the two latest reviews; every action opens the reviews
-//   // page). Same feature folder, so the venue page imports the file itself:
-//   import VenueReviewsBlock from './reviews/VenueReviewsBlock';
-//   <VenueReviewsBlock venueId={venue.id} venueName={venue.name} />
+//   // page) is the venue page's own, ../components/ReviewsBlock.tsx.
 //
 //   // the meta row's tap (iOS opens the same reviews page):
 //   navigation.navigate('VenueReviews', { venueId: venue.id, venueName: venue.name });

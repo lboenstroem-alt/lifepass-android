@@ -144,10 +144,10 @@ describe('eslint.config.js', () => {
     ['src/i18n/android/PLANS-1.ts', pack],
     ['src/features/example/copy.ts', pack],
     ['src/screens/home/HomeScreen.tsx', literal],
+    ['src/utils/nationality.ts', pack],
     ['src/features/example/__tests__/Example.test.tsx', literal],
     ['src/screens/home/HomeScreen.tsx', optIn],
     ['src/screens/home/HomeScreen.tsx', raw],
-    ['src/screens/checkin/CheckInScreen.tsx', raw],
     ['src/features/example/Example.tsx', punctuation],
     ['src/features/example/ids.ts', nodeOnly],
     ['src/features/example/ids.ts', expoCrypto],
@@ -196,40 +196,24 @@ describe('eslint.config.js', () => {
     expect(lint('src/features/example/copy.ts', pack)).toContain('lifepass/no-literal-copy');
   });
 
-  it('spares legacy files until their owner rewrites them, and tests', () => {
-    expect(lint('src/screens/home/HomeScreen.tsx', literal)).not.toContain('lifepass/no-literal-copy');
+  it('applies the copy rules to every app file, first-build paths too (no legacy list), but not to tests', () => {
+    for (const file of ['src/screens/home/HomeScreen.tsx', 'src/utils/nationality.ts']) {
+      const code = file.endsWith('.tsx') ? literal : pack;
+      expect([file, lint(file, code)]).toEqual([file, expect.arrayContaining(['lifepass/no-literal-copy'])]);
+    }
     expect(lint('src/features/example/__tests__/Example.test.tsx', literal)).not.toContain('lifepass/no-literal-copy');
   });
 
-  it('lets a rewritten legacy file opt back in with one comment', () => {
+  it('still accepts the old opt-in first line, which now repeats the default', () => {
     expect(lint('src/screens/home/HomeScreen.tsx', optIn)).toContain('lifepass/no-literal-copy');
   });
 
-  it('applies the raw-text rule to legacy files too (raw text crashes the app on Android)', () => {
-    for (const file of ['src/screens/home/HomeScreen.tsx', 'src/screens/checkin/CheckInScreen.tsx']) {
-      const rules = lint(file, raw);
-      expect(rules).toContain('react-native/no-raw-text');
-      expect(rules).not.toContain('lifepass/no-literal-copy');
-    }
+  it('applies the raw-text rule everywhere (raw text crashes the app on Android)', () => {
+    expect(lint('src/screens/home/HomeScreen.tsx', raw)).toContain('react-native/no-raw-text');
   });
 
   it('allows punctuation-only text inside a <Text>', () => {
     expect(lint('src/features/example/Example.tsx', punctuation)).toEqual([]);
-  });
-
-  it('names an owner for every legacy file (plan 3.0.1)', () => {
-    /* eslint-disable @typescript-eslint/no-require-imports */
-    const { LEGACY_COPY_OWNERS, LEGACY_COPY_FILES } = require('../../../eslint.config.js');
-    /* eslint-enable @typescript-eslint/no-require-imports */
-    expect(LEGACY_COPY_FILES).toEqual(Object.keys(LEGACY_COPY_OWNERS));
-    for (const owner of Object.values(LEGACY_COPY_OWNERS)) expect(owner).toMatch(/^[A-Z]+\d*(-\d+)?$/);
-    expect(LEGACY_COPY_OWNERS).toMatchObject({
-      'src/navigation/CustomTabBar.tsx': 'F4',
-      'src/hooks/useWeather.ts': 'HOME-1',
-      'src/supabase/hooks/useFavourites.ts': 'VENUE-2',
-      'src/utils/nationality.ts': 'AUTH-1',
-      'src/data/coachQuestions.ts': 'COACH-2',
-    });
   });
 
   it('refuses Node-only globals the phone does not have, in app code', () => {

@@ -28,7 +28,7 @@ describe('the committed tables', () => {
     expect(Object.keys(generatedTables.is).sort()).toEqual(Object.keys(generatedTables.en).sort());
   });
 
-  it('are the iOS dictionaries merged: base 1,106 keys, six health packs, one intentional override', () => {
+  it('are the iOS dictionaries merged: base 1,106 keys, seven health packs, one intentional override', () => {
     expect(manifest.intentionalOverrides).toEqual(['coach.greeting']);
     expect(manifest.dictionaries.map((d) => d.name)).toEqual([
       'base',
@@ -38,8 +38,10 @@ describe('the committed tables', () => {
       'consent',
       'runner',
       'appleHealth',
+      'planEdit',
     ]);
-    // iOS release/3.1.0-candidate (7a020ee): Localization.swift and the six LocalizationHealth packs.
+    // iOS release/3.1.0-candidate (7a020ee): Localization.swift and the seven
+    // LocalizationHealth packs (planEdit merged last, as packsEN/packsIS list it).
     expect(Object.fromEntries(manifest.dictionaries.map((d) => [d.name, d.keys.length]))).toEqual({
       base: 1106,
       core: 50,
@@ -48,6 +50,7 @@ describe('the committed tables', () => {
       consent: 137,
       runner: 125,
       appleHealth: 63,
+      planEdit: 53,
     });
     for (const dictionary of manifest.dictionaries) {
       expect([dictionary.name, dictionary.enOnly, dictionary.isOnly]).toEqual([dictionary.name, [], []]);
@@ -55,9 +58,9 @@ describe('the committed tables', () => {
 
     const union = new Set(manifest.dictionaries.flatMap((d) => [...d.keys, ...d.enOnly]));
     expect(new Set(Object.keys(generatedTables.en))).toEqual(union);
-    // 1,106 base keys + 1,274 pack keys, the override counted once.
-    expect(Object.keys(generatedTables.en)).toHaveLength(2379);
-    expect(manifest.counts).toEqual({ en: 2379, is: 2379 });
+    // 1,106 base keys + 1,327 pack keys, the override counted once.
+    expect(Object.keys(generatedTables.en)).toHaveLength(2432);
+    expect(manifest.counts).toEqual({ en: 2432, is: 2432 });
   });
 
   it('give each key to one dictionary only, apart from the override', () => {
@@ -103,7 +106,15 @@ describe('the committed tables', () => {
 
   it('rebuild the base and every health pack with values in both languages', () => {
     expect(Object.keys(baseDictionary.en)).toHaveLength(1105);
-    expect(healthPacks.map((p) => p.name)).toEqual(['core', 'plan', 'meals', 'consent', 'runner', 'appleHealth']);
+    expect(healthPacks.map((p) => p.name)).toEqual([
+      'core',
+      'plan',
+      'meals',
+      'consent',
+      'runner',
+      'appleHealth',
+      'planEdit',
+    ]);
     for (const dictionary of [baseDictionary, ...healthPacks]) {
       for (const lang of LANGS) {
         expect(Object.values(dictionary[lang]).every((v) => typeof v === 'string')).toBe(true);
@@ -121,6 +132,7 @@ const PACK_FILES = [
   ['consent', 'LocalizationHealth+Consent.swift'],
   ['runner', 'LocalizationHealth+Runner.swift'],
   ['appleHealth', 'LocalizationHealth+AppleHealth.swift'],
+  ['planEdit', 'LocalizationHealth+PlanEdit.swift'],
 ] as const;
 
 type Entries = Record<string, string>;
@@ -230,6 +242,7 @@ describe('scripts/import-ios-strings.py', () => {
       ['consent', []],
       ['runner', ['runner.rest']],
       ['appleHealth', []],
+      ['planEdit', []],
     ]);
     expect(written.counts).toEqual({ en: 5, is: 5 });
   });

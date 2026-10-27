@@ -54,6 +54,7 @@ PACKS = [
     ("consent", "LocalizationHealth+Consent.swift"),
     ("runner", "LocalizationHealth+Runner.swift"),
     ("appleHealth", "LocalizationHealth+AppleHealth.swift"),
+    ("planEdit", "LocalizationHealth+PlanEdit.swift"),
 ]
 
 

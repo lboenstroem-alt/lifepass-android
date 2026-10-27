@@ -10,8 +10,9 @@
  *
  * FAIL OPEN. A check that fails (offline, any non-2xx including a 429, a
  * timeout, a body the app cannot read) never blocks: a block is only ever
- * shown on a fresh answer, so a failed re-check lifts one, and before any
- * answer the prompt is `none`. A soft prompt already decided stays as it is.
+ * shown on a fresh answer, so a failed re-check lifts one (and the next
+ * return to the foreground asks again), and before any answer the prompt is
+ * `none`. A soft prompt already decided stays as it is.
  * Nothing about a block is kept across launches.
  *
  * ONCE PER NEW VERSION. The latest version the member answered the soft
@@ -75,8 +76,15 @@ export function checkForUpdate(): Promise<void> {
     try {
       policy = await deps.fetchPolicy();
     } catch {
-      // Fail open: a block needs a fresh answer; anything else stays.
-      if (useAppUpdate.getState().prompt.kind === 'required') useAppUpdate.setState({ prompt: NO_UPDATE_PROMPT });
+      // Fail open: a block needs a fresh answer; anything else stays. A block
+      // lifted this way also forgets when it was last asked, so the very next
+      // return to the foreground asks again instead of waiting out
+      // RECHECK_AFTER_MS on the blocking answer's clock (iOS 3.1.0
+      // AppUpdateController.check, review follow-up 1): one brief network
+      // failure must not let a below-minimum install in for half an hour.
+      if (useAppUpdate.getState().prompt.kind === 'required') {
+        useAppUpdate.setState({ prompt: NO_UPDATE_PROMPT, checkedAt: null });
+      }
       return;
     }
     const prompt = decideUpdatePrompt({

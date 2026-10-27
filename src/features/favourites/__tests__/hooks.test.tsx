@@ -9,7 +9,6 @@ import { api, Reply } from '@test/server';
 import { stubApiClientPerTest } from '../../../api/testing';
 import { DialogHost, dismissAllDialogs } from '../../../components/ui/Dialog';
 import { setCurrentLanguage } from '../../../i18n';
-import { useFavouriteVenues } from '../../../supabase/hooks/useFavourites';
 import { favouritesStore, useFavourite, useFavourites } from '..';
 
 stubApiClientPerTest();
@@ -70,11 +69,6 @@ function SavedList() {
   return <Text testID="saved-list">{saved.venues.map((v) => v.name).join(',') || 'none'}</Text>;
 }
 
-function LegacySaved() {
-  const { savedVenueIds } = useFavouriteVenues();
-  return <Text testID="legacy-ids">{savedVenueIds.join(',') || 'none'}</Text>;
-}
-
 const settle = () => act(async () => new Promise<void>((resolve) => setImmediate(resolve)));
 
 it('a heart on one screen is already right on every other (one store)', async () => {
@@ -83,7 +77,6 @@ it('a heart on one screen is already right on every other (one store)', async ()
       <Heart venueId={A} testID="venue-heart" />
       <Heart venueId={A.toUpperCase()} testID="coach-heart" />
       <SavedList />
-      <LegacySaved />
     </View>,
   );
   await settle();
@@ -91,7 +84,6 @@ it('a heart on one screen is already right on every other (one store)', async ()
 
   await fireEvent.press(screen.getByTestId('venue-heart'));
   expect(screen.getByTestId('coach-heart')).toHaveTextContent('saved');
-  expect(screen.getByTestId('legacy-ids')).toHaveTextContent(A);
   await settle();
   // The add read the list again, so the new row reached Saved.
   expect(screen.getByTestId('saved-list')).toHaveTextContent('Laugar');

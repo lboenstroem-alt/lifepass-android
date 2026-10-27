@@ -144,3 +144,20 @@ than what is really live, a minimum above the live release still blocks
 members with nothing to install, so keep it equal to the live release.
 Only builds that include the prompt ask at all; older builds never see it.
 Code: `src/api/appVersion.ts`, `src/features/appUpdate/`.
+
+---
+
+## ⚠️ First build's `coach` Edge Function: delete it if it is still deployed
+
+The first Android build shipped a Supabase Edge Function, `coach`, that
+proxied the Anthropic API with its own `ANTHROPIC_API_KEY` secret and a
+system prompt from the retired credits model. The app has never called it
+since the Coach moved to `POST /coach` on the LifePass API (as iOS), and its
+source is gone from this repo. If it is still deployed, anyone with the
+public anon key can spend the Anthropic budget through it.
+
+**Owner:** in the Supabase dashboard (production project → Edge Functions),
+or with `supabase functions list`, check whether `coach` is deployed. If it
+is, delete it (`supabase functions delete coach`) and remove its
+`ANTHROPIC_API_KEY` secret (`supabase secrets unset ANTHROPIC_API_KEY`) unless
+another function uses it. Plan section 6, step 13.

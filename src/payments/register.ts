@@ -19,10 +19,21 @@
  *   that may fire while the launch or sign-in screens are up, so nothing is
  *   presented on the spot: an outcome waits until the app's tabs are on
  *   screen (./presenters; F3 contract request to say so in its registry).
+ * - Every `lifepass://payment-*` and `card-setup-*` link the deep-link
+ *   router sees (src/app/deepLinks.ts) comes here, each time one arrives,
+ *   as iOS `LifePassApp.handleIncomingURL` hands each to its confirm. The
+ *   once-per-process launch read above is not enough on Android: when it
+ *   destroys the Activity but keeps the process (back on the first screen
+ *   on Android 11 and older, memory pressure, "Don't keep activities"), the
+ *   next return reaches the app only through the router, and without this
+ *   its leg (success or cancel) was dropped: a cancelled checkout was then
+ *   asked as Done and could end in "contact support". A return that came
+ *   before this file loaded waits in the router and is handed over here.
  */
+import { registerReturnHandler } from '../app/deepLinks';
 import { registerActivationHook, registerSignOutCleaner } from '../app/signOut';
 
-import { forgetPendingReturn, readLaunchReturnOnce, recoverPayments } from './coldStartRecovery';
+import { forgetPendingReturn, handlePaymentReturnUrl, readLaunchReturnOnce, recoverPayments } from './coldStartRecovery';
 import { forgetRecentResolutions } from './earlier';
 import { wipeInflight } from './inflight';
 import { forgetWaitingPresentations } from './presenters';
@@ -43,4 +54,12 @@ registerActivationHook('payments.recovery', async ({ memberId, trigger }) => {
     return;
   }
   await recoverPayments(memberId, 'foreground');
+});
+
+registerReturnHandler('payment', (hostedReturn) => {
+  handlePaymentReturnUrl(hostedReturn.url);
+});
+
+registerReturnHandler('cardSetup', (hostedReturn) => {
+  handlePaymentReturnUrl(hostedReturn.url);
 });
