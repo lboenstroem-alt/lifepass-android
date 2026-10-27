@@ -405,6 +405,74 @@ describe('the meal page over the tab (testNoCheckInStartsWhileTheMealPageIsOpen)
   });
 });
 
+// iOS CheckInView publishes `appState.walkInActive = !viewModel.isIdle` on
+// appear and on change, and clears it on disappear (3.1.0 follow-up 2): "A new
+// version is available" waits for it.
+describe('a walk-in on its way (walkInActive)', () => {
+  const walkInActive = () => useIntentStore.getState().walkInActive;
+
+  it('is published while the scanner in front has a walk-in in hand, from its start until nothing of it is on screen', async () => {
+    await renderApp();
+    await layOut();
+    expect(walkInActive()).toBe(false);
+    await act(async () => flowDouble.setState({ isIdle: false }));
+    expect(walkInActive()).toBe(true);
+    await act(async () => flowDouble.setState({ isIdle: true }));
+    expect(walkInActive()).toBe(false);
+  });
+
+  it('is withdrawn when the member leaves the tab, and published again on the way back', async () => {
+    await renderApp();
+    await layOut();
+    await act(async () => flowDouble.setState({ isIdle: false }));
+    expect(walkInActive()).toBe(true);
+    // A walk-in left behind on a tab the member has walked away from never
+    // holds the update prompt for good.
+    await act(async () => navigationRef.current?.navigate('Home'));
+    expect(walkInActive()).toBe(false);
+    await act(async () => navigationRef.current?.navigate('Scan'));
+    expect(walkInActive()).toBe(true);
+  });
+
+  it('is withdrawn under the meal page', async () => {
+    await renderApp();
+    await layOut();
+    await act(async () => flowDouble.setState({ isIdle: false }));
+    await act(async () => navigationRef.current?.navigate('MealCapture'));
+    expect(walkInActive()).toBe(false);
+  });
+
+  it('is withdrawn when the scanner goes away', async () => {
+    await renderApp();
+    await layOut();
+    await act(async () => flowDouble.setState({ isIdle: false }));
+    expect(walkInActive()).toBe(true);
+    await screen.unmount();
+    expect(walkInActive()).toBe(false);
+  });
+
+  it('stays published across the two scanners, whichever leaves focus last, and goes with the last one', async () => {
+    await renderApp();
+    await layOut();
+    await act(async () => navigationRef.current?.navigate('Home', { screen: 'VenueDetail' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Scan QR' }));
+    await layOut();
+    await act(async () => flowDouble.setState({ isIdle: false }));
+    expect(walkInActive()).toBe(true);
+
+    // To the Scan tab and back: one scanner blurs as the other is focused.
+    await act(async () => navigationRef.current?.navigate('Scan'));
+    expect(walkInActive()).toBe(true);
+    await act(async () => navigationRef.current?.navigate('Home'));
+    expect(walkInActive()).toBe(true);
+
+    // Back from the venue's scanner to the venue: no scanner in front.
+    await act(async () => navigationRef.current?.goBack());
+    expect(screen.getByText('Scan QR')).toBeOnTheScreen();
+    expect(walkInActive()).toBe(false);
+  });
+});
+
 describe('the walk-in host that draws', () => {
   const hidden = { includeHiddenElements: true } as const;
 

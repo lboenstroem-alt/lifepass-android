@@ -11,7 +11,8 @@
  *
  * What it owns: the camera (./useScanCamera.ts), what each read means and the
  * QR lock (./qrRead.ts), the chip, the refusal alert, "Scan another code",
- * and the parked link (../link). What it hands on: a venue to the walk-in
+ * the parked link (../link), and telling the app a walk-in is on its way
+ * (./walkInActive.ts). What it hands on: a venue to the walk-in
  * flow (`useWalkInFlow`, CHECKIN-2), whose "Processing…" veil, sheets,
  * alerts and success cover (the proof, ../proof) `WalkInFlowHost` draws.
  *
@@ -47,6 +48,7 @@ import { dispositionOf, QrGate, QrReadClassifier, type QrDisposition } from './q
 import ScanPrompt from './ScanPrompt';
 import ScanViewfinder from './ScanViewfinder';
 import { useScanCamera } from './useScanCamera';
+import { usePublishWalkInActive } from './walkInActive';
 
 /** "Not a LifePass code" stays this long (iOS 2 s). */
 export const FOREIGN_CHIP_MS = 2_000;
@@ -119,6 +121,10 @@ export default function CheckInScanView({ pushed }: CheckInScanViewProps) {
   useEffect(() => {
     if (!isIdle) gate.lock();
   }, [isIdle, gate]);
+
+  // A walk-in on its way in the scanner in front: "A new version is
+  // available" waits for it (./walkInActive.ts).
+  usePublishWalkInActive(camera.isFocused, isIdle);
 
   const showForeignChip = useCallback(() => {
     if (chipTimer.current) return;
