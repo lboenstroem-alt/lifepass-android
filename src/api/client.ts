@@ -7,7 +7,9 @@
  *     Supabase session. Auth stays on Supabase; the API only validates the
  *     token. Nothing else is declared: no app-version, platform or
  *     API-version header (the version is in the path), only Accept,
- *     Content-Type, Idempotency-Key and the cache directive below.
+ *     Content-Type, Idempotency-Key, the cache directive below and the
+ *     features this build shows (`X-LifePass-Features`, see
+ *     `CLIENT_FEATURES`).
  *   - Sends `Idempotency-Key` when the caller passes one (see ./idempotency:
  *     one key per user action, reused across retries).
  *   - Unwraps the `{ ok: true, data }` success envelope.
@@ -128,6 +130,26 @@ export const API_TIMEOUTS = {
 } as const;
 
 export const DEFAULT_TIMEOUT_MS = API_TIMEOUTS.default;
+
+/** The header that says what this build shows (API 0.46.0). */
+export const CLIENT_FEATURES_HEADER = 'X-LifePass-Features';
+
+/**
+ * What this build shows that the server holds back from older clients, sent
+ * on EVERY request as `X-LifePass-Features` (a comma-separated list; only
+ * the check-in routes read it today, and sending it everywhere is what the
+ * contract asks for).
+ *
+ * `visit-rating-prompts`: the app shows "How was your visit?". With it, a
+ * walk-in (`POST /check-ins/walk-in`) or a walk-in paid on the hosted page
+ * (`POST /bookings/payment-sessions/confirm`) reserves the ask and answers
+ * it as `ratingPrompt`, which the app schedules as a local notification.
+ * Without it the server reserves nothing: an ask no screen would ever show
+ * would still close the member's 30 days and the venue's 90. A header, not
+ * a body flag: the walk-in body is strict, and a server older than 0.46.0
+ * ignores a header it does not know, even after a rollback.
+ */
+export const CLIENT_FEATURES: readonly string[] = ['visit-rating-prompts'];
 
 /**
  * The writes iOS gives `BookingService.createTimeout` (120 s): the booking
@@ -789,7 +811,10 @@ export function createApiClient(deps: ApiClientDeps = {}): ApiClient {
   }
 
   function prepare(method: HttpMethod, path: string, options: DeleteOptions<unknown>, token: string | null): Prepared {
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      [CLIENT_FEATURES_HEADER]: CLIENT_FEATURES.join(', '),
+    };
     if (token) headers.Authorization = `Bearer ${token}`;
     if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
     const cache = options.cache ?? ((options.auth ?? 'required') === 'required' ? 'no-store' : 'default');

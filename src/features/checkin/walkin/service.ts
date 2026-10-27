@@ -22,13 +22,14 @@
  * lower case.
  *
  * THE ANSWER arrives after the visit is recorded, so what is only garnish on
- * the receipt is read fail-soft: an unreadable `memberShortName` or
- * `coveredBy` is dropped, never turned into an error that would invite the
- * member to scan (and pay) again. The rest is read as strictly as iOS reads
- * it.
+ * the receipt is read fail-soft: an unreadable `memberShortName`,
+ * `coveredBy`, `ratingPrompt` or `lifetimeCheckIns` is dropped, never turned
+ * into an error that would invite the member to scan (and pay) again. The
+ * rest is read as strictly as iOS reads it.
  */
 import { API_TIMEOUTS, apiPost } from '../../../api';
 import { fetchWalkInPreview, readCoverage, type WalkInCoverage, type WalkInPreview } from '../../../api/walkInPreview';
+import { readLifetimeCheckIns, readRatingPrompt, type VisitRatingReservation } from '../../../api/visitRating';
 import { parseIsoDate, wireId } from '../../../api/wire';
 import type { CheckInParty } from '../../../api/profile';
 
@@ -95,6 +96,14 @@ export interface WalkInResult {
   readonly memberShortName: string | null;
   /** What paid for the member's own visit, read back after the commit; null when unreadable. */
   readonly coveredBy: WalkInCoverage | null;
+  /**
+   * The "How was your visit?" ask this check-in reserved (API 0.46.0, only
+   * for a client that sends `X-LifePass-Features: visit-rating-prompts`), or
+   * null: most of the time, and whenever it cannot be read.
+   */
+  readonly ratingPrompt: VisitRatingReservation | null;
+  /** The member's check-ins that stand, this one included (0.46.0); null when unknown. */
+  readonly lifetimeCheckIns: number | null;
 }
 
 /** Why the answer did not decode; the client turns it into a `DecodingError`. */
@@ -187,6 +196,8 @@ export function decodeWalkInResult(raw: unknown): WalkInResult {
     party: party(raw.party),
     memberShortName: shortName(raw.memberShortName),
     coveredBy: readCoverage(raw.coveredBy),
+    ratingPrompt: readRatingPrompt(raw.ratingPrompt),
+    lifetimeCheckIns: readLifetimeCheckIns(raw.lifetimeCheckIns),
   };
 }
 

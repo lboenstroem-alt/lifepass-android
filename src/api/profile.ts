@@ -20,7 +20,8 @@
  *   server), so an unreadable one is DISCARDED (null) and the member keeps
  *   their identity. Inside each block the members are read strictly, except
  *   where iOS softens one on its own (`health.features`, every member of the
- *   coach block, `recentCheckIn.memberShortName`).
+ *   coach block, `recentCheckIn.memberShortName`). `lifetimeCheckIns`
+ *   (0.46.0) is fail-soft too: anything but a whole number is null.
  * - Every enum reads an unknown server value as `'unknown'` instead of
  *   failing: the server ships new kinds before this build is off every phone.
  *
@@ -29,6 +30,7 @@
  */
 import { API_TIMEOUTS, apiGet, apiPost } from './client';
 import { decodeCoachFreeMessages, decodeCoachUpgrade, type CoachFreeMessages, type CoachUpgrade } from './errors';
+import { readLifetimeCheckIns } from './visitRating';
 import { parseIsoDate, wireId } from './wire';
 
 import type { Lang } from '../i18n';
@@ -276,6 +278,12 @@ export interface Profile {
    * screen shows its row only while this is set.
    */
   readonly whatsAppSupport: WhatsAppSupport | null;
+  /**
+   * The member's check-ins that stand, voided ones left out (API 0.46.0):
+   * one of the Google Play rating ask's facts. Fail-soft: null on an older
+   * server, on a failed read there, or when it cannot be read here.
+   */
+  readonly lifetimeCheckIns: number | null;
 }
 
 /** The WhatsApp support chat, answered by LifePass in the WhatsApp Business app (iOS `WhatsAppSupport`). */
@@ -579,6 +587,7 @@ export function decodeProfile(data: unknown): Profile {
     health: failSoft(profile.health, decodeProfileHealthBlock),
     coach: failSoft(profile.coach, decodeProfileCoachBlock),
     whatsAppSupport: failSoft(profile.support, decodeProfileSupport),
+    lifetimeCheckIns: readLifetimeCheckIns(profile.lifetimeCheckIns),
   };
 }
 

@@ -54,8 +54,28 @@ describe('requests', () => {
     expect(sent.headers['cache-control']).toBe('no-store');
     expect(sent.headers['content-type']).toBeUndefined();
     expect(sent.headers['idempotency-key']).toBeUndefined();
-    // Nothing beyond the declared headers (iOS declares no app or platform header).
-    expect(Object.keys(sent.headers).filter((h) => /lifepass|platform|version|x-app/i.test(h))).toEqual([]);
+    // Nothing beyond the declared headers (iOS declares no app or platform
+    // header): the one LifePass header says what this build shows (0.46.0).
+    expect(Object.keys(sent.headers).filter((h) => /lifepass|platform|version|x-app/i.test(h))).toEqual([
+      'x-lifepass-features',
+    ]);
+    expect(sent.headers['x-lifepass-features']).toBe('visit-rating-prompts');
+  });
+
+  it('says it shows the visit rating on every request, signed in or not (X-LifePass-Features)', async () => {
+    api.on('POST', '/check-ins/walk-in', Reply.ok({}, 201));
+    api.on('POST', '/bookings/payment-sessions/confirm', Reply.ok({ status: 'processing' }));
+    api.on('GET', '/app-version', Reply.ok({}));
+    await client().post('/check-ins/walk-in', { venueId: 'v' }, { idempotencyKey: 'k-1' });
+    await client().post('/bookings/payment-sessions/confirm', { key: 'k-1' });
+    await client().get('/app-version', undefined, { auth: 'none' });
+    for (const [path, method] of [
+      ['/check-ins/walk-in', 'POST'],
+      ['/bookings/payment-sessions/confirm', 'POST'],
+      ['/app-version', 'GET'],
+    ] as const) {
+      expect(api.sent(path, method).headers['x-lifepass-features']).toBe('visit-rating-prompts');
+    }
   });
 
   it('accepts a path with or without its leading slash', async () => {

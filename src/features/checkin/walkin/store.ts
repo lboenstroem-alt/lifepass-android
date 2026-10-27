@@ -85,6 +85,12 @@ import {
   type WalkInPaymentSession,
 } from '../../../payments';
 import { useAppStore } from '../../../stores/appStore';
+import {
+  reportCheckInFacts,
+  reportCheckInProofClosed,
+  type CheckInFacts,
+  type ProofClosedFacts,
+} from '../../../checkin/checkInFacts';
 
 import type { ConsentContext } from './consentCopy';
 import { blockingRefusal, confirmRefusal } from './refusals';
@@ -136,6 +142,12 @@ export interface WalkInState {
   readonly successParty: CheckInParty | null;
   /** What paid for the visit, for "Balance after"; null after the hosted page. */
   readonly successCoverage: WalkInCoverage | null;
+  /**
+   * The member's check-ins that stand, this one included, as the check-in
+   * said (API 0.46.0): the Google Play rating ask's fact for the moment the
+   * member LEAVES the proof (never while it is up). Null when unknown.
+   */
+  readonly successLifetimeCheckIns: number | null;
 
   /** The charge disclosed from the preview, or the 402's re-offer. */
   readonly pendingOffer: ChargeConsentOffer | null;
@@ -201,14 +213,15 @@ export interface WalkInActions {
   dismissError(): void;
   /** The refusal's "Try again": the same venue from a fresh preview, under a new key. */
   retryAfterRefusal(): Promise<void>;
-  /** The proof's Done. */
+  /** The proof's Done (and back): the member leaves the proof (reported, see `WalkInDeps.leftProof`). */
   resetSuccess(): void;
   /**
    * The proof of a walk-in paid on the hosted page and confirmed after the
    * screen that started it was gone (Android: F8's recovery after a cold
-   * start), from what the attempt saved before the page opened.
+   * start), from what the attempt saved before the page opened, and the
+   * check-in count the confirm answered with (null when it said none).
    */
-  showRecoveredProof(walkIn: WalkInAttemptContext): void;
+  showRecoveredProof(walkIn: WalkInAttemptContext, lifetimeCheckIns?: number | null): void;
   /** Everything forgotten (sign-out). */
   reset(): void;
 }
@@ -235,6 +248,7 @@ export const INITIAL_WALK_IN_STATE: WalkInState = Object.freeze({
   successMemberShortName: null,
   successParty: null,
   successCoverage: null,
+  successLifetimeCheckIns: null,
   pendingOffer: null,
   showChargeConsent: false,
   pendingChargeReason: null,
@@ -351,6 +365,14 @@ export interface WalkInDeps {
   memberId(): string | null;
   /** iOS `appState.refreshCredits()`: the plan and the profile, after a check-in. */
   refreshCredits(): Promise<void>;
+  /**
+   * A walk-in stood (the direct POST): what its answer said, for the visit
+   * rating's notification (src/checkin/checkInFacts). A walk-in paid on the
+   * hosted page is reported where its confirm settles (src/payments).
+   */
+  checkedIn(facts: CheckInFacts): void;
+  /** The member left the proof: for the Google Play rating ask's check-in moment. */
+  leftProof(facts: ProofClosedFacts): void;
   /** The walk-in host is on screen (a payment outcome is the screen's to show). */
   isScreenAlive(): boolean;
   newKey(): string;
@@ -394,6 +416,8 @@ export const defaultWalkInDeps: WalkInDeps = {
     return userId ?? profile?.id ?? null;
   },
   refreshCredits: () => useAppStore.getState().refreshCredits(),
+  checkedIn: (facts) => reportCheckInFacts(facts),
+  leftProof: (facts) => reportCheckInProofClosed(facts),
   isScreenAlive: () => isWalkInHostMounted(),
   newKey: () => newIdempotencyKey(),
   now: () => new Date(),
@@ -553,7 +577,11 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
      * iOS names none for an earlier session's payment
      * (`booking_payment_already_completed`).
      */
-    function showPaidProof(context: WalkInAttemptContext | null, withActivity: boolean): void {
+    function showPaidProof(
+      context: WalkInAttemptContext | null,
+      withActivity: boolean,
+      lifetimeCheckIns: number | null = null,
+    ): void {
       const state = get();
       set({
         successVenueName: context?.venueName ?? state.preview?.venue.name ?? null,
@@ -562,6 +590,7 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         successMemberShortName: null,
         successParty: context ? (context.party ?? null) : confirmedParty(state),
         successCoverage: null,
+        successLifetimeCheckIns: lifetimeCheckIns,
         showSuccess: true,
       });
     }
@@ -594,6 +623,12 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         if (live(run)) set({ isProcessing: false });
         return;
       }
+      // The check-in stood for this member, whatever the screen does now: its
+      // "How was your visit?" ask is theirs to be reminded of. Never after a
+      // sign-out (the next member's phone must not carry it).
+      if (run.session === session) {
+        deps.checkedIn({ ratingPrompt: result.ratingPrompt, lifetimeCheckIns: result.lifetimeCheckIns });
+      }
       if (!live(run)) {
         // Checked in, for an attempt that is no longer in hand. Its proof is
         // nobody's to see now; the same member's balance still moved.
@@ -608,6 +643,7 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
         successMemberShortName: result.memberShortName,
         successParty: result.party,
         successCoverage: result.coveredBy,
+        successLifetimeCheckIns: result.lifetimeCheckIns,
         showSuccess: true,
         scannedVenueId: null,
         preview: null,
@@ -931,7 +967,7 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
       const a = run.attempt;
       switch (settlement.kind) {
         case 'fulfilled':
-          showPaidProof(context, withActivity);
+          showPaidProof(context, withActivity, settlement.confirmation.lifetimeCheckIns);
           a.walkInKey = null;
           set({ scannedVenueId: null, preview: null, pendingOffer: null });
           await deps.refreshCredits().catch(() => undefined);
@@ -1260,6 +1296,7 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
       },
 
       resetSuccess() {
+        const { showSuccess: wasShowing, successLifetimeCheckIns } = get();
         attempt.guestChoiceMade = false;
         set({
           showSuccess: false,
@@ -1269,12 +1306,16 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
           successMemberShortName: null,
           successParty: null,
           successCoverage: null,
+          successLifetimeCheckIns: null,
           guestBandOffers: [],
           guestCounts: {},
         });
+        // Reported once the proof is down: whatever is asked of the member
+        // next must never cover the screen reception reads.
+        if (wasShowing) deps.leftProof({ lifetimeCheckIns: successLifetimeCheckIns });
       },
 
-      showRecoveredProof(walkIn) {
+      showRecoveredProof(walkIn, lifetimeCheckIns = null) {
         // As the pay rail's own proof: no name (a payment session carries
         // none), the party that was paid for, no balance.
         set({
@@ -1284,6 +1325,7 @@ export function createWalkInStore(overrides: Partial<WalkInDeps> = {}): StoreApi
           successMemberShortName: null,
           successParty: walkIn.party ?? null,
           successCoverage: null,
+          successLifetimeCheckIns: lifetimeCheckIns,
           showSuccess: true,
         });
       },

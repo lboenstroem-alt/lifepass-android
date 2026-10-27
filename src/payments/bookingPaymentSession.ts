@@ -31,7 +31,9 @@ import {
   TransportError,
   type ChargeConsentOffer,
 } from '../api';
+import { readLifetimeCheckIns, readRatingPrompt, type VisitRatingReservation } from '../api/visitRating';
 import { toWireDate, wireId } from '../api/wire';
+import { reportCheckInFacts } from '../checkin/checkInFacts';
 
 import { paymentTiming, sleep } from './timing';
 
@@ -280,6 +282,14 @@ export interface PaymentConfirmation {
    * which keep "still confirming".
    */
   readonly awaitingPayment: boolean;
+  /**
+   * A fulfilled WALK-IN's "How was your visit?" ask (API 0.46.0, sent only
+   * for a client that says it shows it), or null: most of the time, on every
+   * booking, and whenever it cannot be read. Fail-soft: the check-in stands.
+   */
+  readonly ratingPrompt: VisitRatingReservation | null;
+  /** A fulfilled walk-in's count of the member's check-ins that stand (0.46.0); null otherwise. */
+  readonly lifetimeCheckIns: number | null;
 }
 
 function optionalString(value: unknown): string | null {
@@ -301,6 +311,8 @@ export function decodePaymentConfirmation(data: unknown): PaymentConfirmation {
     checkInId: checkInId ? wireId(checkInId) : null,
     reason: optionalString(json.reason),
     awaitingPayment: json.awaitingPayment === true,
+    ratingPrompt: readRatingPrompt(json.ratingPrompt),
+    lifetimeCheckIns: readLifetimeCheckIns(json.lifetimeCheckIns),
   };
 }
 
@@ -396,6 +408,12 @@ export async function settlePaymentSession({ key, leg, signal }: SettleOptions):
     const lastAttempt = attempt === maxAttempts - 1;
     switch (result.status) {
       case 'fulfilled':
+        // A walk-in paid on the page is a check-in like any other: its ask
+        // is scheduled wherever this settles (a live flow, a Check again or
+        // the recovery after a cold start). A booking carries neither field.
+        if (result.checkInId !== null) {
+          reportCheckInFacts({ ratingPrompt: result.ratingPrompt, lifetimeCheckIns: result.lifetimeCheckIns });
+        }
         return { kind: 'fulfilled', confirmation: result };
       case 'processing':
         unpaidAnswers = result.awaitingPayment ? unpaidAnswers + 1 : 0;

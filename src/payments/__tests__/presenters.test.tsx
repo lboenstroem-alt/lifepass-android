@@ -60,6 +60,8 @@ const booked = (attemptId?: string, memberId?: string): PaymentResolution => ({
       checkInId: null,
       reason: null,
       awaitingPayment: false,
+      ratingPrompt: null,
+      lifetimeCheckIns: null,
     },
   },
 });

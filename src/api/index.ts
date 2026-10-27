@@ -43,6 +43,8 @@ export {
   apiPost,
   apiPut,
   buildUrl,
+  CLIENT_FEATURES,
+  CLIENT_FEATURES_HEADER,
   createApiClient,
   DEFAULT_TIMEOUT_MS,
   parseRetryAfter,

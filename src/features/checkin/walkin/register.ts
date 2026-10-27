@@ -37,7 +37,9 @@ export const walkInPaymentPresenter: PaymentOutcomePresenter = (resolution, acti
     isWalkInHostMounted() &&
     isWalkInIdle(walkInStore.getState())
   ) {
-    walkInStore.getState().showRecoveredProof(resolution.record.walkIn);
+    walkInStore
+      .getState()
+      .showRecoveredProof(resolution.record.walkIn, resolution.settlement.confirmation.lifetimeCheckIns);
     return;
   }
   defaultPresenter(resolution, actions);

@@ -39,6 +39,8 @@ function resolution(
       checkInId: null,
       reason: null,
       awaitingPayment: false,
+      ratingPrompt: null,
+      lifetimeCheckIns: null,
     },
   },
 ): PaymentResolution {

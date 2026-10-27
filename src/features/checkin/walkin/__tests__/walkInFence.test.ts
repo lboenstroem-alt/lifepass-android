@@ -62,7 +62,15 @@ async function flush() {
 
 const FULFILLED: PaySettlement = {
   kind: 'fulfilled',
-  confirmation: { status: 'fulfilled', bookingId: null, checkInId: null, reason: null, awaitingPayment: false },
+  confirmation: {
+    status: 'fulfilled',
+    bookingId: null,
+    checkInId: null,
+    reason: null,
+    awaitingPayment: false,
+    ratingPrompt: null,
+    lifetimeCheckIns: null,
+  },
 };
 
 function settled(settlement: PaySettlement, extra: Partial<Extract<HostedPayResult, { kind: 'settled' }>> = {}): HostedPayResult {
