@@ -22,6 +22,9 @@ import { registeredHealthWipeHookIds, runHealthWipeHooks } from '../../../health
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
 import { setMealApi } from '../api';
 import { fakeMealApi } from '../api/testing';
+import { openStoredItemEditor } from '../diary/storedItemEditor';
+import { mealRecord, skyrItemJson } from '../itemEditor/__tests__/fixtures';
+import { draftFromRecord } from '../types/draftFactory';
 import { openFoodsCache, refreshMineFoods, useMealFoodsCache } from '../foodsCache';
 import { activateMealOutbox, encodeOutboxItem, enqueueMeal, flushMealOutbox, mealOutboxPlanSource, resetMealOutboxForTests, useMealOutbox } from '../outbox';
 import type { MealOutboxItem } from '../outbox';
@@ -47,12 +50,20 @@ jest.mock('../../../app/signOut', () => ({
 }));
 
 type RegisterModule = typeof import('../register');
+type PresenterModule = typeof import('../itemEditor/itemEditorPresenter');
 
-/** Loaded once the mock's registry exists (an import would run before it). */
+/**
+ * Loaded once the mock's registry exists (an import would run before it).
+ * The item editor's presenter registers a sign-out cleaner of its own when it
+ * loads, so it is required the same way.
+ */
 let register: RegisterModule;
+let presenter: PresenterModule;
 beforeAll(() => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  /* eslint-disable @typescript-eslint/no-require-imports */
   register = require('../register') as RegisterModule;
+  presenter = require('../itemEditor/itemEditorPresenter') as PresenterModule;
+  /* eslint-enable @typescript-eslint/no-require-imports */
 });
 
 const MEMBER = '8c2c1b36-2a7e-4b1f-9e0e-2f1c4f0a9c11';
@@ -125,10 +136,35 @@ afterEach(async () => {
 });
 
 it('registers its hooks under stable ids', () => {
-  expect(Object.keys(mockHooks.signOut)).toEqual(['meals.local']);
+  // meals.itemEditor is the item editor's own (itemEditor/itemEditorPresenter.ts),
+  // loaded with the diary's opener below.
+  expect(Object.keys(mockHooks.signOut).sort()).toEqual(['meals.itemEditor', 'meals.local']);
   expect(Object.keys(mockHooks.activation)).toEqual(['meals.outbox']);
   expect(registeredHealthWipeHookIds()).toContain('meals.memory');
   expect(register.MEAL_LOCAL_FILES).toEqual(['mealOutbox', 'tray', 'foods']);
+});
+
+// iOS DiaryDayView opens FoodItemEditorSheet(context: .storedItem(...)) on an
+// item's tap; the diary asks through `openStoredItemEditor`, which answers
+// false (and the diary opens the whole meal) until an opener is registered.
+it('installs the diary’s item editor: a stored item opens through the host over the tabs, and not without one', () => {
+  const meal = mealRecord({ items: [skyrItemJson()] });
+  const request = { meal, item: draftFromRecord(meal.items[0]!), offBarcode: null, onCommitted: jest.fn(), onDeleted: jest.fn() };
+
+  // No host mounted: the diary falls back to the meal editor.
+  expect(openStoredItemEditor(request)).toBe(false);
+  expect(presenter.useItemEditorPresenter.getState().request).toBeNull();
+
+  const detach = presenter.attachItemEditorHost();
+  try {
+    expect(openStoredItemEditor(request)).toBe(true);
+    const shown = presenter.useItemEditorPresenter.getState().request;
+    expect(shown?.item).toBe(request.item);
+    expect(shown?.context).toEqual({ kind: 'stored', meal, onCommitted: request.onCommitted, onDeleted: request.onDeleted });
+  } finally {
+    presenter.dismissItemEditor();
+    detach();
+  }
 });
 
 describe('a health wipe', () => {
