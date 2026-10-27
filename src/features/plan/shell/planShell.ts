@@ -7,7 +7,8 @@
  *
  *   import { reloadPlan, selectPlanDate, applySessionAction, usePlanView } from '../shell';
  *
- * THE LOAD SEQUENCE (iOS `load`, `ios-ux.md` 3.3):
+ * THE LOAD SEQUENCE (iOS `load`, `ios-ux.md` 3.3), after an appearance has
+ * let each outbox `activate` (iOS `.task`, ahead of the guard below):
  *   1. nothing for a minor or a member without consent: the gate and the
  *      under-18 card render from the profile alone, and a Today read would
  *      spend a request to be told 409. CONSENT IS THE WHOLE TEST, not the
@@ -604,7 +605,27 @@ export function runPlanTask(force = false): void {
   store.forgetOtherDays();
   store.setSelectedDate(todayServerDay());
   set({ reloadOnNextFocus: false });
-  void reloadPlan({ force }).then(() => consumePendingPlanAction());
+  void activatePlanOutboxes()
+    .then(() => reloadPlan({ force }))
+    .then(() => consumePendingPlanAction());
+}
+
+/**
+ * Each outbox's appearance step, BEFORE the load and its minor and consent
+ * guard (iOS PlanView's `.task`: `WorkoutRunnerSupport.activate`, then
+ * `MealOutbox.activate`, then `load()`). The workout half reads the Resume
+ * row from disk again, so one left from a past day is deleted even where the
+ * guard then reads nothing. Never throws.
+ */
+async function activatePlanOutboxes(): Promise<void> {
+  for (const source of installedOutboxes()) {
+    if (!source.activate) continue;
+    try {
+      await source.activate();
+    } catch {
+      // The flush behind the guard activates again; nothing here blocks the read.
+    }
+  }
 }
 
 /**

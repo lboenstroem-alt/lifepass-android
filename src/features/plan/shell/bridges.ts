@@ -15,6 +15,7 @@
  *
  *   // RUN-1 (the workout outbox) and MEAL-1 (the meal outbox):
  *   installPlanOutbox('workout', {
+ *     activate: () => WorkoutOutbox.activate(), // optional: Plan's appearance
  *     flush: () => WorkoutOutbox.flush(),
  *     failedItems: () => WorkoutOutbox.failed().map((id) => ({ id, kind: 'workout' })),
  *     saveAsExtra: (item) => WorkoutOutbox.repost(item.id, { asExtra: true }),
@@ -46,6 +47,13 @@ export interface PlanOutboxItem {
 }
 
 export interface PlanOutboxSource {
+  /**
+   * Plan came on screen: read this member's queue in (and, for workouts, the
+   * Resume row). Runs on every appearance AHEAD of the load's minor and
+   * consent guard, as iOS PlanView's `.task` runs `WorkoutRunnerSupport
+   * .activate` and `MealOutbox.activate` before `load()`. Optional.
+   */
+  activate?(): Promise<void>;
   /** Post what is queued, each item in turn (Plan flushes the workout outbox first). */
   flush(): Promise<void>;
   /** The items that came back failed and are waiting for the member's decision. */
