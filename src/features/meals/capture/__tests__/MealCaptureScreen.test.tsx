@@ -201,18 +201,41 @@ describe('a lunch by search', () => {
     expect(useIntentStore.getState().pendingTab).toBe('Plan');
   });
 
-  // MERGE GATE with MEAL-4: once ../slots.ts exports MEAL-4's
-  // NewItemEditorSheet, a row's tap opens the editor (iOS
-  // testTheItemEditorChangesTheAmountInOneTap) and this case must assert
-  // that instead; ../../search/__tests__/itemEditorSlot.test.tsx covers the
-  // wired slot.
-  it('without the item editor wired in, a row’s tap adds its usual portion', async () => {
+  // iOS testTheItemEditorChangesTheAmountInOneTap: a row's tap opens the
+  // item editor (the real MEAL-4 sheet through ../slots.ts), nothing joins
+  // the tray until "Add to meal", and the tray carries the amount set there.
+  it('a row’s tap opens the item editor, and Add to meal adds the amount set there', async () => {
     useApi();
     await renderApp();
     await openPage();
     await waitFor(() => expect(screen.getAllByTestId(`food.open.${choice().key}`).length).toBeGreaterThan(0));
     await act(async () => fireEvent.press(screen.getAllByTestId(`food.open.${choice().key}`)[0]!));
-    expect(within(screen.getByTestId('meal.trayBar')).getByText('1 item · 107 kcal')).toBeOnTheScreen();
+
+    await waitFor(() => expect(screen.getByTestId('newItemEditor')).toBeOnTheScreen());
+    expect(screen.queryByTestId('meal.trayBar')).toBeNull();
+    expect(screen.queryByText('Added')).toBeNull();
+    expect(screen.getByTestId('newItemEditor.kcal')).toHaveDisplayValue('107');
+
+    await act(async () => fireEvent.press(screen.getByTestId('newItemEditor.multiplier.2')));
+    expect(screen.getByTestId('newItemEditor.kcal')).toHaveDisplayValue('214');
+    await act(async () => fireEvent.press(screen.getByText('Add to meal')));
+
+    await waitFor(() => expect(screen.queryByTestId('newItemEditor')).toBeNull());
+    expect(within(screen.getByTestId('meal.trayBar')).getByText('1 item · 214 kcal')).toBeOnTheScreen();
+    expect(screen.getByText('Added')).toBeOnTheScreen();
+  });
+
+  it('a row’s editor closed with Cancel adds nothing', async () => {
+    useApi();
+    await renderApp();
+    await openPage();
+    await waitFor(() => expect(screen.getAllByTestId(`food.open.${choice().key}`).length).toBeGreaterThan(0));
+    await act(async () => fireEvent.press(screen.getAllByTestId(`food.open.${choice().key}`)[0]!));
+    await waitFor(() => expect(screen.getByTestId('newItemEditor')).toBeOnTheScreen());
+
+    await act(async () => fireEvent.press(screen.getByTestId('newItemEditor.cancel')));
+    await waitFor(() => expect(screen.queryByTestId('newItemEditor')).toBeNull());
+    expect(screen.queryByTestId('meal.trayBar')).toBeNull();
   });
 
   it('Undo takes the last add back out of the tray', async () => {

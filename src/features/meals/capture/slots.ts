@@ -1,6 +1,6 @@
 /**
- * Where the meal page mounts what other meal packages draw. Each is null
- * until its package is wired in, and the page works without it:
+ * Where the meal page mounts what other meal packages draw. Each slot may be
+ * null (a test can stub one out), and the page works without it:
  *
  * | Slot              | Filled by | iOS                                      | Without it                          |
  * |-------------------|-----------|------------------------------------------|-------------------------------------|
@@ -8,16 +8,11 @@
  * | `BarcodeMode`     | MEAL-3    | `BarcodeScanMode(model:anchor:)`         | no Barcode in the switcher          |
  * | `NewItemEditor`   | MEAL-4    | `FoodItemEditorSheet(context: .newItem)` | a row's tap adds its usual portion  |
  *
- * MEAL-3 depends on MEAL-2, so it filled its two by editing this file once
- * MEAL-2 had merged (plan 3.0 rule 2). MEAL-4 does not, so its line is a
- * MERGE GATE (contract request in MEAL-2's result): without it a row's tap
- * and its plus do the same thing, which iOS never does. Replace the null
- * below with
- *
- *   export { default as NewItemEditor } from '../itemEditor/NewItemEditorSheet';
- *
- * and flip "without the item editor wired in" in
- * ./__tests__/MealCaptureScreen.test.tsx to expect the editor.
+ * All three are filled. `NewItemEditor` matters most: iOS FoodSearchMode
+ * opens the item editor on a row's tap (`editing = choice`) and only the plus
+ * adds the usual portion in one tap, so the member can see and set the amount
+ * before anything joins the tray
+ * (./__tests__/MealCaptureScreen.test.tsx, "a row's tap opens the item editor").
  *
  * A camera mode gets the page's model (`useCapture(model, ...)` for the
  * slot, date and tray; `model.add`, `model.openDraft`, `model.setMode`,
@@ -27,6 +22,7 @@
 import type { ComponentType } from 'react';
 
 import BarcodeScanMode from '../barcode/BarcodeScanMode';
+import NewItemEditorSheet from '../itemEditor/NewItemEditorSheet';
 import PhotoCaptureMode from '../photo/PhotoCaptureMode';
 import type { MealItemDraft } from '../types/draft';
 
@@ -56,5 +52,5 @@ export const PhotoMode: ComponentType<CameraModeProps> | null = PhotoCaptureMode
 /** MEAL-3: the Barcode mode (../barcode/BarcodeScanMode.tsx). */
 export const BarcodeMode: ComponentType<CameraModeProps> | null = BarcodeScanMode;
 
-/** MEAL-4: the item editor for a food about to be added. */
-export const NewItemEditor: ComponentType<NewItemEditorProps> | null = null;
+/** MEAL-4: the item editor for a food about to be added (../itemEditor/NewItemEditorSheet.tsx). */
+export const NewItemEditor: ComponentType<NewItemEditorProps> | null = NewItemEditorSheet;
