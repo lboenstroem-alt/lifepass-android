@@ -277,7 +277,7 @@ export default function DiaryScreen({ route, navigation }: SharedRouteProps<'Dia
         onCommitted: () => void reload(),
         onDeleted: () => void reload(),
       });
-      // No item editor in this build: the meal editor edits every item.
+      // No item editor host on screen: the meal editor edits every item.
       if (!opened) openMeal(meal.id);
     },
     [openMeal, reload],

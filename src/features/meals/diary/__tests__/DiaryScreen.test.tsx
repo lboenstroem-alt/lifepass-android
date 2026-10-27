@@ -32,6 +32,8 @@ import { setMealApi, type MealApi } from '../../api/mealApi';
 import { fakeMealApi } from '../../api/testing';
 import { resetMealOutboxForTests, useMealOutbox } from '../../outbox/mealOutbox';
 import { decodeMealDayRecord, decodeMealRecord, type MealDayRecord, type MealPatchBody } from '../../types';
+import ItemEditorHost from '../../itemEditor/ItemEditorHost';
+import { presentStoredItemEditor } from '../../itemEditor/itemEditorPresenter';
 import DiaryScreen from '../DiaryScreen';
 import { registerStoredItemEditor } from '../storedItemEditor';
 
@@ -168,7 +170,8 @@ function MealCaptureStandIn({ route, navigation }: NativeStackScreenProps<Routes
   );
 }
 
-async function renderDiary(date = TODAY) {
+/** `itemEditorHost`: the item editor host the meal chrome mounts over the tabs (../../MealGlobalChromeHost.tsx). */
+async function renderDiary(date = TODAY, { itemEditorHost = false }: { readonly itemEditorHost?: boolean } = {}) {
   await render(
     <>
       <NavigationContainer ref={navigationRef} initialState={{ index: 1, routes: [{ name: 'Start' }, { name: 'Diary', params: { date } }] }}>
@@ -181,6 +184,7 @@ async function renderDiary(date = TODAY) {
       </NavigationContainer>
       <ToastHost />
       <DialogHost />
+      {itemEditorHost ? <ItemEditorHost /> : null}
     </>,
   );
   await settle();
@@ -576,6 +580,45 @@ it('tapping an item opens the registered item editor, or the meal editor without
   registerStoredItemEditor(null);
   await fireEvent.press(screen.getByTestId('diary.item.b2'));
   expect(await screen.findByText('editor breakfast-1')).toBeOnTheScreen();
+});
+
+// iOS DiaryDayView: an item's tap sets `editingItem` and presents
+// FoodItemEditorSheet(context: .storedItem(meal:, onCommitted:, onDeleted:))
+// over the diary; Update commits that one item and the day is read again.
+// Wired as the app wires it: ../../register.ts installs presentStoredItemEditor
+// and ../../MealGlobalChromeHost.tsx mounts the host.
+it('tapping an item opens the item editor sheet over the diary, and Update commits it and reads the day again', async () => {
+  signIn();
+  const patches: { id: string; body: MealPatchBody }[] = [];
+  const reads = serveDays(
+    { [TODAY]: fullDay(TODAY) },
+    {
+      patchMeal: async (id, body) => {
+        patches.push({ id, body });
+        return { meal: decodeMealRecord(mealJSON('breakfast-1', TODAY, { updatedAt: `${TODAY}T09:00:00.000Z` }), 'meal'), replayed: false };
+      },
+      myFoods: () => new Promise(() => undefined),
+    },
+  );
+  registerStoredItemEditor(presentStoredItemEditor);
+  await renderDiary(TODAY, { itemEditorHost: true });
+
+  await fireEvent.press(screen.getByTestId('diary.item.b2'));
+  await settle();
+  expect(screen.getByTestId('itemEditorHost')).toBeOnTheScreen();
+  expect(screen.getByTestId('itemEditorHost.title')).toHaveTextContent('Banana');
+  expect(navigationRef.getCurrentRoute()?.name).toBe('Diary');
+  expect(screen.queryByText('editor breakfast-1')).toBeNull();
+
+  const before = reads.length;
+  await act(async () => fireEvent.press(screen.getByTestId('itemEditorHost.increase')));
+  await act(async () => fireEvent.press(screen.getByText(en('food.editor.update'))));
+  await settle();
+  expect(patches.map((patch) => patch.id)).toEqual(['breakfast-1']);
+  expect(screen.getByText(en('food.editor.updated'))).toBeOnTheScreen();
+  expect(reads.length).toBeGreaterThan(before);
+  expect(screen.queryByTestId('itemEditorHost')).toBeNull();
+  expect(navigationRef.getCurrentRoute()?.name).toBe('Diary');
 });
 
 it('offline today falls back to the cached Today read with the banner, and offers no copy', async () => {

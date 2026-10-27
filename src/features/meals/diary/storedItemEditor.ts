@@ -3,26 +3,19 @@
  * `FoodItemEditorSheet(item:, context: .storedItem(meal:, onCommitted:,
  * onDeleted:), offBarcode:)`), where Update and Remove commit at once.
  *
- * The editor is MEAL-4's (`src/features/meals/itemEditor/**`) and lands in
- * its own package, so the diary publishes this slot and MEAL-4 fills it from
- * its register file:
- *
- *   registerStoredItemEditor((request) => { present(request); return true; });
- *
- * Until an editor is registered (or when it answers false), a tap on an item
- * opens its meal in the meal editor (route `MealEditor`), where every item
- * can be changed or removed: the member is never left with a row that does
- * nothing.
- *
- * INTEGRATION (MEAL-4 + MEAL-5, built in parallel, so neither can make this
- * call alone): MEAL-4's `presentStoredItemEditor`
- * (itemEditor/itemEditorPresenter.ts) takes exactly this request and answers
- * false with no host. Once both are merged it is registered at app start,
+ * The editor is MEAL-4's (`src/features/meals/itemEditor/**`), so the diary
+ * publishes this slot and the food log's register file fills it at app start
+ * (../register.ts):
  *
  *   registerStoredItemEditor(presentStoredItemEditor);
  *
- * and only then does a diary item open as on iOS. The meal-editor fallback
- * is a safety net, not the shipping behaviour.
+ * `presentStoredItemEditor` (itemEditor/itemEditorPresenter.ts) shows the
+ * sheet through the `ItemEditorHost` that ../MealGlobalChromeHost.tsx mounts
+ * over the tabs, and answers false when no host is mounted. Only then (or
+ * with no opener registered at all) does a tap on an item open its meal in
+ * the meal editor (route `MealEditor`), where every item can be changed or
+ * removed: the member is never left with a row that does nothing. That
+ * fallback is a safety net, not the shipping behaviour.
  */
 import type { MealItemDraft } from '../types/draft';
 import type { MealRecord } from '../types/models';
@@ -45,7 +38,7 @@ export type StoredItemEditorOpener = (request: StoredItemEditorRequest) => boole
 
 let opener: StoredItemEditorOpener | null = null;
 
-/** MEAL-4 installs its editor here; `null` removes it. */
+/** ../register.ts installs the item editor here; `null` removes it. */
 export function registerStoredItemEditor(next: StoredItemEditorOpener | null): void {
   opener = next;
 }

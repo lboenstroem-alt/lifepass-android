@@ -15,11 +15,20 @@
  *   asks F4 to). It is mounted here, with where its buttons lead: the Plans
  *   sheet, and Account on the current tab (or over a root modal).
  *
- * If the app shell ever mounts `HealthHost` itself, this must stop doing so,
- * or each presentation would be drawn twice.
+ * It also draws the item editor for an item of a saved meal: a diary row's
+ * tap (iOS DiaryDayView's `.sheet(item: $editingItem)` with
+ * `FoodItemEditorSheet(context: .storedItem(...))`) asks for it through
+ * `presentStoredItemEditor`, which ./register.ts installs as the diary's
+ * opener. With this host mounted that call answers true and the sheet comes
+ * up over the diary; without it the diary opens the whole meal instead.
+ *
+ * If the app shell ever mounts `HealthHost` or `ItemEditorHost` itself, this
+ * must stop doing so, or each presentation would be drawn twice.
  */
 import { HealthHost } from '../../health/ui';
 import { navigateInCurrentTab, openRootModal } from '../../navigation/navigationRef';
+
+import ItemEditorHost from './itemEditor/ItemEditorHost';
 
 function seeMemberships(): void {
   openRootModal('Plans');
@@ -30,5 +39,10 @@ function openAccount(): void {
 }
 
 export default function MealGlobalChromeHost() {
-  return <HealthHost onSeeMemberships={seeMemberships} onOpenAccount={openAccount} />;
+  return (
+    <>
+      <HealthHost onSeeMemberships={seeMemberships} onOpenAccount={openAccount} />
+      <ItemEditorHost />
+    </>
+  );
 }

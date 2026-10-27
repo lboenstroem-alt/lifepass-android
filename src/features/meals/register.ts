@@ -29,13 +29,22 @@
 // `MealOutbox.shared.pending(on:)`), so a meal saved offline shows there with
 // "Waiting to sync" until the flush sends it
 // (../../plan/nutrition/__tests__/queuedMealsMergeGate.test.tsx).
+//
+// THE DIARY'S ITEM EDITOR: a diary row's tap opens the item editor sheet for
+// that one item (iOS DiaryDayView's `FoodItemEditorSheet(context:
+// .storedItem(...))`), drawn by the `ItemEditorHost` that
+// ./MealGlobalChromeHost.tsx mounts over the tabs. The opener is installed
+// here, at module load, so it is in place before the diary can be shown;
+// the diary opens the meal editor only when no host is mounted.
 import { registerActivationHook, registerSignOutCleaner } from '../../app/signOut';
 import * as localStore from '../../health/localStore';
 import { registerHealthWipeHook } from '../../health/wipe';
 import { installPlanOutbox } from '../plan';
 import { installPlanQueuedMeals } from '../plan/nutrition';
 
+import { registerStoredItemEditor } from './diary/storedItemEditor';
 import { foodsCacheProfileId, resetFoodsCacheMemory } from './foodsCache/foodsCache';
+import { presentStoredItemEditor } from './itemEditor/itemEditorPresenter';
 import {
   activateMealOutbox,
   mealOutboxPlanSource,
@@ -46,6 +55,8 @@ import {
 } from './outbox/mealOutbox';
 
 installPlanOutbox('meal', mealOutboxPlanSource);
+
+registerStoredItemEditor(presentStoredItemEditor);
 
 installPlanQueuedMeals({
   pendingOn: (date) =>

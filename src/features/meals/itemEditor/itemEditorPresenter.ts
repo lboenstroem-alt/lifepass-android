@@ -10,11 +10,10 @@
  * nothing, so the caller can do something else (the diary opens the meal in
  * the meal editor instead).
  *
- * INTEGRATION (MEAL-4 + MEAL-5): MEAL-5's diary publishes
- * `registerStoredItemEditor(opener)` (diary/storedItemEditor.ts) for this;
- * once both are merged it is registered with `presentStoredItemEditor`, and
- * the host is mounted in the meal chrome over the tabs
- * (src/features/meals/MealGlobalChromeHost.tsx).
+ * WIRED: the diary's `registerStoredItemEditor(opener)`
+ * (diary/storedItemEditor.ts) is given `presentStoredItemEditor` at app start
+ * (src/features/meals/register.ts), and the host is mounted in the meal
+ * chrome over the tabs (src/features/meals/MealGlobalChromeHost.tsx).
  */
 import { create } from 'zustand';
 
