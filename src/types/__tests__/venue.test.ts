@@ -10,6 +10,7 @@ import {
   isComingSoon,
   isPremium,
   localizedDescription,
+  mapSummary,
   priceLabel,
   priceSecondaryLabel,
   resolvedPremiumPrice,
@@ -142,6 +143,28 @@ it('a blank Icelandic description is no Icelandic description: Icelandic shows t
   }
   expect(icelandicDescription({ descriptionIs: null })).toBeNull();
   expect(icelandicDescription({ descriptionIs: '  Líkamsrækt.  ' })).toBe('Líkamsrækt.');
+});
+
+// iOS VenueDescriptionTests: the map card's one line.
+describe('the map card summary', () => {
+  const english = 'A friendly gym with an open floor, a sauna and group classes through the week. More inside.';
+  const icelandic = 'Vinaleg líkamsræktarstöð með opnu gólfi og gufubaði. Hóptímar alla vikuna.';
+
+  it("summarises in the app's language", () => {
+    const both = { description: english, descriptionIs: icelandic };
+    expect(mapSummary(both, 'en')).toBe('A friendly gym with an open floor, a sauna and group classes through the week.');
+    expect(mapSummary(both, 'is')).toBe('Vinaleg líkamsræktarstöð með opnu gólfi og gufubaði.');
+  });
+
+  it('an Icelandic card never shows English prose', () => {
+    expect(mapSummary({ description: english, descriptionIs: null }, 'is')).toBe('');
+    expect(mapSummary({ description: english, descriptionIs: '  ' }, 'is')).toBe('');
+  });
+
+  it('an English card never shows the Icelandic text, and no language is empty', () => {
+    expect(mapSummary({ description: null, descriptionIs: icelandic }, 'en')).toBe('');
+    expect(mapSummary({ description: english, descriptionIs: icelandic }, 'de')).toBe('');
+  });
 });
 
 it('a venue without a photo has no images', () => {

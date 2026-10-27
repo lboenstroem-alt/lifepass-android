@@ -2,8 +2,9 @@
 //
 // A 56 pt photo; the name (two lines); the ring's swatch with "{long type} ·
 // {town}" and " · Coming soon" while the venue awaits connection; a
-// one-sentence summary in English only (as on the web: there is no
-// Icelandic prose to shorten); "★ 4.6" when rated; "Open venue" underlined
+// one-sentence summary in the app's language (the Icelandic description
+// staff wrote, and none rather than English prose when there is none);
+// "★ 4.6" when rated; "Open venue" underlined
 // with a chevron; "Tap again to open" (the second tap is on the pin, so the
 // hint is for the eye only, and it is dropped while the pin is still under
 // this card); the compact price pill; and a close button. A tap anywhere on
@@ -24,9 +25,9 @@ import { Animated, Easing, Pressable, StyleSheet, View, type LayoutChangeEvent }
 import PricePill from '../../../components/PricePill';
 import { hiddenFromAccessibility, LPText, VenueImage } from '../../../components/ui';
 import { useT } from '../../../i18n';
-import { COMING_SOON_KEY, longLabel, shortSummary, type Classification } from '../../../lib/venueMarkerType';
+import { COMING_SOON_KEY, longLabel, type Classification } from '../../../lib/venueMarkerType';
 import { colors, hairline, radius } from '../../../theme';
-import type { Venue } from '../../../types/venue';
+import { mapSummary, type Venue } from '../../../types/venue';
 import VenueRing from './VenueRing';
 
 export interface VenuePinCardProps {
@@ -61,9 +62,9 @@ export function cardTypeLine(
   return parts.join(' · ');
 }
 
-/** The card's one sentence: the English description's, in English only. */
-export function cardSummary(venue: Pick<Venue, 'description'>, language: 'en' | 'is'): string {
-  return language === 'en' ? shortSummary(venue.description) : '';
+/** The card's one sentence, in the app's language (iOS `venue.mapSummary(language:)`). */
+export function cardSummary(venue: Pick<Venue, 'description' | 'descriptionIs'>, language: 'en' | 'is'): string {
+  return mapSummary(venue, language);
 }
 
 /** "4.6" when the venue has a rating above zero (iOS `String(format: "%.1f")`, a point in both languages). */

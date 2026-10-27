@@ -15,6 +15,7 @@
 // (charged à la carte). See docs/08 and the openapi `VenueSummary`.
 import { iskPrefix as formatIskPrefix } from '../i18n/format';
 import { t as translateCurrent, type Params } from '../i18n';
+import { shortSummary } from '../lib/venueMarkerType';
 
 /** One weekday's hours, as the API sends them (`{ open, close, closed }`). */
 export interface DayHours {
@@ -121,6 +122,23 @@ export function localizedDescription(venue: Pick<Venue, 'description' | 'descrip
     if (icelandic) return icelandic;
   }
   return venue.description;
+}
+
+/**
+ * The map card's one-line summary (the web's `shortSummary`, iOS
+ * `Venue.mapSummary`). English reads the English description. Icelandic
+ * reads the Icelandic one and is otherwise empty: the card never puts
+ * English prose in an Icelandic card.
+ */
+export function mapSummary(venue: Pick<Venue, 'description' | 'descriptionIs'>, language: string): string {
+  switch (language) {
+    case 'en':
+      return shortSummary(venue.description);
+    case 'is':
+      return shortSummary(icelandicDescription(venue));
+    default:
+      return '';
+  }
 }
 
 /** The venue's photos (one today); empty when it has none. */
