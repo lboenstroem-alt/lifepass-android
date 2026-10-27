@@ -124,15 +124,17 @@ export default function SwapExerciseSheet({
               onPress={onNotHaveThis}
               accessibilityRole="button"
               accessibilityLabel={t('coach.planEdit.notHaveThis')}
-              style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+              style={({ pressed }) => [styles.notHaveThisRow, pressed && styles.pressed]}
             >
-              <View style={styles.rowTexts}>
-                <LPText size={15} weight="semibold" color={colors.paper}>
-                  {t('coach.planEdit.notHaveThis')}
-                </LPText>
-              </View>
+              {/* iOS: a leading two-bubble chat glyph in paper2, the label, then the chevron. */}
               <View {...hiddenFromAccessibility}>
-                <Ionicons name="chatbubble-ellipses-outline" size={15} color={colors.paper3} />
+                <Ionicons name="chatbubbles-outline" size={15} color={colors.paper2} />
+              </View>
+              <LPText size={15} weight="semibold" color={colors.paper} style={styles.notHaveThisLabel}>
+                {t('coach.planEdit.notHaveThis')}
+              </LPText>
+              <View {...hiddenFromAccessibility}>
+                <Ionicons name="chevron-forward" size={13} color={colors.paper3} />
               </View>
             </Pressable>
           </Card>
@@ -178,6 +180,16 @@ const styles = StyleSheet.create({
     minHeight: 64,
   },
   rowTexts: { flex: 1, gap: 3 },
+  // iOS draws this row a little shorter than the option rows (minHeight 56).
+  notHaveThisRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 56,
+  },
+  notHaveThisLabel: { flex: 1 },
   level: {
     paddingHorizontal: 10,
     paddingVertical: 5,
