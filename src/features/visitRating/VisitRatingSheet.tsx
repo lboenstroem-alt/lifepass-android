@@ -152,8 +152,13 @@ function Form({ sheet }: { sheet: VisitRatingSheetState }) {
           <LPText size={13} weight="semibold" color={colors.paper2} importantForAccessibility="no">
             {t('visitRating.comment.label')}
           </LPText>
+          {/* The field keeps its own text (`defaultValue`) and tells the store:
+              written back on every key, a quick typist's letters could be
+              overwritten by an older value on its way back from JS. Each ask
+              is a fresh field. */}
           <SheetTextInput
-            value={sheet.comment}
+            key={sheet.prompt.id}
+            defaultValue={sheet.comment}
             onChangeText={(text) => visitRatingActions().setComment(text)}
             placeholder={t('visitRating.comment.placeholder')}
             placeholderTextColor={colors.paper3}
