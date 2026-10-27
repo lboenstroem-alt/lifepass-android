@@ -36,6 +36,27 @@ it into the next release branch once 3.1.0 is out. The version is unchanged
 3. Google Play submission only with Lucas's explicit OK (standing rule).
    No EAS or Play build was made from this branch and nothing was uploaded or
    submitted (the device check below used a local debug build).
+4. **Look at the room, the hearts and the rating numbers on a device.** The
+   emulator pass below covered "How was your visit?" and the Account row
+   only; the room, the hearts and the venue numbers (A1 to A3) are covered by
+   Jest UI tests but have not been seen on an Android phone yet. Do it on a local
+   debug build of the release itself, after the merges below (so the Coach
+   chat's cards carry the room too), in English, in Icelandic, and in
+   Icelandic at font scale 2.0 (the largest):
+   - the room: a Classes row and Home's upcoming card ("World Class Laugar &
+     Pool · Salur 4"), the class sheet's row ("Room: Salur 3" / "Salur: 3",
+     `EXPO_PUBLIC_FIXTURE="classSheet=included"`), My bookings, the Coach
+     plan's class card and the chat's class cards;
+   - the hearts: a sight's page, Home's Outside card, the search rows, and
+     Favourites' "Hikes & sights" / "Útivist", with a saved sight and empty;
+   - the numbers: a venue's "4.6 · 23 ratings" / "4,6 · 23 einkunnir", and the
+     Equipment and Cleanliness averages ("Tækjabúnaður", "Hreinlæti").
+
+   No sign-in and no server writes. Only the class sheet has a dev fixture;
+   the signed-in lists (My bookings, Favourites, Home's upcoming card) and the
+   averages (shown once three members gave one) need data the fixtures do
+   not have, so serve them from a local stub API: a development build reads
+   `EXPO_PUBLIC_LIFEPASS_API_URL`.
 
 ## What is in it
 
@@ -51,6 +72,7 @@ it into the next release branch once 3.1.0 is out. The version is unchanged
 | 8 | e25b130 | Home's Most Popular ranks by every rating (`totalRatings`), as iOS does since d7d3245. |
 | 9 | 5eab33b | A development-only fixture for device checks (`visitRating=card|sheet|written|thanks`). |
 | 10 | a8319a1 | The comment field keeps its own text (found on the emulator: the controlled field lost letters typed faster than JavaScript answered). |
+| 11 | 97d721a | A test that every key the code writes out in a `t()` call is in both tables (`src/i18n/__tests__/keysInCode.test.ts`), so an ahead-of-iOS entry deleted too early fails a test instead of putting raw keys on screen. |
 
 ### "How was your visit?" (B1)
 
@@ -146,11 +168,66 @@ Every key the brief named is used as named, except where Android differs:
 | `venue.ratings.count` | `venue.ratings.count.one` / `.many` (the app's plural rule) |
 | the stars' spoken value | the existing `venue2.a11y.rating` |
 
-When the iOS build with these strings lands, re-run
-`scripts/import-ios-strings.py` against it: it says which ahead-of-iOS entries
-iOS has landed (delete those), and refuses if iOS words any key differently.
+**Keep every entry in `src/i18n/ahead-of-ios.json` until the committed
+tables are regenerated from an iOS source that has its words.** The tables on
+this branch are generated from iOS 161a0a8 (2.5.6), which has none of the
+member-feedback keys: the entries are the only thing that puts them in
+`strings.en.json` and `strings.is.json`. When the script, run over another
+iOS source just to look (say `lifepass-ios` `feat/member-feedback`, with
+`--out` somewhere else), says an entry has landed, that is true of that
+source only. Delete the entry in the same commit that regenerates the
+committed tables from that same source, and only the entries the script
+reports as landed for it. Deleted any earlier, regenerating from 161a0a8 (or
+from iOS 3.1.0, which has none of them either) takes its keys out of the
+tables and the app shows raw keys such as `favourites.tabs.outdoors`.
+`generated.test.ts` does not see that (its counts follow the file);
+`keysInCode.test.ts` does. The script also refuses, writing nothing, if
+iOS words any key differently.
+
+## Merging into the release line
+
+`parity/fix-classes` (the other session's, not yet in `candidate/next-release`
+when this was written) changes the same places. When the two branches meet:
+
+1. **The room on the Coach chat's class cards.** fix-classes 8fea0b1 adds
+   class cards under a Coach reply. It was cut from b66581c, before rooms,
+   so its cards have no room. iOS shows one there ("Hress · Salur 3",
+   `CoachClassCardsView`, `ClassRoom.afterVenue`). At the merge:
+   - `CoachPlanClass` (`src/features/classes/coachLookup.ts`): keep both
+     sides' fields, `room` from here and the chat card's optional `status`,
+     `spotsLeft`, `priceLabel` and `surchargeFromIsk` from there.
+   - `decodePlanClass` (`src/features/coach/dayPlan/decode.ts`): keep
+     `room: readRoom(raw.room)` (`src/api/wire.ts`) beside the card's extras.
+     `decodeClassCards` reads every card through it, so absent, null or blank
+     is no room.
+   - `encodePlanClass`: add `if (session.room != null) json.room =
+     session.room;`, or a saved chat loses the room when it is read back.
+   - `ClassRow` in `src/screens/coach/ClassCardsMessage.tsx`: the venue line
+     `{session.venueName}` becomes
+     `{venueWithRoom(session.venueName, session.room)}`
+     (`src/copy/classRoom.ts`).
+   - Tests, as PlanMessage.test.tsx's "the class card's room (API 0.44.0)": a
+     card with `"room": "Salur 3"` decodes it and reads "Venue · Salur 3";
+     absent, null and "" read the venue alone; `encodePlanClass` then
+     `decodePlanClass` keeps it. The fix-classes tests that build a
+     `CoachPlanClass` by hand need `room: null`; tsc and the decode tests
+     point at each one.
+2. **The tables.** fix-classes 1a658ac regenerates them from iOS
+   `release/3.1.0-candidate` and empties `ahead-of-ios.json`, because iOS
+   3.1.0 has landed the two older entries (Þjónusta, Usual hours). Resolve
+   `ahead-of-ios.json` to this branch's six member-feedback entries (all but
+   those two), re-run `python3 scripts/import-ios-strings.py` over the same
+   iOS 3.1.0 sources into `src/i18n`, and take the counts in
+   `generated.test.ts` from what it prints. Run over iOS 7a020ee with this
+   branch's eight entries, it reports the two older ones as landed and all
+   six member-feedback entries as ahead of iOS: keep all six (see Copy keys).
 
 ## Test results (27 October 2026)
+
+After the review, at 97d721a (the keys test; these notes change no code):
+`npx tsc --noEmit` 0 errors; `npx eslint .` 0 errors, 0 warnings;
+`TZ=UTC npx jest --maxWorkers=4`: **506 of 506 suites passed; 7,804 tests
+passed, 1 skipped** (keysInCode.test.ts adds 1 suite and 4 tests).
 
 At a8319a1, in the branch's worktree (Node 25, Expo SDK 54):
 
@@ -225,4 +302,6 @@ photographed (kept outside the repo, with the other member-feedback shots):
 
 Not checked on a device: a real check-in's notification and its tap (that
 needs a real account and a production check-in), and Google Play's own
-review card (Google shows it only to an app installed from Play).
+review card (Google shows it only to an app installed from Play). The room,
+the hearts and the rating numbers have not been seen on a device either:
+that is pre-release gate 4.
