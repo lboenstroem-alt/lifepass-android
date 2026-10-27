@@ -7,6 +7,11 @@
 // "App version check"), so iOS and Android say the same thing; only the line
 // shown when Google Play cannot be opened is Android's own. The rules for a
 // pack are in ./pack.ts.
+//
+// iOS 3.1.0 says the same words under its own keys (`update.*`, now in the
+// generated tables). Until AppUpdateHost reads those and the duplicates here
+// go (keeping `appupdate.store_failed`), src/features/appUpdate/__tests__/copy.test.ts
+// holds every word here to iOS's, so the two cannot drift apart unseen.
 import { definePack } from './pack';
 
 export default definePack({
