@@ -9,11 +9,11 @@
  * defined. iOS has the same rule for Background App Refresh (the handler is
  * registered in `application(_:didFinishLaunchingWithOptions:)`).
  *
- * TODAY src/services/notifications.ts imports this file first thing; App.tsx
- * imports that module at load and index.ts imports App.tsx before
- * `registerRootComponent`, so every run defines the task. When QA-1 deletes
- * that shim, `import './src/background/task';` goes at the top of index.ts
- * (F4 contract request).
+ * index.ts imports this file directly, right after the font defaults and
+ * before `registerRootComponent`, so every run defines the task whatever the
+ * screens import (src/background/__tests__/entry.test.ts holds that line).
+ * src/services/notifications.ts still imports it too until QA-1 deletes that
+ * shim; defining twice is harmless (`isTaskDefined` below).
  *
  * A run loads the session hooks (src/app/signOut.ts `loadRegistrations`,
  * which loads every feature's register file, where the jobs are registered)
