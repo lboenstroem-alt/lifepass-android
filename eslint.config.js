@@ -139,8 +139,6 @@ module.exports = defineConfig([
     'web-build/**',
     '.expo/**',
     'coverage/**',
-    // Deleted by QA-1; not part of the app (plan 3.0.1).
-    'supabase/functions/**',
     // Generated.
     'src/api/openapi.d.ts',
   ]),
