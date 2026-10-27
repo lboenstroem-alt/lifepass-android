@@ -21,6 +21,15 @@
  * `.standard(emphasis: .muted)`. A TextureView rather than a SurfaceView, so
  * the map moves with the page as it scrolls. Mapbox's logo and attribution
  * stay, as its terms require.
+ *
+ * NO TOKEN, NO MAP. MapKit needs no key, so iOS always draws these. Mapbox
+ * does: a MapView built while the SDK has no token throws
+ * MapboxConfigurationException on the UI thread, which crashes the app. So a
+ * build without the runtime token (a local or dev build, or an EAS profile
+ * missing EXPO_PUBLIC_MAPBOX_TOKEN) draws the band empty, as the Explore map
+ * draws a plain area (explore/map/mapbox.ts `hasMapboxToken`, which this
+ * cannot import across the feature boundary). `env.mapboxToken` already
+ * reads a blank or placeholder token as none, so the two checks agree.
  */
 import Mapbox, { Camera, LineLayer, MapView, MarkerView, ShapeSource } from '@rnmapbox/maps';
 import { useMemo } from 'react';
@@ -34,7 +43,13 @@ import { colors } from '../../../theme';
 import AttractionRing from '../AttractionRing';
 import { regionCorners, type MapRegion } from '../model';
 
-Mapbox.setAccessToken(env.mapboxToken);
+// The Explore map's setup (explore/map/mapbox.ts) hands Mapbox the token at
+// app start and then switches telemetry off. Handing it the same token here
+// too keeps this map drawable even if it is ever reached before that setup
+// has loaded; setting it twice changes nothing, and telemetry stays off.
+// Without a token there is nothing to hand over: no map is drawn.
+const BUILD_TOKEN = env.mapboxToken;
+if (BUILD_TOKEN) Mapbox.setAccessToken(BUILD_TOKEN);
 
 /** iOS `TrailStroke`: the casing and the line. */
 export const TRAIL_STROKE = {
@@ -71,7 +86,15 @@ export function routeFeature(lines: readonly (readonly Coordinate[])[]): GeoJSON
   };
 }
 
-export default function SightMap({ region, lines, marker, label, style, testID }: SightMapProps) {
+export default function SightMap(props: SightMapProps) {
+  // Read per render, but fixed for the build: the same branch every time.
+  if (!env.mapboxToken) {
+    return <View {...hiddenFromAccessibility} pointerEvents="none" style={[styles.frame, props.style]} testID={props.testID} />;
+  }
+  return <LiveSightMap {...props} />;
+}
+
+function LiveSightMap({ region, lines, marker, label, style, testID }: SightMapProps) {
   const corners = regionCorners(region);
   const shape = useMemo(() => (lines && lines.length > 0 ? routeFeature(lines) : null), [lines]);
   return (
