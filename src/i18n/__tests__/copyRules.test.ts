@@ -402,6 +402,21 @@ describe('LocalizationKeyTests', () => {
     expectNone(keys.filter((k) => en[k] === undefined || is[k] === undefined || en[k] === is[k]));
   });
 
+  it('asks for the discount code without showing one (iOS 3.1.0 fix/promo-placeholder, web PR #361)', () => {
+    // The box once showed a real union code as its example, and anyone could
+    // copy it and take that union's member discount. iOS 3.1.0 says this.
+    expect([en['plans.promo.placeholder'], is['plans.promo.placeholder']]).toEqual(['Enter your code', 'Sláðu inn kóðann']);
+    // And no string anywhere gives a code as an example ("e.g. ABC123").
+    const example = /\b(?:e\.g\.|for example|t\.d\.|til dæmis)\s*:?\s*["“„']?[A-Z0-9][A-Z0-9_-]{3,}\b/u;
+    expectNone(
+      LANGS.flatMap((lang) =>
+        Object.entries(app[lang])
+          .filter(([, value]) => example.test(value))
+          .map(([key]) => `${key} (${lang})`),
+      ),
+    );
+  });
+
   it('speaks of eID, in the website’s words, on the plans screen and in the Kenni sheet (testTheEidAndPassOffSaleKeysExistInBothLanguages)', () => {
     const keys = [
       'plans.eid.required', 'plans.eid.no_id_hint', 'plans.eid.see_passes',
