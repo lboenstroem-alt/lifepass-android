@@ -177,11 +177,11 @@ describe('the payment sheet', () => {
     answerAndReturn(Reply.problem(409, 'order_create_failed'));
     await renderPlans();
     await fireEvent.press(continueButton());
-    await fireEvent.changeText(codeBox(), ' frimann pass\n');
+    await fireEvent.changeText(codeBox(), ' sample code10\n');
     await fireEvent.press(payButton());
     await waitFor(() => expect(checkouts()).toHaveLength(1));
     expect(checkoutBody()).not.toHaveProperty('saveCard');
-    expect(checkoutBody().promotionCode).toBe('FRIMANNPASS');
+    expect(checkoutBody().promotionCode).toBe('SAMPLECODE10');
   });
 
   it('closes by back when nothing is in flight, and nothing is sent', async () => {
@@ -191,6 +191,29 @@ describe('the payment sheet', () => {
     expect(sheetFor('plan-plus')).toBeNull();
     expect(currentRoute()).toBe('Plans');
     expect(checkouts()).toHaveLength(0);
+  });
+
+  it('puts TalkBack back on Continue once the sheet has gone (VoiceOver returns to the presenting button)', async () => {
+    // The test renderer has no native views: only Continue gets a tag, so a
+    // focus call with it can only mean Continue.
+    const reactNative: typeof ReactNative = jest.requireActual('react-native');
+    const isContinue = (instance: unknown) =>
+      (instance as { props?: { testID?: string } } | null)?.props?.testID === 'plans.continue';
+    const nodeHandle = jest
+      .spyOn(reactNative, 'findNodeHandle')
+      .mockImplementation(((instance: unknown) => (isContinue(instance) ? 88 : null)) as typeof ReactNative.findNodeHandle);
+    try {
+      await renderPlans();
+      await fireEvent.press(continueButton());
+      expect(sheetFor('plan-plus')).toBeOnTheScreen();
+      expect(setFocus).not.toHaveBeenCalledWith(88);
+
+      await pressBack();
+      expect(sheetFor('plan-plus')).toBeNull();
+      await waitFor(() => expect(setFocus).toHaveBeenCalledWith(88));
+    } finally {
+      nodeHandle.mockRestore();
+    }
   });
 });
 
@@ -489,7 +512,7 @@ describe('after the sheet', () => {
     api.on('GET', '/profile', Reply.ok(profileJSON({ kennitalaVerified: false })));
     await renderPlans();
     await fireEvent.press(continueButton());
-    await fireEvent.changeText(codeBox(), 'frimannpass');
+    await fireEvent.changeText(codeBox(), 'samplecode10');
     await fireEvent.press(payButton());
     await waitFor(() => expect(openKenni).toHaveBeenCalledTimes(1));
     expect(sheetFor('plan-plus')).toBeNull();
@@ -500,7 +523,7 @@ describe('after the sheet', () => {
     const options: KenniSheetOptions = openKenni.mock.calls[0][0];
     await act(async () => options.onClose());
     await waitFor(() => expect(sheetFor('plan-plus')).toBeOnTheScreen());
-    expect(codeBox()).toHaveProp('value', 'frimannpass');
+    expect(codeBox()).toHaveProp('value', 'samplecode10');
     expect(checkouts()).toHaveLength(1);
   });
 

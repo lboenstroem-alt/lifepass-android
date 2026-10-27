@@ -1,8 +1,9 @@
 /**
- * A partner discount code typed at checkout: a union's membership coupon
- * (Saman's "FRIMANNPASS") or a partner's visitor-pass code (a hotel, a tour
- * operator). The Android port of iOS `DiscountCode` (Models/DiscountCode.swift,
- * 2.5.2).
+ * A partner discount code typed at checkout: a union's membership coupon or
+ * a partner's visitor-pass code (a hotel, a tour operator). The Android port
+ * of iOS `DiscountCode` (Models/DiscountCode.swift, 2.5.2). No real code is
+ * written here or in the tests: the repository is public, and a working code
+ * would hand anyone the discount.
  *
  * What the server does with it (`POST /payments/checkout-sessions`,
  * `promotionCode`; monorepo docs/05_MOBILE_API.md):

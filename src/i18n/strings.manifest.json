@@ -3,10 +3,7 @@
  "intentionalOverrides": [
   "coach.greeting"
  ],
- "aheadOfIos": [
-  "Booking confirm card (IS): the service row says Þjónusta, not Tími, the Time row's word (lifepass-ios: the feat/booking-layout-update-prompt follow-up)",
-  "Venue hours kicker: Usual hours / Almennur opnunartími, not This week / Þessa viku, key venue.hours_this_week to venue.hours_usual (lifepass-ios feat/venue-usual-hours-is-description bb92f16)"
- ],
+ "aheadOfIos": [],
  "dictionaries": [
   {
    "name": "base",
@@ -98,6 +95,7 @@
     "account.terms",
     "account.title",
     "account.view_plans",
+    "account.whatsapp",
     "attraction.after_this",
     "attraction.ascent",
     "attraction.data_credit",
@@ -485,6 +483,12 @@
     "coach.chip.nearby",
     "coach.chip.plan_day",
     "coach.chip.something_new",
+    "coach.classes.close",
+    "coach.classes.intro",
+    "coach.classes.opens_later",
+    "coach.classes.show",
+    "coach.classes.started",
+    "coach.classes.title",
     "coach.drawer.add_chat",
     "coach.drawer.new_chat",
     "coach.drawer.no_recents",
@@ -1002,6 +1006,12 @@
     "tab.explore",
     "tab.home",
     "tab.profile",
+    "update.available_body",
+    "update.available_title",
+    "update.cta",
+    "update.not_now",
+    "update.required_body",
+    "update.required_title",
     "usage.active_passes",
     "usage.at_limit",
     "usage.block.body",
@@ -1599,7 +1609,12 @@
     "plan.tomorrow_rest",
     "plan.undo",
     "plan.waiting_sync",
+    "plan.week.extras.many",
+    "plan.week.extras.one",
     "plan.week.progress",
+    "plan.week.progress_extras",
+    "plan.week.workouts.many",
+    "plan.week.workouts.one",
     "plan.week_n",
     "plan.where_bookings",
     "program.active_exists",
@@ -1775,6 +1790,7 @@
     "review.prompt.cta",
     "review.prompt.title",
     "review.sessions",
+    "review.sessions_extras",
     "review.streak.many",
     "review.streak.one",
     "review.title",
@@ -2420,7 +2436,7 @@
   }
  ],
  "counts": {
-  "en": 2360,
-  "is": 2360
+  "en": 2379,
+  "is": 2379
  }
 }

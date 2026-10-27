@@ -13,6 +13,8 @@
  * - the update check (src/features/appUpdate): below the owner's minimum
  *   version the app is blocked behind an Update button, and a newer version
  *   on Google Play is offered once. It fails open: no answer, no prompt.
+ * - "Confirming your payment…" (src/payments RecoveryProgressHost) while a
+ *   payment the app lost behind the hosted page is confirmed at launch.
  *
  * Notification permission is NOT asked here: iOS never asks at launch, only
  * in context (a first booking, a reminder switch), and a member who has not
@@ -54,6 +56,7 @@ import { onUnhandledNavigationAction } from './src/navigation/legacyRoutes';
 import { navigationRef } from './src/navigation/navigationRef';
 import { setLaunchTab } from './src/navigation/navPrefs';
 import RootNavigator from './src/navigation/RootNavigator';
+import { RecoveryProgressHost } from './src/payments';
 import { useAppStore } from './src/stores/appStore';
 import { startLocationAtLaunch } from './src/stores/locationStore';
 import { colors } from './src/theme';
@@ -121,6 +124,11 @@ export default function App() {
         <StatusBar style="dark" />
         <UiKitProvider>
           <RootNavigator />
+          {/* "Confirming your payment…" while a payment the app lost behind
+              the page is confirmed after a cold start (src/payments); without
+              it the member gets only a short toast. Its own window, so it
+              shows over whichever tab the app opened on. */}
+          <RecoveryProgressHost />
         </UiKitProvider>
       </NavigationContainer>
       {/* Over everything, the sign-in screens and the launch screen too. */}

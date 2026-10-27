@@ -29,7 +29,8 @@
  * earlier checkout of the same plan still unverified verifies that one
  * instead of making a new one (./checkoutModel.ts).
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { AccessibilityInfo, findNodeHandle } from 'react-native';
 import { useStore } from 'zustand';
 
 import { ctaLabelKey } from '../../../api';
@@ -69,6 +70,29 @@ function isBusy(state: PlanCheckoutState): boolean {
 function welcomeMessage(welcome: CheckoutWelcome): string {
   if (!welcome.name) return t('plans.success.generic');
   return t(welcome.isPass ? 'plans.success.pass' : 'plans.success.subscription', { name: welcome.name });
+}
+
+/**
+ * TalkBack focus back on the screen's Continue once the payment sheet has
+ * gone, as VoiceOver goes back to the button that presented a SwiftUI sheet.
+ * The UI kit's `returnFocusRef` cannot do it here: this hook drops the sheet
+ * (`showSheet(null)`) in the same render its slide-out ends, so the kit's
+ * effect never runs. A turn later, as the kit does, once the screens
+ * underneath are reachable to TalkBack again. A no-op without a screen
+ * reader, or when Continue has gone (Plans closed).
+ */
+function refocusOpener(ref: RefObject<unknown> | undefined): void {
+  if (!ref) return;
+  setTimeout(() => {
+    const target = ref.current;
+    if (!target) return;
+    try {
+      const tag = findNodeHandle(target as Parameters<typeof findNodeHandle>[0]);
+      if (typeof tag === 'number') AccessibilityInfo.setAccessibilityFocus(tag);
+    } catch {
+      // Continue has no native view any more: nothing to focus.
+    }
+  }, 0);
 }
 
 export function usePlanCheckout(events: PlanCheckoutEvents): PlanCheckout {
@@ -170,6 +194,7 @@ export function usePlanCheckout(events: PlanCheckoutEvents): PlanCheckout {
 
   const onSheetClosed = useCallback(() => {
     showSheet(null);
+    refocusOpener(latestEvents.current.returnFocusRef);
     followCreate();
   }, [followCreate, showSheet]);
 
@@ -254,7 +279,6 @@ export function usePlanCheckout(events: PlanCheckoutEvents): PlanCheckout {
           onClearCode={() => model.clearCodeTapped()}
           creating={state.isLoading || state.checkoutInFlight}
           onContinue={continueToPayment}
-          returnFocusRef={events.returnFocusRef}
         />
       ) : null}
       <VerificationOverlay visible={state.isVerifying} onCancel={() => model.dismissOverlay()} />

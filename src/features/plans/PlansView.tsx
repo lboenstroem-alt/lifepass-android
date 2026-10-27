@@ -116,6 +116,12 @@ export default function PlansView({ navigation, route }: RootModalProps<'Plans'>
   const [infoOpen, setInfoOpen] = useState(false);
   /** The info link: TalkBack lands back on it when How LifePass works closes. */
   const infoLinkRef = useRef<View>(null);
+  /**
+   * Continue, which opens the payment sheet: TalkBack lands back on it when
+   * the sheet has gone, as VoiceOver goes back to the button that presented
+   * a SwiftUI sheet.
+   */
+  const continueRef = useRef<View>(null);
   const [ctaHeight, setCtaHeight] = useState(0);
 
   const plans = useMemo(() => displayedPlans(selection.segment, catalog), [selection.segment, catalog]);
@@ -195,6 +201,7 @@ export default function PlansView({ navigation, route }: RootModalProps<'Plans'>
     onFinished: () => {
       if (mounted.current && navigation.isFocused()) navigation.goBack();
     },
+    returnFocusRef: continueRef,
   });
   // No closing Plans while a checkout is created or settled: its answer (the
   // hosted page, the welcome, a refusal) is shown on this screen.
@@ -358,6 +365,7 @@ export default function PlansView({ navigation, route }: RootModalProps<'Plans'>
             </Pressable>
           )}
           <Pressable
+            ref={continueRef}
             onPress={() => handlePurchase(selected, '')}
             disabled={checkout.busy}
             accessibilityRole="button"

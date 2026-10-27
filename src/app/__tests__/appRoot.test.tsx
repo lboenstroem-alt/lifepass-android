@@ -1,7 +1,9 @@
 /**
  * The app root: the launch screen until the session is resolved and launch
- * has chosen its tab, then the sign-in screens or the tabs; and nothing asks
- * for notification permission at launch (iOS asks only in context).
+ * has chosen its tab, then the sign-in screens or the tabs; nothing asks
+ * for notification permission at launch (iOS asks only in context); and
+ * "Confirming your payment…" has its host, so a payment confirmed after a
+ * cold start is shown as iOS shows it, not as a passing toast.
  */
 import { act, render, screen } from '@testing-library/react-native';
 
@@ -9,6 +11,8 @@ import { notificationsState } from '@test/mocks/expoNotifications';
 
 import App, { resetLaunchForTests } from '../../../App';
 import { stubApiClientPerTest } from '../../api/testing';
+import * as Toast from '../../components/ui/Toast';
+import { endRecoveryProgress, resetRecoveryProgress, startRecoveryProgress } from '../../payments/recoveryProgress';
 import { resetNavPrefsForTests, useNavPrefs } from '../../navigation/navPrefs';
 import { resetAppStoreForTests, useAppStore } from '../../stores/appStore';
 import { resetIntentStoreForTests } from '../../stores/intentStore';
@@ -77,4 +81,23 @@ it('starts location at launch, whichever tab opens first (F6)', async () => {
   await view.unmount();
   expect(stop).toHaveBeenCalledTimes(1);
   start.mockRestore();
+});
+
+it('draws "Confirming your payment…" over the app while a lost payment is confirmed, with no toast instead', async () => {
+  const toast = jest.spyOn(Toast, 'showToast');
+  try {
+    await render(<App />);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(screen.queryByTestId('payments.recoveryProgress')).toBeNull();
+
+    await act(async () => startRecoveryProgress({ attemptId: 'attempt-1', rail: 'plan' }));
+    expect(screen.getByTestId('payments.recoveryProgress')).toBeOnTheScreen();
+    expect(toast).not.toHaveBeenCalled();
+
+    await act(async () => endRecoveryProgress('attempt-1'));
+    expect(screen.queryByTestId('payments.recoveryProgress')).toBeNull();
+  } finally {
+    toast.mockRestore();
+    resetRecoveryProgress();
+  }
 });

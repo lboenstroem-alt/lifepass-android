@@ -71,12 +71,12 @@ describe('creating a checkout', () => {
 
   it('carries the pass card consent and a discount code only when given', () => {
     const at = new Date('2026-10-17T09:30:00.250Z');
-    expect(checkoutBody('pass-explorer', { saveCard: false, promotionCode: 'FRIMANNPASS' }, at)).toEqual({
+    expect(checkoutBody('pass-explorer', { saveCard: false, promotionCode: 'SAMPLECODE10' }, at)).toEqual({
       productSlug: 'pass-explorer',
       successUrl: 'lifepass://payment-success',
       cancelUrl: 'lifepass://payment-canceled',
       saveCard: false,
-      promotionCode: 'FRIMANNPASS',
+      promotionCode: 'SAMPLECODE10',
       terms: { acceptedAt: '2026-10-17T09:30:00Z', privacyVersion: '2026-09-v12', termsVersion: '2026-09-v6' },
     });
     expect(checkoutBody('plan-plus', { saveCard: null, promotionCode: '' }, at)).not.toHaveProperty('promotionCode');

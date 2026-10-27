@@ -69,7 +69,7 @@ it('a pass paid and closed with no link is confirmed from the profile, saved whi
       usage: usageJSON([{ id: '11111111-1111-4111-8111-111111111111' }, { id: '22222222-2222-4222-8222-222222222222' }]),
     }),
   );
-  await expect(startCheckout('pass-day', { promotionCode: '  FRIMANNPASS ' })).resolves.toBe('fulfilled');
+  await expect(startCheckout('pass-day', { promotionCode: '  SAMPLECODE10 ' })).resolves.toBe('fulfilled');
   expect(savedWhileOpen).toEqual([
     expect.objectContaining({
       rail: 'plan',
@@ -77,7 +77,7 @@ it('a pass paid and closed with no link is confirmed from the profile, saved whi
       plan: expect.objectContaining({ productSlug: 'pass-day', prePurchasePassIds: ['11111111-1111-4111-8111-111111111111'] }),
     }),
   ]);
-  expect((api.sent('/payments/checkout-sessions').body as { promotionCode?: string }).promotionCode).toBe('FRIMANNPASS');
+  expect((api.sent('/payments/checkout-sessions').body as { promotionCode?: string }).promotionCode).toBe('SAMPLECODE10');
   expect(api.sentAll('/payments/status')).toHaveLength(0);
   expect(await storedRecords()).toEqual([]);
 });
