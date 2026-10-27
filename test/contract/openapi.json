@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "LifePass Mobile API",
-    "version": "0.34.0",
+    "version": "0.46.0",
     "x-lifepass-health-contract": "2026-09-v1"
   },
   "servers": [
@@ -78,6 +78,9 @@
     },
     {
       "name": "Catalog"
+    },
+    {
+      "name": "App"
     },
     {
       "name": "CompanyPlans"
@@ -1548,6 +1551,187 @@
         }
       }
     },
+    "/visit-rating-prompts/current": {
+      "get": {
+        "operationId": "getCurrentVisitRatingPrompt",
+        "tags": [
+          "Reviews"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "prompt"
+                  ],
+                  "properties": {
+                    "prompt": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/components/schemas/VisitRatingPrompt"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/visit-rating-prompts/{promptId}/answer": {
+      "post": {
+        "operationId": "answerVisitRatingPrompt",
+        "tags": [
+          "Reviews"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/VisitRatingPromptId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VisitRatingAnswerInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VisitRatingAnswerResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/visit-rating-prompts/{promptId}/dismiss": {
+      "post": {
+        "operationId": "dismissVisitRatingPrompt",
+        "tags": [
+          "Reviews"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/VisitRatingPromptId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "prompt"
+                  ],
+                  "properties": {
+                    "prompt": {
+                      "$ref": "#/components/schemas/VisitRatingPrompt"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
     "/profile": {
       "get": {
         "operationId": "getProfile",
@@ -2408,6 +2592,123 @@
         }
       }
     },
+    "/health/programs/custom": {
+      "post": {
+        "operationId": "createCustomProgram",
+        "tags": [
+          "Health"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          },
+          {
+            "$ref": "#/components/parameters/HealthLocale"
+          },
+          {
+            "name": "dryRun",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomProgramBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ProgramAdoptResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CustomProgramDryRun"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramAdoptResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/HealthAccessForbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReasonProblem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health/programs/{programId}": {
       "parameters": [
         {
@@ -2736,6 +3037,511 @@
             }
           },
           "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/programs/{programId}/edits": {
+      "post": {
+        "operationId": "requestPlanEdit",
+        "tags": [
+          "Health"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          },
+          {
+            "$ref": "#/components/parameters/HealthLocale"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanEditBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/PlanEditResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/HealthAccessForbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReasonProblem"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReasonProblem"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listPlanEdits",
+        "tags": [
+          "Health"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/HealthLocale"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "edits"
+                      ],
+                      "properties": {
+                        "edits": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/PlanEditView"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/HealthAccessForbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/programs/{programId}/edits/{editId}/apply": {
+      "post": {
+        "operationId": "applyPlanEdit",
+        "tags": [
+          "Health"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "editId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          },
+          {
+            "$ref": "#/components/parameters/HealthLocale"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "confirmCustom": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/PlanEditApplyResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/HealthAccessForbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReasonProblem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/programs/{programId}/edits/{editId}/undo": {
+      "post": {
+        "operationId": "undoPlanEdit",
+        "tags": [
+          "Health"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "editId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          },
+          {
+            "$ref": "#/components/parameters/HealthLocale"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/PlanEditUndoResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/HealthAccessForbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReasonProblem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/programs/{programId}/edits/{editId}/discard": {
+      "post": {
+        "operationId": "discardPlanEdit",
+        "tags": [
+          "Health"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "programId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "editId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "edit"
+                      ],
+                      "properties": {
+                        "edit": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "status"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "previewed",
+                                "applied",
+                                "undone",
+                                "discarded",
+                                "superseded"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/HealthAccessForbidden"
+          },
+          "404": {
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5280,6 +6086,11 @@
             "cookieAuth": []
           }
         ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ClientFeaturesHeader"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -5332,6 +6143,22 @@
                         },
                         "kind": {
                           "type": "string"
+                        },
+                        "ratingPrompt": {
+                          "oneOf": [
+                            {
+                              "$ref": "#/components/schemas/VisitRatingPromptReservation"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "lifetimeCheckIns": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
                         }
                       }
                     },
@@ -5542,6 +6369,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKeyHeader"
+          },
+          {
+            "$ref": "#/components/parameters/ClientFeaturesHeader"
           }
         ],
         "requestBody": {
@@ -5924,6 +6754,15 @@
                         }
                       }
                     }
+                  },
+                  "cards": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 32
+                    }
                   }
                 }
               }
@@ -5950,6 +6789,13 @@
                     },
                     "plan": {
                       "$ref": "#/components/schemas/CoachPlan"
+                    },
+                    "classes": {
+                      "type": "array",
+                      "maxItems": 6,
+                      "items": {
+                        "$ref": "#/components/schemas/CoachClassCard"
+                      }
                     },
                     "freeMessages": {
                       "$ref": "#/components/schemas/CoachFreeMessages"
@@ -6050,6 +6896,29 @@
             "cookieAuth": []
           }
         ],
+        "parameters": [
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "attractions"
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "en",
+                "is"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -6071,6 +6940,12 @@
                       "type": "array",
                       "items": {
                         "$ref": "#/components/schemas/FavouriteActivity"
+                      }
+                    },
+                    "attractions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FavouriteAttraction"
                       }
                     }
                   }
@@ -6161,6 +7036,23 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "attractionId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "attractionSlug",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "maxLength": 120
             }
           }
         ],
@@ -6502,6 +7394,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PlanCatalog"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/app-version": {
+      "get": {
+        "operationId": "getAppVersion",
+        "tags": [
+          "App"
+        ],
+        "security": [],
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ios",
+                "android"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppVersionPolicy"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             }
@@ -7657,7 +8595,8 @@
           },
           {
             "cookieAuth": []
-          }
+          },
+          {}
         ],
         "parameters": [
           {
@@ -7731,6 +8670,23 @@
                       "note": {
                         "type": "string",
                         "maxLength": 500
+                      }
+                    }
+                  },
+                  "guest": {
+                    "type": "object",
+                    "required": [
+                      "email"
+                    ],
+                    "properties": {
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "maxLength": 254
+                      },
+                      "marketingOptIn": {
+                        "type": "boolean",
+                        "default": false
                       }
                     }
                   },
@@ -8329,6 +9285,15 @@
           "format": "uuid"
         }
       },
+      "VisitRatingPromptId": {
+        "name": "promptId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
       "IdempotencyKeyHeader": {
         "name": "Idempotency-Key",
         "in": "header",
@@ -8336,6 +9301,15 @@
           "type": "string",
           "minLength": 8,
           "maxLength": 128
+        }
+      },
+      "ClientFeaturesHeader": {
+        "name": "X-LifePass-Features",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "example": "visit-rating-prompts"
         }
       },
       "HealthDate": {
@@ -9288,6 +10262,7 @@
           "slug",
           "name",
           "description",
+          "descriptionIs",
           "city",
           "address",
           "coordinates",
@@ -9314,7 +10289,10 @@
             "type": "string"
           },
           "descriptionIs": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "city": {
             "type": "string"
@@ -9384,6 +10362,16 @@
           "totalReviews": {
             "type": "integer",
             "minimum": 0
+          },
+          "totalRatings": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "equipmentRating": {
+            "$ref": "#/components/schemas/SubRatingSummary"
+          },
+          "cleanlinessRating": {
+            "$ref": "#/components/schemas/SubRatingSummary"
           },
           "openingHours": {
             "type": "object",
@@ -9469,6 +10457,13 @@
               "string",
               "null"
             ]
+          },
+          "room": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "Salur 3"
           },
           "attendance": {
             "type": [
@@ -9862,6 +10857,39 @@
                 }
               }
             ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "full",
+              "opens_later"
+            ]
+          },
+          "spotsLeft": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "priceLabel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "surchargeFromIsk": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "room": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "Salur 3"
           }
         }
       },
@@ -10195,7 +11223,8 @@
           "inBundle",
           "categories",
           "amenities",
-          "offerings"
+          "offerings",
+          "descriptionIs"
         ],
         "properties": {
           "id": {
@@ -10257,6 +11286,12 @@
           "description": {
             "type": "string"
           },
+          "descriptionIs": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "markerType": {
             "type": "string",
             "enum": [
@@ -10273,6 +11308,10 @@
             "type": "boolean"
           },
           "summary": {
+            "type": "string",
+            "maxLength": 110
+          },
+          "summaryIs": {
             "type": "string",
             "maxLength": 110
           }
@@ -10354,12 +11393,33 @@
           }
         }
       },
+      "SubRatingSummary": {
+        "type": "object",
+        "required": [
+          "average",
+          "count"
+        ],
+        "properties": {
+          "average": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 3
+          }
+        }
+      },
       "VenueReviewSummary": {
         "type": "object",
         "required": [
           "averageRating",
           "totalReviews",
-          "distribution"
+          "distribution",
+          "totalRatings",
+          "equipmentRating",
+          "cleanlinessRating"
         ],
         "properties": {
           "averageRating": {
@@ -10367,6 +11427,29 @@
           },
           "totalReviews": {
             "type": "integer"
+          },
+          "totalRatings": {
+            "type": "integer"
+          },
+          "equipmentRating": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubRatingSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cleanlinessRating": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SubRatingSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "distribution": {
             "type": "object",
@@ -10409,9 +11492,35 @@
           "createdAt",
           "updatedAt",
           "reviewer",
-          "images"
+          "images",
+          "kind",
+          "equipmentRating",
+          "cleanlinessRating"
         ],
         "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "written",
+              "quick"
+            ]
+          },
+          "equipmentRating": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 5
+          },
+          "cleanlinessRating": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 5
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -10650,6 +11759,53 @@
                 "type": "null"
               }
             ]
+          },
+          "support": {
+            "$ref": "#/components/schemas/ProfileSupport"
+          },
+          "lifetimeCheckIns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "ProfileSupport": {
+        "type": "object",
+        "required": [
+          "whatsapp"
+        ],
+        "properties": {
+          "whatsapp": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhatsAppSupportContact"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "WhatsAppSupportContact": {
+        "type": "object",
+        "required": [
+          "number",
+          "url"
+        ],
+        "properties": {
+          "number": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{7,14}$",
+            "example": "3545551234"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://wa.me/3545551234"
           }
         }
       },
@@ -10874,7 +12030,8 @@
                           "hasBooking",
                           "bookingTitle",
                           "bookingStartsAt",
-                          "movedAway"
+                          "movedAway",
+                          "checkedInAt"
                         ],
                         "properties": {
                           "sessionId": {
@@ -10918,6 +12075,13 @@
                           },
                           "movedAway": {
                             "type": "boolean"
+                          },
+                          "checkedInAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
                           }
                         }
                       },
@@ -11149,6 +12313,7 @@
           "companyMemberships",
           "venueReviews",
           "reviewPhotoUploads",
+          "visitRatingPrompts",
           "identityVerifications"
         ],
         "properties": {
@@ -11356,6 +12521,13 @@
                   "type": "boolean"
                 }
               }
+            }
+          },
+          "visitRatingPrompts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
             }
           },
           "identityVerifications": {
@@ -11641,7 +12813,9 @@
           "disclaimer",
           "createdAt",
           "revisionOf",
-          "revised"
+          "revised",
+          "custom",
+          "cycleDays"
         ],
         "properties": {
           "id": {
@@ -11831,6 +13005,559 @@
           },
           "revised": {
             "type": "boolean"
+          },
+          "custom": {
+            "type": "boolean"
+          },
+          "cycleDays": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 2,
+            "maximum": 14
+          },
+          "excludedEquipment": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludedExercises": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "exerciseId",
+                "name"
+              ],
+              "properties": {
+                "exerciseId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "lastEdit": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "editId",
+                  "undoUntil",
+                  "undoable"
+                ],
+                "properties": {
+                  "editId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "undoUntil": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "undoable": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "PlanEditBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "locale": {
+            "type": "string",
+            "enum": [
+              "en",
+              "is"
+            ]
+          },
+          "replacesEditId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "context": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "sessionId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "exerciseId": {
+                "type": "string",
+                "maxLength": 64
+              }
+            }
+          }
+        }
+      },
+      "PlanEditChangeItem": {
+        "type": "object",
+        "required": [
+          "type",
+          "before",
+          "after",
+          "own"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "swap",
+              "dose",
+              "add",
+              "remove",
+              "reorder",
+              "title",
+              "minutes",
+              "intensity",
+              "replace",
+              "rest",
+              "swap_days",
+              "cycle",
+              "training_days",
+              "exclude",
+              "include"
+            ]
+          },
+          "before": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "own": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PlanEditChangeGroup": {
+        "type": "object",
+        "required": [
+          "scope",
+          "label",
+          "dates",
+          "sessionIds",
+          "items"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "day",
+              "pattern",
+              "plan",
+              "weekdays",
+              "cycle"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "dates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          "sessionIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanEditChangeItem"
+            }
+          }
+        }
+      },
+      "PlanEditExclusion": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "label"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "equipment",
+              "exercise"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "PlanEditNotApplied": {
+        "type": "object",
+        "required": [
+          "reason",
+          "text"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "unknown_ref",
+              "not_editable",
+              "not_suitable",
+              "no_alternative",
+              "unit_mismatch",
+              "over_limit",
+              "own_note_unsupported",
+              "too_many",
+              "conflicts",
+              "not_supported",
+              "unsafe",
+              "text_not_shared"
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "PlanEditPreview": {
+        "type": "object",
+        "required": [
+          "editId",
+          "label",
+          "recommended",
+          "expiresAt",
+          "summary",
+          "becomesCustom",
+          "becomesCustomNote",
+          "touchesToday",
+          "todaySessionId",
+          "changes",
+          "exclusions",
+          "notApplied",
+          "notAppliedNote"
+        ],
+        "properties": {
+          "editId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recommended": {
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "becomesCustom": {
+            "type": "boolean"
+          },
+          "becomesCustomNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "touchesToday": {
+            "type": "boolean"
+          },
+          "todaySessionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanEditChangeGroup"
+            }
+          },
+          "exclusions": {
+            "type": "object",
+            "required": [
+              "added",
+              "removed"
+            ],
+            "properties": {
+              "added": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PlanEditExclusion"
+                }
+              },
+              "removed": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PlanEditExclusion"
+                }
+              }
+            }
+          },
+          "notApplied": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanEditNotApplied"
+            }
+          },
+          "notAppliedNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PlanEditResponse": {
+        "type": "object",
+        "required": [
+          "kind",
+          "reply",
+          "question",
+          "variants",
+          "suggestion",
+          "notApplied",
+          "editsLeftToday",
+          "replayed"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "preview",
+              "clarify",
+              "no_change",
+              "not_plan_edit"
+            ]
+          },
+          "reply": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "question": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "text",
+                  "choices"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "choices": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "variants": {
+            "type": "array",
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/components/schemas/PlanEditPreview"
+            }
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "adjust_plan",
+              "new_plan",
+              null
+            ]
+          },
+          "notApplied": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanEditNotApplied"
+            }
+          },
+          "editsLeftToday": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PlanEditView": {
+        "type": "object",
+        "required": [
+          "id",
+          "programId",
+          "status",
+          "appliedAt",
+          "undoneAt",
+          "undoUntil",
+          "undoable",
+          "summary",
+          "changes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "programId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "undone"
+            ]
+          },
+          "appliedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "undoneAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "undoUntil": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "undoable": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanEditChangeGroup"
+            }
+          }
+        }
+      },
+      "PlanEditApplyResponse": {
+        "type": "object",
+        "required": [
+          "edit",
+          "program",
+          "changed",
+          "features",
+          "replayed"
+        ],
+        "properties": {
+          "edit": {
+            "$ref": "#/components/schemas/PlanEditView"
+          },
+          "program": {
+            "$ref": "#/components/schemas/ProgramSummary"
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionBrief"
+            }
+          },
+          "features": {
+            "$ref": "#/components/schemas/HealthServerFeatures"
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PlanEditUndoResponse": {
+        "type": "object",
+        "required": [
+          "edit",
+          "program",
+          "changed",
+          "keptRows",
+          "replayed"
+        ],
+        "properties": {
+          "edit": {
+            "$ref": "#/components/schemas/PlanEditView"
+          },
+          "program": {
+            "$ref": "#/components/schemas/ProgramSummary"
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionBrief"
+            }
+          },
+          "keptRows": {
+            "type": "integer"
+          },
+          "replayed": {
+            "type": "boolean"
           }
         }
       },
@@ -11850,7 +13577,8 @@
           "doneSource",
           "feeling",
           "skipReason",
-          "extrasCount"
+          "extrasCount",
+          "checkedInAt"
         ],
         "properties": {
           "id": {
@@ -11927,6 +13655,13 @@
           },
           "extrasCount": {
             "type": "integer"
+          },
+          "checkedInAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -11950,7 +13685,8 @@
           "done",
           "skipped",
           "missed",
-          "rest"
+          "rest",
+          "checked_in"
         ]
       },
       "SessionFeeling": {
@@ -12321,6 +14057,9 @@
                 "type": "null"
               }
             ]
+          },
+          "own": {
+            "type": "boolean"
           }
         }
       },
@@ -12676,6 +14415,7 @@
           "feeling",
           "doneSource",
           "checkInVenueName",
+          "checkedInAt",
           "skipReason",
           "performed",
           "isExtra",
@@ -12708,7 +14448,8 @@
             "enum": [
               "done",
               "skipped",
-              "missed"
+              "missed",
+              "checked_in"
             ]
           },
           "minutes": {
@@ -12734,6 +14475,13 @@
               "string",
               "null"
             ]
+          },
+          "checkedInAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "skipReason": {
             "type": [
@@ -12790,8 +14538,11 @@
           "days",
           "planned",
           "done",
+          "checkedIn",
           "skipped",
           "missed",
+          "extrasDone",
+          "workoutsDone",
           "canGoBack",
           "canGoForward"
         ],
@@ -12887,11 +14638,23 @@
           "done": {
             "type": "integer"
           },
+          "checkedIn": {
+            "type": "integer",
+            "minimum": 0
+          },
           "skipped": {
             "type": "integer"
           },
           "missed": {
             "type": "integer"
+          },
+          "extrasDone": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workoutsDone": {
+            "type": "integer",
+            "minimum": 0
           },
           "canGoBack": {
             "type": "boolean"
@@ -13415,6 +15178,8 @@
           "weekRating",
           "sessionsPlanned",
           "sessionsDone",
+          "extrasDone",
+          "workoutsDone",
           "weightAvgKg",
           "weightDeltaKg",
           "weightDirection",
@@ -13462,6 +15227,14 @@
           },
           "sessionsDone": {
             "type": "integer"
+          },
+          "extrasDone": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workoutsDone": {
+            "type": "integer",
+            "minimum": 0
           },
           "weightAvgKg": {
             "type": [
@@ -14019,6 +15792,487 @@
             "type": [
               "integer",
               "null"
+            ]
+          }
+        }
+      },
+      "CustomProgramBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "spec"
+        ],
+        "properties": {
+          "spec": {
+            "$ref": "#/components/schemas/CustomProgramSpec"
+          },
+          "replaceActive": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "CustomProgramSpec": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "startsOn",
+          "weeks",
+          "cycle"
+        ],
+        "properties": {
+          "startsOn": {
+            "type": "string",
+            "format": "date"
+          },
+          "weeks": {
+            "type": "integer",
+            "enum": [
+              4,
+              8,
+              12
+            ]
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "intro": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "goal": {
+            "type": "string",
+            "enum": [
+              "lose_weight",
+              "gain_weight",
+              "build_muscle",
+              "get_fitter"
+            ]
+          },
+          "experience": {
+            "type": "string",
+            "enum": [
+              "new",
+              "some",
+              "regular"
+            ]
+          },
+          "kinds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "gym",
+                "classes",
+                "pool",
+                "outdoors"
+              ]
+            }
+          },
+          "cycle": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 14,
+            "items": {
+              "$ref": "#/components/schemas/CustomProgramDay"
+            }
+          }
+        }
+      },
+      "CustomProgramDay": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "minutes"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "strength",
+              "cardio",
+              "mobility",
+              "rest"
+            ]
+          },
+          "focus": {
+            "type": "string",
+            "enum": [
+              "full",
+              "upper",
+              "lower",
+              "core",
+              "legs",
+              "conditioning",
+              "mobility",
+              "recovery"
+            ]
+          },
+          "minutes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          },
+          "intensity": {
+            "type": "string",
+            "enum": [
+              "easy",
+              "moderate",
+              "hard"
+            ]
+          },
+          "blocks": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/CustomProgramBlock"
+            }
+          }
+        }
+      },
+      "CustomProgramBlock": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "exerciseId",
+          "sets"
+        ],
+        "properties": {
+          "exerciseId": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[_-][a-z0-9]+)*$",
+            "maxLength": 64
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "section": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "notes": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "string",
+              "maxLength": 90
+            }
+          },
+          "sets": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12
+          },
+          "reps": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          },
+          "minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 60
+          },
+          "perSide": {
+            "type": "boolean"
+          },
+          "restSec": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600,
+            "default": 60
+          },
+          "load": {
+            "type": "string",
+            "enum": [
+              "bodyweight",
+              "light",
+              "moderate",
+              "heavy"
+            ]
+          },
+          "equipment": {
+            "$ref": "#/components/schemas/HealthEquipment"
+          },
+          "equipmentLabel": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "pattern": {
+            "type": "string",
+            "enum": [
+              "push",
+              "pull",
+              "hinge",
+              "squat",
+              "carry",
+              "core",
+              "cardio",
+              "mobility",
+              "swim"
+            ]
+          },
+          "altIds": {
+            "type": "array",
+            "maxItems": 3,
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CustomProgramDryRun": {
+        "type": "object",
+        "required": [
+          "dryRun",
+          "programId",
+          "replay",
+          "startsOn",
+          "endsOn",
+          "weeks",
+          "cycleDays",
+          "sessions",
+          "cycle",
+          "schedule",
+          "goal",
+          "ends",
+          "discardsProposal",
+          "refusal"
+        ],
+        "properties": {
+          "dryRun": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "programId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "replay": {
+            "type": "boolean"
+          },
+          "startsOn": {
+            "type": "string",
+            "format": "date"
+          },
+          "endsOn": {
+            "type": "string",
+            "format": "date"
+          },
+          "weeks": {
+            "type": "integer"
+          },
+          "cycleDays": {
+            "type": "integer"
+          },
+          "sessions": {
+            "type": "object",
+            "required": [
+              "total",
+              "training",
+              "rest"
+            ],
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "training": {
+                "type": "integer"
+              },
+              "rest": {
+                "type": "integer"
+              }
+            }
+          },
+          "cycle": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "day",
+                "title",
+                "kind",
+                "minutes",
+                "blocks",
+                "rows"
+              ],
+              "properties": {
+                "day": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "minutes": {
+                  "type": "integer"
+                },
+                "blocks": {
+                  "type": "integer"
+                },
+                "rows": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "schedule": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "date",
+                "weekNo",
+                "weekday",
+                "cycleDay",
+                "kind",
+                "title"
+              ],
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "weekNo": {
+                  "type": "integer"
+                },
+                "weekday": {
+                  "type": "integer"
+                },
+                "cycleDay": {
+                  "type": "integer"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "goal": {
+            "type": "object",
+            "required": [
+              "value",
+              "from"
+            ],
+            "properties": {
+              "value": {
+                "type": "string",
+                "enum": [
+                  "lose_weight",
+                  "gain_weight",
+                  "build_muscle",
+                  "get_fitter"
+                ]
+              },
+              "from": {
+                "type": "string",
+                "enum": [
+                  "spec",
+                  "current_plan",
+                  "previous_plan",
+                  "default"
+                ]
+              }
+            }
+          },
+          "ends": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "status",
+                  "summaryTitle",
+                  "custom",
+                  "goal"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "paused"
+                    ]
+                  },
+                  "summaryTitle": {
+                    "type": "string"
+                  },
+                  "custom": {
+                    "type": "boolean"
+                  },
+                  "goal": {
+                    "type": "string",
+                    "enum": [
+                      "lose_weight",
+                      "gain_weight",
+                      "build_muscle",
+                      "get_fitter"
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "discardsProposal": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "refusal": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "program_already_active",
+              "coach-program-limit",
+              "idempotency_key_reused",
+              "health_program_deleted",
+              null
             ]
           }
         }
@@ -15510,7 +17764,8 @@
             "target_weight",
             "plan_revision",
             "health_feedback",
-            "meal_describe"
+            "meal_describe",
+            "plan_edit"
           ]
         }
       },
@@ -16240,6 +18495,9 @@
           },
           "replayed": {
             "type": "boolean"
+          },
+          "chatEdits": {
+            "type": "integer"
           }
         }
       },
@@ -17900,6 +20158,7 @@
           "start",
           "end",
           "location",
+          "room",
           "coaches",
           "attendance",
           "full",
@@ -17948,6 +20207,13 @@
                 "type": "string"
               }
             }
+          },
+          "room": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "Salur 3"
           },
           "coaches": {
             "type": "array",
@@ -18199,7 +20465,8 @@
           "venueId",
           "startsAt",
           "endsAt",
-          "venueReference"
+          "venueReference",
+          "room"
         ],
         "properties": {
           "bookingId": {
@@ -18262,6 +20529,13 @@
               }
             ]
           },
+          "room": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "Salur 3"
+          },
           "remainingMonthly": {
             "type": [
               "integer",
@@ -18286,7 +20560,8 @@
           "venue",
           "externalTitle",
           "location",
-          "venueReference"
+          "venueReference",
+          "room"
         ],
         "properties": {
           "id": {
@@ -18381,6 +20656,13 @@
               "string",
               "null"
             ]
+          },
+          "room": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "Salur 3"
           },
           "venueReference": {
             "oneOf": [
@@ -18478,6 +20760,214 @@
           }
         }
       },
+      "VisitRatingPromptReservation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "venueId",
+          "venueName",
+          "dueAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "venueId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "venueName": {
+            "type": "string"
+          },
+          "dueAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "VisitRatingPrompt": {
+        "type": "object",
+        "required": [
+          "id",
+          "venueId",
+          "venueName",
+          "venueSlug",
+          "checkedInAt",
+          "dueAt",
+          "expiresAt",
+          "shownAt",
+          "answeredAt",
+          "dismissedAt",
+          "hasWrittenReview"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "venueId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "venueName": {
+            "type": "string"
+          },
+          "venueSlug": {
+            "type": "string"
+          },
+          "checkedInAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dueAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "shownAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "answeredAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "dismissedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "hasWrittenReview": {
+            "type": "boolean"
+          }
+        }
+      },
+      "VisitRatingAnswerInput": {
+        "type": "object",
+        "required": [
+          "rating"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "rating": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "equipmentRating": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 5
+          },
+          "cleanlinessRating": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 5
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "VisitRatingAnswerResult": {
+        "type": "object",
+        "required": [
+          "prompt",
+          "rating",
+          "happyMoment",
+          "hasWrittenReview"
+        ],
+        "properties": {
+          "prompt": {
+            "$ref": "#/components/schemas/VisitRatingPrompt"
+          },
+          "rating": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "reviewId",
+                  "kind",
+                  "rating",
+                  "equipmentRating",
+                  "cleanlinessRating",
+                  "visitDate"
+                ],
+                "properties": {
+                  "reviewId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "written",
+                      "quick"
+                    ]
+                  },
+                  "rating": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5
+                  },
+                  "equipmentRating": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "cleanlinessRating": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "visitDate": {
+                    "type": "string",
+                    "format": "date"
+                  }
+                }
+              }
+            ]
+          },
+          "happyMoment": {
+            "type": "boolean"
+          },
+          "hasWrittenReview": {
+            "type": "boolean"
+          }
+        }
+      },
       "CheckInResult": {
         "type": "object",
         "additionalProperties": false,
@@ -18490,9 +20980,28 @@
           "activity",
           "countedAgainst",
           "memberShortName",
-          "coveredBy"
+          "coveredBy",
+          "ratingPrompt",
+          "lifetimeCheckIns"
         ],
         "properties": {
+          "ratingPrompt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VisitRatingPromptReservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lifetimeCheckIns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
           "coveredBy": {
             "oneOf": [
               {
@@ -18962,6 +21471,7 @@
           "slug",
           "name",
           "description",
+          "descriptionIs",
           "city",
           "address",
           "inBundle",
@@ -18986,6 +21496,12 @@
           },
           "description": {
             "type": "string"
+          },
+          "descriptionIs": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "city": {
             "type": "string"
@@ -19103,8 +21619,180 @@
                 "format": "uuid"
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "attractionId"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "attractionId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "attractionSlug"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "attractionSlug": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "maxLength": 120
+              }
+            }
           }
         ]
+      },
+      "FavouriteAttraction": {
+        "type": "object",
+        "required": [
+          "id",
+          "attractionId",
+          "slug",
+          "name",
+          "localName",
+          "kind",
+          "kindLabel",
+          "region",
+          "regionLabel",
+          "lengthM",
+          "durationMinutes",
+          "difficulty",
+          "difficultyLabel",
+          "outAndBack",
+          "imageUrl",
+          "imageAlt",
+          "imageIsMapPlate",
+          "imageCredit",
+          "imageLicense",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "attractionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "localName": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "waterfall",
+              "hot_spring",
+              "geyser",
+              "hike",
+              "viewpoint",
+              "canyon",
+              "glacier",
+              "beach",
+              "cave",
+              "volcano",
+              "lake",
+              "geothermal_area",
+              "national_park",
+              "nature_reserve",
+              "mountain",
+              "lighthouse",
+              "other"
+            ]
+          },
+          "kindLabel": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string",
+            "enum": [
+              "capital",
+              "reykjanes",
+              "south",
+              "west",
+              "westfjords",
+              "north",
+              "east",
+              "highlands"
+            ]
+          },
+          "regionLabel": {
+            "type": "string"
+          },
+          "lengthM": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "durationMinutes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "difficulty": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "easy",
+              "moderate",
+              "hard",
+              "expert",
+              null
+            ]
+          },
+          "difficultyLabel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outAndBack": {
+            "type": "boolean"
+          },
+          "imageUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "imageAlt": {
+            "type": "string"
+          },
+          "imageIsMapPlate": {
+            "type": "boolean"
+          },
+          "imageCredit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "imageLicense": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "Subscription": {
         "type": "object",
@@ -19789,6 +22477,44 @@
           }
         }
       },
+      "AppVersionPolicy": {
+        "type": "object",
+        "required": [
+          "platform",
+          "minimumVersion",
+          "latestVersion",
+          "storeUrl"
+        ],
+        "properties": {
+          "platform": {
+            "type": "string",
+            "enum": [
+              "ios",
+              "android"
+            ]
+          },
+          "minimumVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d+\\.\\d+\\.\\d+$",
+            "example": "3.0.0"
+          },
+          "latestVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d+\\.\\d+\\.\\d+$",
+            "example": "3.1.0"
+          },
+          "storeUrl": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
       "CheckoutSession": {
         "type": "object",
         "required": [
@@ -19811,7 +22537,10 @@
             "format": "uuid"
           },
           "orderId": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid"
           }
         }

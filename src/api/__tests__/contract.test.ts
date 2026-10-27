@@ -1,5 +1,5 @@
 /**
- * The client against the vendored 0.34.0 contract: every success answer the
+ * The client against the vendored 0.46.0 contract: every success answer the
  * contract documents comes back unwrapped, every problem shape it documents
  * decodes into the error model, and what the client sends passes the
  * contract's request checks. Also holds the generated types to the contract.
@@ -27,8 +27,8 @@ function expectType<A, B>(equal: Equal<A, B>): void {
 
 const fill = (template: string) => template.replace(/\{[^}]+\}/g, 'x1');
 
-it('is the 0.34.0 contract', () => {
-  expect(contractVersion()).toBe('0.34.0');
+it('is the 0.46.0 contract', () => {
+  expect(contractVersion()).toBe('0.46.0');
 });
 
 describe('generated types', () => {

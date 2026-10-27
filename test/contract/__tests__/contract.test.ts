@@ -28,8 +28,8 @@ const VENUE = '3f2b8c1e-7d4a-4b6e-9c2f-1a2b3c4d5e6f';
 const ACTIVITY = '0b7d4a62-3c9e-4f1a-a2d5-6e8f9c1b2a34';
 
 describe('the vendored contract', () => {
-  it('is LifePass Mobile API 0.34.0, without prose', () => {
-    expect(contractVersion()).toBe('0.34.0');
+  it('is LifePass Mobile API 0.46.0, without prose', () => {
+    expect(contractVersion()).toBe('0.46.0');
     const operations = allOperations();
     expect(operations.length).toBeGreaterThan(100);
     // Stripped by scripts/vendor-openapi.mjs: the repo is public.

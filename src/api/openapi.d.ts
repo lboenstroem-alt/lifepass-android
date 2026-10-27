@@ -277,6 +277,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/visit-rating-prompts/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCurrentVisitRatingPrompt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/visit-rating-prompts/{promptId}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["answerVisitRatingPrompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/visit-rating-prompts/{promptId}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["dismissVisitRatingPrompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/profile": {
         parameters: {
             query?: never;
@@ -469,6 +517,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/health/programs/custom": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createCustomProgram"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/programs/{programId}": {
         parameters: {
             query?: never;
@@ -535,6 +599,70 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["reviseProgram"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/programs/{programId}/edits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listPlanEdits"];
+        put?: never;
+        post: operations["requestPlanEdit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/programs/{programId}/edits/{editId}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["applyPlanEdit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/programs/{programId}/edits/{editId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["undoPlanEdit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/programs/{programId}/edits/{editId}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["discardPlanEdit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1205,6 +1333,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/app-version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAppVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/referrals/me": {
         parameters: {
             query?: never;
@@ -1722,7 +1866,7 @@ export interface components {
             slug: string;
             name: string;
             description: string;
-            descriptionIs?: string;
+            descriptionIs: string | null;
             city: string;
             address: string;
             coordinates: components["schemas"]["Coordinates"];
@@ -1742,6 +1886,9 @@ export interface components {
             specialInstructions?: string;
             averageRating?: number;
             totalReviews?: number;
+            totalRatings?: number;
+            equipmentRating?: components["schemas"]["SubRatingSummary"];
+            cleanlinessRating?: components["schemas"]["SubRatingSummary"];
             openingHours?: {
                 [key: string]: unknown;
             };
@@ -1765,6 +1912,8 @@ export interface components {
             endsAt: string;
             instructor?: string | null;
             locationText?: string | null;
+            /** @example Salur 3 */
+            room?: string | null;
             attendance?: {
                 current?: number;
                 limit?: number;
@@ -1862,6 +2011,13 @@ export interface components {
                 /** Format: date-time */
                 endsAt: string;
             };
+            /** @enum {string} */
+            status?: "open" | "full" | "opens_later";
+            spotsLeft?: number | null;
+            priceLabel?: string | null;
+            surchargeFromIsk?: number | null;
+            /** @example Salur 3 */
+            room?: string | null;
         };
         CoachSightCard: {
             slug: string;
@@ -1958,10 +2114,12 @@ export interface components {
             offerings: components["schemas"]["VenueOfferings"];
             address?: string;
             description?: string;
+            descriptionIs: string | null;
             /** @enum {string} */
             markerType?: "gym" | "gymPool" | "pool" | "lagoon" | "studio" | "recovery" | "racquet";
             awaitingConnection?: boolean;
             summary?: string;
+            summaryIs?: string;
         };
         /**
          * @example [
@@ -1989,9 +2147,16 @@ export interface components {
             amenities: string[];
             offerings: components["schemas"]["VenueOfferingFacet"][];
         };
+        SubRatingSummary: {
+            average: number;
+            count: number;
+        };
         VenueReviewSummary: {
             averageRating: number;
             totalReviews: number;
+            totalRatings: number;
+            equipmentRating: components["schemas"]["SubRatingSummary"] | null;
+            cleanlinessRating: components["schemas"]["SubRatingSummary"] | null;
             distribution: {
                 1: number;
                 2: number;
@@ -2001,6 +2166,10 @@ export interface components {
             };
         };
         VenueReviewRow: {
+            /** @enum {string} */
+            kind: "written" | "quick";
+            equipmentRating: number | null;
+            cleanlinessRating: number | null;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -2060,6 +2229,20 @@ export interface components {
             recentCheckIn: components["schemas"]["RecentCheckInProof"] | null;
             health?: components["schemas"]["ProfileHealthBlock"] | null;
             coach?: components["schemas"]["ProfileCoach"] | null;
+            support?: components["schemas"]["ProfileSupport"];
+            lifetimeCheckIns?: number | null;
+        };
+        ProfileSupport: {
+            whatsapp: components["schemas"]["WhatsAppSupportContact"] | null;
+        };
+        WhatsAppSupportContact: {
+            /** @example 3545551234 */
+            number: string;
+            /**
+             * Format: uri
+             * @example https://wa.me/3545551234
+             */
+            url: string;
         };
         RecentCheckInProof: {
             /** Format: uuid */
@@ -2122,6 +2305,8 @@ export interface components {
                     /** Format: date-time */
                     bookingStartsAt: string | null;
                     movedAway: boolean;
+                    /** Format: date-time */
+                    checkedInAt: string | null;
                 } | null;
             } | null;
             /** Format: uuid */
@@ -2249,6 +2434,9 @@ export interface components {
                 uploadedAt: string | null;
                 attached: boolean;
             }[];
+            visitRatingPrompts: {
+                [key: string]: unknown;
+            }[];
             identityVerifications: {
                 [key: string]: unknown;
             }[];
@@ -2359,6 +2547,125 @@ export interface components {
             /** Format: uuid */
             revisionOf: string | null;
             revised: boolean;
+            custom: boolean;
+            cycleDays: number | null;
+            excludedEquipment?: string[];
+            excludedExercises?: {
+                exerciseId: string;
+                name: string;
+            }[];
+            lastEdit?: null | {
+                /** Format: uuid */
+                editId: string;
+                /** Format: date-time */
+                undoUntil: string;
+                undoable: boolean;
+            };
+        };
+        PlanEditBody: {
+            message: string;
+            /** @enum {string} */
+            locale?: "en" | "is";
+            /** Format: uuid */
+            replacesEditId?: string;
+            context?: {
+                /** Format: uuid */
+                sessionId?: string;
+                exerciseId?: string;
+            };
+        };
+        PlanEditChangeItem: {
+            /** @enum {string} */
+            type: "swap" | "dose" | "add" | "remove" | "reorder" | "title" | "minutes" | "intensity" | "replace" | "rest" | "swap_days" | "cycle" | "training_days" | "exclude" | "include";
+            before: string | null;
+            after: string | null;
+            own: boolean;
+        };
+        PlanEditChangeGroup: {
+            /** @enum {string} */
+            scope: "day" | "pattern" | "plan" | "weekdays" | "cycle";
+            label: string;
+            dates: string[];
+            sessionIds: string[];
+            items: components["schemas"]["PlanEditChangeItem"][];
+        };
+        PlanEditExclusion: {
+            /** @enum {string} */
+            kind: "equipment" | "exercise";
+            id: string;
+            label: string;
+        };
+        PlanEditNotApplied: {
+            /** @enum {string} */
+            reason: "unknown_ref" | "not_editable" | "not_suitable" | "no_alternative" | "unit_mismatch" | "over_limit" | "own_note_unsupported" | "too_many" | "conflicts" | "not_supported" | "unsafe" | "text_not_shared";
+            text: string;
+        };
+        PlanEditPreview: {
+            /** Format: uuid */
+            editId: string;
+            label: string | null;
+            recommended: boolean;
+            /** Format: date-time */
+            expiresAt: string;
+            summary: string;
+            becomesCustom: boolean;
+            becomesCustomNote: string | null;
+            touchesToday: boolean;
+            /** Format: uuid */
+            todaySessionId: string | null;
+            changes: components["schemas"]["PlanEditChangeGroup"][];
+            exclusions: {
+                added: components["schemas"]["PlanEditExclusion"][];
+                removed: components["schemas"]["PlanEditExclusion"][];
+            };
+            notApplied: components["schemas"]["PlanEditNotApplied"][];
+            notAppliedNote: string | null;
+        };
+        PlanEditResponse: {
+            /** @enum {string} */
+            kind: "preview" | "clarify" | "no_change" | "not_plan_edit";
+            reply: string | null;
+            question: null | {
+                text: string;
+                choices: string[];
+            };
+            variants: components["schemas"]["PlanEditPreview"][];
+            /** @enum {string|null} */
+            suggestion: "adjust_plan" | "new_plan" | null;
+            notApplied: components["schemas"]["PlanEditNotApplied"][];
+            editsLeftToday: number | null;
+            replayed: boolean;
+        };
+        PlanEditView: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            programId: string;
+            /** @enum {string} */
+            status: "applied" | "undone";
+            /** Format: date-time */
+            appliedAt: string;
+            /** Format: date-time */
+            undoneAt: string | null;
+            /** Format: date-time */
+            undoUntil: string | null;
+            undoable: boolean;
+            summary: string;
+            changes: components["schemas"]["PlanEditChangeGroup"][];
+        };
+        PlanEditApplyResponse: {
+            edit: components["schemas"]["PlanEditView"];
+            program: components["schemas"]["ProgramSummary"];
+            changed: components["schemas"]["SessionBrief"][];
+            features: components["schemas"]["HealthServerFeatures"];
+            replayed: boolean;
+        };
+        PlanEditUndoResponse: {
+            edit: components["schemas"]["PlanEditView"];
+            program: components["schemas"]["ProgramSummary"];
+            changed: components["schemas"]["SessionBrief"][];
+            keptRows: number;
+            replayed: boolean;
         };
         SessionBrief: {
             /** Format: uuid */
@@ -2381,11 +2688,13 @@ export interface components {
             /** @enum {string|null} */
             skipReason: "time" | "tired" | "sore" | "other" | "paused" | null;
             extrasCount: number;
+            /** Format: date-time */
+            checkedInAt: string | null;
         };
         /** @enum {string} */
         SessionKind: "strength" | "cardio" | "swim" | "mobility" | "hike" | "walk" | "class" | "rest";
         /** @enum {string} */
-        SessionStatusView: "planned" | "done" | "skipped" | "missed" | "rest";
+        SessionStatusView: "planned" | "done" | "skipped" | "missed" | "rest" | "checked_in";
         /** @enum {string|null} */
         SessionFeeling: "easy" | "ok" | "hard" | "too_hard" | null;
         ProgramWeekPlan: {
@@ -2454,6 +2763,7 @@ export interface components {
             alternatives: components["schemas"]["ExerciseAlternative"][];
             lastLoadKg: number | null;
             progression: components["schemas"]["HealthProgressionChange"] | null;
+            own?: boolean;
         };
         PerformedExerciseView: {
             exerciseId: string;
@@ -2526,12 +2836,14 @@ export interface components {
             kind: components["schemas"]["SessionKind"];
             title: string;
             /** @enum {string} */
-            status: "done" | "skipped" | "missed";
+            status: "done" | "skipped" | "missed" | "checked_in";
             minutes: number;
             feeling: components["schemas"]["SessionFeeling"];
             /** @enum {string|null} */
             doneSource: "member" | "check_in" | "wearable" | null;
             checkInVenueName: string | null;
+            /** Format: date-time */
+            checkedInAt: string | null;
             /** @enum {string|null} */
             skipReason: "time" | "tired" | "sore" | "other" | "paused" | null;
             performed: components["schemas"]["PerformedExerciseView"][] | null;
@@ -2561,8 +2873,11 @@ export interface components {
             }[];
             planned: number;
             done: number;
+            checkedIn: number;
             skipped: number;
             missed: number;
+            extrasDone: number;
+            workoutsDone: number;
             canGoBack: boolean;
             canGoForward: boolean;
         };
@@ -2678,6 +2993,8 @@ export interface components {
             weekRating: "great" | "ok" | "tough" | null;
             sessionsPlanned: number;
             sessionsDone: number;
+            extrasDone: number;
+            workoutsDone: number;
             weightAvgKg: number | null;
             weightDeltaKg: number | null;
             /** @enum {string|null} */
@@ -2790,6 +3107,113 @@ export interface components {
             target: components["schemas"]["HealthNutritionTarget"] | null;
             targetWithheld: components["schemas"]["HealthTargetWithheld"];
             scansLeftToday: number | null;
+        };
+        CustomProgramBody: {
+            spec: components["schemas"]["CustomProgramSpec"];
+            /** @default false */
+            replaceActive: boolean;
+        };
+        CustomProgramSpec: {
+            /** Format: date */
+            startsOn: string;
+            /** @enum {integer} */
+            weeks: 4 | 8 | 12;
+            title?: string;
+            intro?: string;
+            /** @enum {string} */
+            goal?: "lose_weight" | "gain_weight" | "build_muscle" | "get_fitter";
+            /** @enum {string} */
+            experience?: "new" | "some" | "regular";
+            kinds?: ("gym" | "classes" | "pool" | "outdoors")[];
+            cycle: components["schemas"]["CustomProgramDay"][];
+        };
+        CustomProgramDay: {
+            title?: string;
+            /** @enum {string} */
+            kind: "strength" | "cardio" | "mobility" | "rest";
+            /** @enum {string} */
+            focus?: "full" | "upper" | "lower" | "core" | "legs" | "conditioning" | "mobility" | "recovery";
+            minutes: number;
+            /** @enum {string} */
+            intensity?: "easy" | "moderate" | "hard";
+            blocks?: components["schemas"]["CustomProgramBlock"][];
+        };
+        CustomProgramBlock: {
+            exerciseId: string;
+            name?: string;
+            section?: string;
+            notes?: string[];
+            sets: number;
+            reps?: number;
+            seconds?: number;
+            minutes?: number;
+            perSide?: boolean;
+            /** @default 60 */
+            restSec: number;
+            /** @enum {string} */
+            load?: "bodyweight" | "light" | "moderate" | "heavy";
+            equipment?: components["schemas"]["HealthEquipment"];
+            equipmentLabel?: string;
+            /** @enum {string} */
+            pattern?: "push" | "pull" | "hinge" | "squat" | "carry" | "core" | "cardio" | "mobility" | "swim";
+            altIds?: string[];
+        };
+        CustomProgramDryRun: {
+            /** @enum {boolean} */
+            dryRun: true;
+            /** Format: uuid */
+            programId: string;
+            replay: boolean;
+            /** Format: date */
+            startsOn: string;
+            /** Format: date */
+            endsOn: string;
+            weeks: number;
+            cycleDays: number;
+            sessions: {
+                total: number;
+                training: number;
+                rest: number;
+            };
+            cycle: {
+                day: number;
+                title: string;
+                kind: string;
+                minutes: number;
+                blocks: number;
+                rows: number;
+            }[];
+            schedule: {
+                /** Format: date */
+                date: string;
+                weekNo: number;
+                weekday: number;
+                cycleDay: number;
+                kind: string;
+                title: string;
+            }[];
+            goal: {
+                /** @enum {string} */
+                value: "lose_weight" | "gain_weight" | "build_muscle" | "get_fitter";
+                /** @enum {string} */
+                from: "spec" | "current_plan" | "previous_plan" | "default";
+            };
+            ends: {
+                /** Format: uuid */
+                id: string;
+                /** @enum {string} */
+                status: "active" | "paused";
+                summaryTitle: string;
+                custom: boolean;
+                /** @enum {string} */
+                goal: "lose_weight" | "gain_weight" | "build_muscle" | "get_fitter";
+            } | null;
+            discardsProposal: {
+                /** Format: uuid */
+                id: string;
+            } | null;
+            /** @enum {string|null} */
+            refusal: "program_already_active" | "coach-program-limit" | "idempotency_key_reused" | "health_program_deleted" | null;
         };
         ProgramAdoptResponse: {
             program: components["schemas"]["ProgramDetail"];
@@ -3084,7 +3508,7 @@ export interface components {
             targetWeight: components["schemas"]["TargetWeightView"] | null;
             features: components["schemas"]["HealthServerFeatures"];
         };
-        HealthServerFeatures: ("target_weight" | "plan_revision" | "health_feedback" | "meal_describe")[];
+        HealthServerFeatures: ("target_weight" | "plan_revision" | "health_feedback" | "meal_describe" | "plan_edit")[];
         /** @enum {string} */
         FeedbackTopic: "workouts" | "sleep" | "eating" | "weight_activity";
         /** @enum {string} */
@@ -3247,6 +3671,7 @@ export interface components {
         ProgramRevisionResponse: {
             program: components["schemas"]["ProgramDetail"];
             replayed: boolean;
+            chatEdits?: number;
         };
         CoachProgramResponse: {
             reply: string;
@@ -3624,6 +4049,8 @@ export interface components {
                 link?: string;
                 address?: string;
             } | null;
+            /** @example Salur 3 */
+            room: string | null;
             coaches: {
                 firstName: string | null;
                 lastName: string | null;
@@ -3693,6 +4120,8 @@ export interface components {
             endsAt: string;
             externalBookingId?: string;
             venueReference: components["schemas"]["VenueBookingReference"] | null;
+            /** @example Salur 3 */
+            room: string | null;
             remainingMonthly?: number | null;
             isLastBeforeTopUp?: boolean;
             topUpApplied?: boolean;
@@ -3723,6 +4152,8 @@ export interface components {
             } | null;
             externalTitle: string | null;
             location: string | null;
+            /** @example Salur 3 */
+            room: string | null;
             venueReference: components["schemas"]["VenueBookingReference"] | null;
         };
         VenueBookingReference: {
@@ -3747,7 +4178,63 @@ export interface components {
                 name: string;
             };
         };
+        VisitRatingPromptReservation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            venueId: string;
+            venueName: string;
+            /** Format: date-time */
+            dueAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        VisitRatingPrompt: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            venueId: string;
+            venueName: string;
+            venueSlug: string;
+            /** Format: date-time */
+            checkedInAt: string;
+            /** Format: date-time */
+            dueAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+            /** Format: date-time */
+            shownAt: string | null;
+            /** Format: date-time */
+            answeredAt: string | null;
+            /** Format: date-time */
+            dismissedAt: string | null;
+            hasWrittenReview: boolean;
+        };
+        VisitRatingAnswerInput: {
+            rating: number;
+            equipmentRating?: number | null;
+            cleanlinessRating?: number | null;
+            comment?: string | null;
+        };
+        VisitRatingAnswerResult: {
+            prompt: components["schemas"]["VisitRatingPrompt"];
+            rating: null | {
+                /** Format: uuid */
+                reviewId: string;
+                /** @enum {string} */
+                kind: "written" | "quick";
+                rating: number;
+                equipmentRating: number | null;
+                cleanlinessRating: number | null;
+                /** Format: date */
+                visitDate: string;
+            };
+            happyMoment: boolean;
+            hasWrittenReview: boolean;
+        };
         CheckInResult: {
+            ratingPrompt: components["schemas"]["VisitRatingPromptReservation"] | null;
+            lifetimeCheckIns: number | null;
             coveredBy: null | components["schemas"]["WalkInCoverage"];
             memberShortName: string | null;
             /** Format: uuid */
@@ -3858,6 +4345,7 @@ export interface components {
             slug: string;
             name: string;
             description: string;
+            descriptionIs: string | null;
             city: string;
             address: string;
             inBundle: boolean;
@@ -3890,6 +4378,40 @@ export interface components {
         } | {
             /** Format: uuid */
             activityId: string;
+        } | {
+            /** Format: uuid */
+            attractionId: string;
+        } | {
+            attractionSlug: string;
+        };
+        FavouriteAttraction: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            attractionId: string;
+            slug: string;
+            name: string;
+            localName: string;
+            /** @enum {string} */
+            kind: "waterfall" | "hot_spring" | "geyser" | "hike" | "viewpoint" | "canyon" | "glacier" | "beach" | "cave" | "volcano" | "lake" | "geothermal_area" | "national_park" | "nature_reserve" | "mountain" | "lighthouse" | "other";
+            kindLabel: string;
+            /** @enum {string} */
+            region: "capital" | "reykjanes" | "south" | "west" | "westfjords" | "north" | "east" | "highlands";
+            regionLabel: string;
+            lengthM: number | null;
+            durationMinutes: number | null;
+            /** @enum {string|null} */
+            difficulty: "easy" | "moderate" | "hard" | "expert" | null;
+            difficultyLabel: string | null;
+            outAndBack: boolean;
+            /** Format: uri */
+            imageUrl: string;
+            imageAlt: string;
+            imageIsMapPlate: boolean;
+            imageCredit: string | null;
+            imageLicense: string | null;
+            /** Format: date-time */
+            createdAt: string;
         };
         Subscription: {
             /** Format: uuid */
@@ -4058,6 +4580,16 @@ export interface components {
             dayPasses: components["schemas"]["PlanCatalogPass"][];
             packs: components["schemas"]["PlanCatalogPass"][];
         };
+        AppVersionPolicy: {
+            /** @enum {string} */
+            platform: "ios" | "android";
+            /** @example 3.0.0 */
+            minimumVersion: string | null;
+            /** @example 3.1.0 */
+            latestVersion: string | null;
+            /** Format: uri */
+            storeUrl: string;
+        };
         CheckoutSession: {
             /** Format: uuid */
             checkoutSessionId: string;
@@ -4066,7 +4598,7 @@ export interface components {
             /** Format: uuid */
             externalSessionId: string;
             /** Format: uuid */
-            orderId: string;
+            orderId: string | null;
         };
         CheckoutStatusResult: {
             /** @enum {string} */
@@ -4261,7 +4793,9 @@ export interface components {
         Limit: number;
         Cursor: string;
         VenueId: string;
+        VisitRatingPromptId: string;
         IdempotencyKeyHeader: string;
+        ClientFeaturesHeader: string;
         HealthDate: string;
         HealthLocale: "en" | "is";
         HealthLimit: number;
@@ -4894,6 +5428,110 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    getCurrentVisitRatingPrompt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        prompt: components["schemas"]["VisitRatingPrompt"] | null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    answerVisitRatingPrompt: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKeyHeader"];
+            };
+            path: {
+                promptId: components["parameters"]["VisitRatingPromptId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisitRatingAnswerInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VisitRatingAnswerResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    dismissVisitRatingPrompt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                promptId: components["parameters"]["VisitRatingPromptId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        prompt: components["schemas"]["VisitRatingPrompt"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
     getProfile: {
         parameters: {
             query?: never;
@@ -5293,6 +5931,77 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    createCustomProgram: {
+        parameters: {
+            query?: {
+                locale?: components["parameters"]["HealthLocale"];
+                dryRun?: "1";
+            };
+            header?: {
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKeyHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomProgramBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgramAdoptResponse"] | components["schemas"]["CustomProgramDryRun"];
+                };
+            };
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgramAdoptResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["HealthAccessForbidden"];
+            404: components["responses"]["NotFound"];
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["HealthReasonProblem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     getProgram: {
         parameters: {
             query?: {
@@ -5480,6 +6189,270 @@ export interface operations {
                 };
             };
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listPlanEdits: {
+        parameters: {
+            query?: {
+                locale?: components["parameters"]["HealthLocale"];
+            };
+            header?: never;
+            path: {
+                programId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                        data: {
+                            edits: components["schemas"]["PlanEditView"][];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["HealthAccessForbidden"];
+            404: components["responses"]["NotFound"];
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    requestPlanEdit: {
+        parameters: {
+            query?: {
+                locale?: components["parameters"]["HealthLocale"];
+            };
+            header?: {
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKeyHeader"];
+            };
+            path: {
+                programId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanEditBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                        data: components["schemas"]["PlanEditResponse"];
+                    };
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["HealthAccessForbidden"];
+            404: components["responses"]["NotFound"];
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["HealthReasonProblem"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["HealthReasonProblem"];
+                };
+            };
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    applyPlanEdit: {
+        parameters: {
+            query?: {
+                locale?: components["parameters"]["HealthLocale"];
+            };
+            header?: {
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKeyHeader"];
+            };
+            path: {
+                programId: string;
+                editId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    confirmCustom?: boolean;
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                        data: components["schemas"]["PlanEditApplyResponse"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["HealthAccessForbidden"];
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["HealthReasonProblem"];
+                };
+            };
+        };
+    };
+    undoPlanEdit: {
+        parameters: {
+            query?: {
+                locale?: components["parameters"]["HealthLocale"];
+            };
+            header?: {
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKeyHeader"];
+            };
+            path: {
+                programId: string;
+                editId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                        data: components["schemas"]["PlanEditUndoResponse"];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["HealthAccessForbidden"];
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["HealthReasonProblem"];
+                };
+            };
+        };
+    };
+    discardPlanEdit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                programId: string;
+                editId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ok: boolean;
+                        data: {
+                            edit: {
+                                /** Format: uuid */
+                                id: string;
+                                /** @enum {string} */
+                                status: "previewed" | "applied" | "undone" | "discarded" | "superseded";
+                            };
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["HealthAccessForbidden"];
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6865,7 +7838,9 @@ export interface operations {
     confirmBookingPaymentSession: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-LifePass-Features"?: components["parameters"]["ClientFeaturesHeader"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -6893,6 +7868,8 @@ export interface operations {
                         checkInId?: string;
                         amountIsk?: number;
                         kind?: string;
+                        ratingPrompt?: components["schemas"]["VisitRatingPromptReservation"] | null;
+                        lifetimeCheckIns?: number | null;
                     } | {
                         /** @enum {string} */
                         status: "processing" | "expired" | "needs_attention";
@@ -6979,6 +7956,7 @@ export interface operations {
             query?: never;
             header?: {
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKeyHeader"];
+                "X-LifePass-Features"?: components["parameters"]["ClientFeaturesHeader"];
             };
             path?: never;
             cookie?: never;
@@ -7168,6 +8146,7 @@ export interface operations {
                         role: "user" | "assistant";
                         content: string;
                     }[];
+                    cards?: string[];
                 };
             };
         };
@@ -7180,6 +8159,7 @@ export interface operations {
                     "application/json": {
                         reply: string;
                         plan?: components["schemas"]["CoachPlan"];
+                        classes?: components["schemas"]["CoachClassCard"][];
                         freeMessages?: components["schemas"]["CoachFreeMessages"];
                     };
                 };
@@ -7239,7 +8219,11 @@ export interface operations {
     };
     listFavourites: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @example attractions */
+                include?: string;
+                locale?: "en" | "is";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7254,6 +8238,7 @@ export interface operations {
                     "application/json": {
                         venues: components["schemas"]["FavouriteVenue"][];
                         activities: components["schemas"]["FavouriteActivity"][];
+                        attractions?: components["schemas"]["FavouriteAttraction"][];
                     };
                 };
             };
@@ -7293,6 +8278,8 @@ export interface operations {
             query?: {
                 venueId?: string;
                 activityId?: string;
+                attractionId?: string;
+                attractionSlug?: string;
             };
             header?: never;
             path?: never;
@@ -7477,6 +8464,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlanCatalog"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getAppVersion: {
+        parameters: {
+            query: {
+                platform: "ios" | "android";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppVersionPolicy"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             429: components["responses"]["RateLimited"];
@@ -8051,6 +9068,12 @@ export interface operations {
                         /** Format: email */
                         recipientEmail: string;
                         note?: string;
+                    };
+                    guest?: {
+                        /** Format: email */
+                        email: string;
+                        /** @default false */
+                        marketingOptIn?: boolean;
                     };
                     terms: {
                         /** Format: date-time */

@@ -37,7 +37,7 @@ const FORMAT_SAMPLES: Record<string, string> = {
 
 /**
  * Tried, in order, against a `pattern` the format sample does not meet.
- * Together they satisfy every pattern in contract 0.34.0 (the "samples"
+ * Together they satisfy every pattern in contract 0.46.0 (the "samples"
  * test fails on a new pattern none of them meets; add one here).
  */
 const PATTERN_CANDIDATES = [
