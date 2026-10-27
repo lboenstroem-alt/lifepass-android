@@ -18,7 +18,7 @@ export const NEARBY_LIMIT = 6;
 export const POPULAR_LIMIT = 4;
 
 /** What the shelves read of a venue. */
-export type ShelfVenue = Pick<Venue, 'id' | 'latitude' | 'longitude' | 'awaitingConnection' | 'totalReviews'>;
+export type ShelfVenue = Pick<Venue, 'id' | 'latitude' | 'longitude' | 'awaitingConnection' | 'totalReviews' | 'totalRatings'>;
 
 /**
  * Every venue but the hero within 5 km of `origin`, nearest first, every
@@ -48,19 +48,22 @@ export function nearbyShelf<V extends ShelfVenue>(venues: readonly V[], heroId: 
 }
 
 /**
- * Every venue not featured or in Nearby, by review count (a global
- * popularity signal), most first. Ties (most venues have few or no reviews)
- * keep the browse order, so they rotate per visit and hold still while the
- * app is in use. Then every bookable venue before a "coming soon" one, at
- * most four.
+ * Every venue not featured or in Nearby, by rating count (a global
+ * popularity signal), most first. Every rating counts since API 0.46.0,
+ * quick visit ratings included: `totalRatings`, else `totalReviews` from an
+ * older server, the count the venue page shows beside the stars (iOS
+ * `ratingCount`, lifepass-ios d7d3245). Ties (most venues have few or no
+ * ratings) keep the browse order, so they rotate per visit and hold still
+ * while the app is in use. Then every bookable venue before a "coming soon"
+ * one, at most four.
  */
 export function popularShelf<V extends ShelfVenue>(venues: readonly V[], excludedIds: ReadonlySet<string>): V[] {
   const ranked = venues
     .map((venue, index) => ({ venue, index }))
     .filter(({ venue }) => !excludedIds.has(venue.id))
     .sort((a, b) => {
-      const ra = a.venue.totalReviews ?? 0;
-      const rb = b.venue.totalReviews ?? 0;
+      const ra = a.venue.totalRatings ?? a.venue.totalReviews ?? 0;
+      const rb = b.venue.totalRatings ?? b.venue.totalReviews ?? 0;
       return ra !== rb ? rb - ra : a.index - b.index;
     })
     .map(({ venue }) => venue);

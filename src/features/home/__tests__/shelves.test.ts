@@ -65,6 +65,17 @@ describe('popularShelf', () => {
     expect(popularShelf(v, excluded).map((x) => x.name)).toEqual(['B', 'D', 'C', 'A']);
   });
 
+  it('every rating counts (totalRatings, 0.46.0), else the reviews an older server counts', () => {
+    const v = [
+      // Many quick ratings, few with words: popular all the same.
+      testVenue(1, 'Quick', { reviews: 2, extra: { totalRatings: 60 } }),
+      testVenue(2, 'Written', { reviews: 40, extra: { totalRatings: 40 } }),
+      testVenue(3, 'Older server', { reviews: 50 }),
+      testVenue(4, 'None'),
+    ];
+    expect(popularShelf(v, new Set()).map((x) => x.name)).toEqual(['Quick', 'Older server', 'Written', 'None']);
+  });
+
   it('ties keep the browse order they were given, so a refresh never reorders them (the 2.5.2 check)', () => {
     const browse = [testVenue(5, 'E'), testVenue(3, 'C'), testVenue(1, 'A'), testVenue(4, 'D', { reviews: 0 })];
     expect(popularShelf(browse, new Set()).map((x) => x.name)).toEqual(['E', 'C', 'A', 'D']);
