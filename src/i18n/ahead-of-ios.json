@@ -123,6 +123,71 @@
      "account.rateApp.title": "Gefa LifePass einkunn"
     }
    }
+  },
+  {
+   "change": "How was your visit? (visitRating.*: the notification, the Home card, the sheet, the thank-you and the refusals), in the contract's words (API 0.46.0; the app version after 3.1.0)",
+   "dictionary": "base",
+   "ios": {},
+   "android": {
+    "en": {
+     "visitRating.notification.title": "How was your visit?",
+     "visitRating.notification.body": "Tap to rate it — {venueName}",
+     "visitRating.card.title": "How was your visit?",
+     "visitRating.card.line": "Tap the stars to rate it",
+     "visitRating.card.dismiss": "Not now",
+     "visitRating.sheet.title": "How was your visit?",
+     "visitRating.overall": "Overall",
+     "visitRating.equipment": "Equipment",
+     "visitRating.cleanliness": "Cleanliness",
+     "visitRating.optional": "Optional",
+     "visitRating.comment.label": "Comment (optional)",
+     "visitRating.comment.placeholder": "What stood out?",
+     "visitRating.publicNote": "Your rating is public. If you add a comment, it's shown with your first initial and the date of your visit.",
+     "visitRating.replaceNote": "Your stars replace the ones on your review. Its text stays as it is.",
+     "visitRating.counter": "{count}/500",
+     "visitRating.send": "Send",
+     "visitRating.dismiss": "Not now",
+     "visitRating.thanks.title": "Thanks for rating!",
+     "visitRating.thanks.line": "Your stars now count in the venue's rating.",
+     "visitRating.thanks.more": "Want to tell other members more?",
+     "visitRating.thanks.writeReview": "Write a public review",
+     "visitRating.close": "Done",
+     "visitRating.error.answered": "You've already rated this visit.",
+     "visitRating.error.expired": "The time to rate this visit has passed.",
+     "visitRating.error.dismissed": "This rating request is closed.",
+     "visitRating.error.visitGone": "We can't find this visit any more.",
+     "visitRating.error.network": "Couldn't send your rating. Try again."
+    },
+    "is": {
+     "visitRating.notification.title": "Hvernig var heimsóknin?",
+     "visitRating.notification.body": "Ýttu hér til að gefa einkunn — {venueName}",
+     "visitRating.card.title": "Hvernig var heimsóknin?",
+     "visitRating.card.line": "Gefðu einkunn með stjörnunum",
+     "visitRating.card.dismiss": "Ekki núna",
+     "visitRating.sheet.title": "Hvernig var heimsóknin?",
+     "visitRating.overall": "Heildareinkunn",
+     "visitRating.equipment": "Tækjabúnaður",
+     "visitRating.cleanliness": "Hreinlæti",
+     "visitRating.optional": "Valfrjálst",
+     "visitRating.comment.label": "Athugasemd (valfrjálst)",
+     "visitRating.comment.placeholder": "Hvað stóð upp úr?",
+     "visitRating.publicNote": "Einkunnin þín er opinber. Ef þú skrifar athugasemd birtist hún með upphafsstaf þínum og dagsetningu heimsóknarinnar.",
+     "visitRating.replaceNote": "Stjörnurnar koma í stað þeirra sem eru í umsögninni þinni. Textinn helst óbreyttur.",
+     "visitRating.counter": "{count}/500",
+     "visitRating.send": "Senda",
+     "visitRating.dismiss": "Ekki núna",
+     "visitRating.thanks.title": "Takk fyrir einkunnina!",
+     "visitRating.thanks.line": "Stjörnurnar þínar teljast nú með í einkunn staðarins.",
+     "visitRating.thanks.more": "Viltu segja öðrum meira?",
+     "visitRating.thanks.writeReview": "Skrifa umsögn sem allir sjá",
+     "visitRating.close": "Loka",
+     "visitRating.error.answered": "Þú hefur þegar gefið þessari heimsókn einkunn.",
+     "visitRating.error.expired": "Tíminn til að gefa þessari heimsókn einkunn er liðinn.",
+     "visitRating.error.dismissed": "Þessari beiðni um einkunn hefur verið lokað.",
+     "visitRating.error.visitGone": "Við finnum ekki þessa heimsókn lengur.",
+     "visitRating.error.network": "Ekki tókst að senda einkunnina. Reyndu aftur."
+    }
+   }
   }
  ]
 }

@@ -106,6 +106,13 @@ export function isPlanActionFresh(parked: ParkedPlanAction, now: number = Date.n
   return now - parked.parkedAt <= PLAN_ACTION_WINDOW_MS;
 }
 
+/**
+ * How long a tapped "How was your visit?" stays worth opening (the Plan
+ * action's window): a flow on screen when it was tapped (a booking, a
+ * payment, a check-in) holds it back, and the Home card covers it after.
+ */
+export const VISIT_RATING_TAP_WINDOW_MS = PLAN_ACTION_WINDOW_MS;
+
 // ---------------------------------------------------------------------------
 // State
 
@@ -144,6 +151,12 @@ export interface IntentState {
   readonly launchPresentationCancelled: boolean;
   /** The Scan tab is showing a live camera: the tab bar turns dark over it. */
   readonly scanCameraLive: boolean;
+  /**
+   * When a "How was your visit?" notification was tapped (`Date.now()`), or
+   * null: the visit rating's host opens the sheet for whatever ask is
+   * current, once nothing it must not cover is on screen.
+   */
+  readonly pendingVisitRatingTap: number | null;
 }
 
 export interface IntentActions {
@@ -192,6 +205,10 @@ export interface IntentActions {
   takeExploreLaunchPresentation(): boolean;
   /** The Scan tab's camera went live or stopped. */
   setScanCameraLive(live: boolean): void;
+  /** A "How was your visit?" notification was tapped (stamped now). */
+  parkVisitRatingTap(now?: number): void;
+  /** The visit rating's host takes the tap (cleared either way); true while it is still fresh. */
+  takeVisitRatingTap(now?: number): boolean;
   /** Everything a member parked is forgotten (sign-out). */
   resetForSignOut(): void;
 }
@@ -211,6 +228,7 @@ const initialState: IntentState = {
   exploreLaunchPresentation: false,
   launchPresentationCancelled: false,
   scanCameraLive: false,
+  pendingVisitRatingTap: null,
 };
 
 /** What every "the member went elsewhere first" writes (iOS clears the flag; see `launchPresentationCancelled`). */
@@ -331,6 +349,17 @@ export const useIntentStore = create<IntentStore>()((set, get) => ({
     if (get().scanCameraLive !== live) set({ scanCameraLive: live });
   },
 
+  parkVisitRatingTap(now = Date.now()) {
+    set({ pendingVisitRatingTap: now });
+  },
+
+  takeVisitRatingTap(now = Date.now()) {
+    const parkedAt = get().pendingVisitRatingTap;
+    if (parkedAt === null) return false;
+    set({ pendingVisitRatingTap: null });
+    return now - parkedAt <= VISIT_RATING_TAP_WINDOW_MS;
+  },
+
   resetForSignOut() {
     // `scanArrivedThisSession`, `scanLinkCount` and
     // `launchPresentationCancelled` stay: they describe this app session, not
@@ -345,6 +374,7 @@ export const useIntentStore = create<IntentStore>()((set, get) => ({
       pendingScanVenueId: null,
       exploreLaunchPresentation: false,
       scanCameraLive: false,
+      pendingVisitRatingTap: null,
     });
   },
 }));

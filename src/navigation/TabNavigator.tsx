@@ -32,8 +32,9 @@
  *
  * It remembers the tab on screen (the launch rule reads it), retires the Plan
  * tab's dot at the first visit, and draws the app-wide sheets over every tab:
- * the Kenni nudge, the meal chrome (toasts and the membership gate) and the
- * sheets packages open imperatively. Those hosts sit outside any screen
+ * the Kenni nudge, the meal chrome (toasts and the membership gate), the
+ * visit rating ("How was your visit?") and the sheets packages open
+ * imperatively. Those hosts sit outside any screen
  * (their `useNavigation()` is the root's `Main` route), so a page they open
  * goes through `openSharedRoute` (./sharedSheet.ts).
  *
@@ -58,6 +59,7 @@ import { KenniNudgeHost } from '../features/kenni';
 import MealGlobalChromeHost from '../features/meals/MealGlobalChromeHost';
 import { DescribeHost } from '../features/meals/describe';
 import { ChangeDaysHost } from '../features/plan/days';
+import { VisitRatingSheetHost } from '../features/visitRating';
 import { useAppStore } from '../stores/appStore';
 import { useIntentStore } from '../stores/intentStore';
 import CustomTabBar from './CustomTabBar';
@@ -223,6 +225,7 @@ function TabsLayout({
       <ClassSheetHost />
       <DescribeHost />
       <MealGlobalChromeHost />
+      <VisitRatingSheetHost />
     </>
   );
 }

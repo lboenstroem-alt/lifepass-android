@@ -5,6 +5,8 @@
 //   - the hero (a featured venue's photo, the avatar, the pass chip, the
 //     weather, the greeting and the upcoming card), or a 260 dp header while
 //     there are no venues;
+//   - "How was your visit?", while the server has an ask due (the visit
+//     rating's card, API 0.46.0; it draws nothing otherwise);
 //   - today's plan row (PLAN-2's slot);
 //   - "Want to try something new?", which needs no venue data and renders
 //     while the shelves load;
@@ -40,6 +42,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import HomeOutsideCard from '../attractions/HomeOutsideCard';
 import HomeTodayRow from '../plan/HomeTodayRow';
+import { VisitRatingCard } from '../visitRating';
 import { useWeather } from '../../hooks/useWeather';
 import { useT } from '../../i18n';
 import { track } from '../../lib/analytics';
@@ -273,6 +276,10 @@ export default function HomeScreen() {
             onDismissHint={() => hint.dismiss(useAppStore.getState().profile?.id)}
           />
         )}
+
+        {/* The visit rating's card, right under the hero: the ask is about a
+            visit an hour or more ago and lapses in three days. */}
+        <VisitRatingCard />
 
         {/* Today's plan, one row under the hero, with iOS's spacing around
             it (20 dp at the sides and above). The row draws no outer spacing

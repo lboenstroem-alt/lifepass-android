@@ -8,6 +8,12 @@
  * their behaviour, which is that the app simply opens. LifePass sends LOCAL
  * notifications only; there is no push.
  *
+ * "How was your visit?" (`visit.rating`, API 0.46.0) goes to Home and parks
+ * the tap for the visit rating's host, which asks the server for the ask
+ * that is current and opens its sheet (nothing when the server says none:
+ * the visit was voided, or the venue rated another way since). The ask's id
+ * rides in the payload but is not what opens: the server's answer is.
+ *
  * A tap is PARKED here, then performed by the tabs shell once it is on screen
  * (`consumeNotificationRoute`): a cold start delivers the tap before any
  * screen exists, and before launch knows who is signed in. A route that finds
@@ -29,7 +35,14 @@ import { useAppStore } from '../stores/appStore';
 import { useIntentStore, type PlanAction } from '../stores/intentStore';
 
 /** The routes a notification can carry (iOS `NotificationRouter.Route` raw values). */
-export const NOTIFICATION_ROUTES = ['plan', 'plan.checkin', 'runner', 'plan.feedback', 'plan.feedback_note'] as const;
+export const NOTIFICATION_ROUTES = [
+  'plan',
+  'plan.checkin',
+  'runner',
+  'plan.feedback',
+  'plan.feedback_note',
+  'visit.rating',
+] as const;
 
 export type NotificationRoute = (typeof NOTIFICATION_ROUTES)[number];
 
@@ -40,6 +53,7 @@ export const NOTIFICATION_ANALYTICS_KIND: Readonly<Record<NotificationRoute, str
   runner: 'resttimer',
   'plan.feedback': 'feedback_monthly',
   'plan.feedback_note': 'feedback_note',
+  'visit.rating': 'visit_rating',
 };
 
 /** A parked tap: the route, and the report a feedback notification named (an id, never a line of it). */
@@ -78,6 +92,9 @@ export function destinationFor(parked: ParkedNotificationRoute): NotificationDes
       return { tab: 'Plan', planAction: { kind: 'openFeedback', reportId: parked.reportId } };
     case 'plan.feedback_note':
       return { tab: 'Plan', planAction: { kind: 'openFeedbackNote' } };
+    case 'visit.rating':
+      // Home, where the ask's card lives; the sheet opens over it.
+      return { tab: 'Home', planAction: null };
   }
 }
 
@@ -134,7 +151,8 @@ function dropIfSignedOut(): void {
 
 /**
  * Performs the parked tap, once: Plan, plus Plan's action when the route has
- * one. Dropped (and cleared) while signed out. Returns what was performed.
+ * one (or Home and the visit rating's sheet). Dropped (and cleared) while
+ * signed out. Returns what was performed.
  */
 export function consumeNotificationRoute(isAuthenticated: boolean): NotificationDestination | null {
   const parked = useNotificationRouter.getState().pending;
@@ -144,6 +162,7 @@ export function consumeNotificationRoute(isAuthenticated: boolean): Notification
   const destination = destinationFor(parked);
   const intents = useIntentStore.getState();
   if (destination.planAction) intents.parkPlanAction(destination.planAction);
+  if (parked.route === 'visit.rating') intents.parkVisitRatingTap();
   intents.requestTab(destination.tab);
   return destination;
 }

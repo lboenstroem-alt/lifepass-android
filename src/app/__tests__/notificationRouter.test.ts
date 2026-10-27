@@ -65,7 +65,42 @@ describe('where each route goes', () => {
       ['runner', { tab: 'Plan', planAction: null }],
       ['plan.feedback', { tab: 'Plan', planAction: { kind: 'openFeedback', reportId: 'r-1' } }],
       ['plan.feedback_note', { tab: 'Plan', planAction: { kind: 'openFeedbackNote' } }],
+      ['visit.rating', { tab: 'Home', planAction: null }],
     ]);
+  });
+
+  it('"How was your visit?" goes to Home and parks the tap for the sheet, once', () => {
+    handleNotificationResponse(
+      notificationsState.tap(
+        request('visit-rating-6f1c2a4e-0000-4000-8000-000000000001', {
+          route: 'visit.rating',
+          promptId: '6f1c2a4e-0000-4000-8000-000000000001',
+          expiresAt: '2026-10-30T13:05:00.000Z',
+        }),
+      ) as never,
+    );
+    expect(opened).toEqual([{ kind: 'visit_rating' }]);
+    expect(consumeNotificationRoute(true)).toEqual({ tab: 'Home', planAction: null });
+    expect(useIntentStore.getState().pendingTab).toBe('Home');
+    expect(useIntentStore.getState().pendingPlanAction).toBeNull();
+    expect(useIntentStore.getState().takeVisitRatingTap()).toBe(true);
+    expect(useIntentStore.getState().takeVisitRatingTap()).toBe(false);
+    expect(consumeNotificationRoute(true)).toBeNull();
+  });
+
+  it('a visit rating tap while signed out parks nothing', () => {
+    handleNotificationResponse(notificationsState.tap(request('visit-rating-x', { route: 'visit.rating' })) as never);
+    expect(consumeNotificationRoute(false)).toBeNull();
+    expect(useIntentStore.getState().pendingVisitRatingTap).toBeNull();
+  });
+
+  it('a visit rating tap is stale after the Plan action window, and gone at sign-out', () => {
+    const intents = useIntentStore.getState();
+    intents.parkVisitRatingTap(1_000);
+    expect(intents.takeVisitRatingTap(1_000 + 5 * 60 * 1000 + 1)).toBe(false);
+    intents.parkVisitRatingTap(2_000);
+    intents.resetForSignOut();
+    expect(useIntentStore.getState().takeVisitRatingTap(2_000)).toBe(false);
   });
 
   it('a feedback notification with no report opens the current one', () => {

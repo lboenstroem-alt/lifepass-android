@@ -109,6 +109,7 @@ export const FEATURE_REGISTER_FILES: Readonly<Record<string, Load>> = {
   runner: () => require('../features/runner/register'),
   storeReview: () => require('../features/storeReview/register'),
   venue: () => require('../features/venue/register'),
+  visitRating: () => require('../features/visitRating/register'),
 };
 
 /** The shared layers loaded here, for the test that every register file outside src/features is listed. */
