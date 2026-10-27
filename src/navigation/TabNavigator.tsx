@@ -33,7 +33,9 @@
  * It remembers the tab on screen (the launch rule reads it), retires the Plan
  * tab's dot at the first visit, and draws the app-wide sheets over every tab:
  * the Kenni nudge, the meal chrome (toasts and the membership gate) and the
- * sheets packages open imperatively. Those hosts sit outside any screen
+ * sheets packages open imperatively (among them the deletion sheet a
+ * refusal's "Cancel deletion" opens over the refusing screen, as iOS
+ * `RefusalStepPresenter` does). Those hosts sit outside any screen
  * (their `useNavigation()` is the root's `Main` route), so a page they open
  * goes through `openSharedRoute` (./sharedSheet.ts).
  *
@@ -52,6 +54,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { consumeNotificationRoute, destinationFor, useNotificationRouter } from '../app/notificationRouter';
+import { AccountDeletionHost } from '../features/account/deletion/ui';
 import { BodySheetsHost } from '../features/body/sheets';
 import { ClassSheetHost } from '../features/classes/sheet';
 import { KenniNudgeHost } from '../features/kenni';
@@ -218,6 +221,7 @@ function TabsLayout({
     <>
       {children}
       <KenniNudgeHost />
+      <AccountDeletionHost />
       <BodySheetsHost />
       <ChangeDaysHost />
       <ClassSheetHost />

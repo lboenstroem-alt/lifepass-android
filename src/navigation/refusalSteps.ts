@@ -9,7 +9,7 @@
  *
  *   See plans                    the Plans modal (closing it re-checks)
  *   Manage / Resume membership   Account
- *   Cancel deletion              the deletion sheet (ACCT-4; closing it re-checks), Account until it lands
+ *   Cancel deletion              the deletion sheet (closing it re-checks), Account if it cannot open
  *   Verify identity              the Kenni sheet, in the app
  *   My bookings, Refresh         Profile on Bookings
  *   Book a time                  the venue's page, when the screen knows its slug
@@ -120,10 +120,10 @@ export interface RefusalStepDeps {
 
 /**
  * What a step did: `local` (the screen took it), the destination opened
- * (`deletion` is Account standing in for the deletion sheet), `deletionSheet`
- * (ACCT-4's sheet opened over the screen), `link`, or `none` (nothing can
- * take it; a screen that only offers what `presentsRefusalStep` allows never
- * gets here).
+ * (`deletion` is Account standing in for a deletion sheet that could not
+ * open), `deletionSheet` (the sheet opened over the screen), `link`, or
+ * `none` (nothing can take it; a screen that only offers what
+ * `presentsRefusalStep` allows never gets here).
  */
 export type RefusalStepOutcome = RefusalDestination['kind'] | 'deletionSheet' | 'local' | 'link' | 'none';
 
@@ -175,8 +175,9 @@ export function takeRefusalStep(
       openSharedRoute(navigation, 'Account');
       break;
     case 'deletion':
-      // The deletion sheet when ACCT-4 has it (closing it re-checks, as the
-      // Kenni sheet does); Account (where deletion lives) until then.
+      // The deletion sheet, from the host the tabs shell mounts (closing it
+      // re-checks, as the Kenni sheet does). Account, where the same sheet
+      // lives behind its row, when it cannot open: no host, or one already up.
       if ((deps.openDeletion ?? openAccountDeletion)({ onClose: () => options.onClosed?.() })) {
         return 'deletionSheet';
       }
