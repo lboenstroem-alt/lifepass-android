@@ -65,6 +65,22 @@ export function wireId(id: string): string {
 }
 
 /**
+ * A class's room ("Salur 3", API 0.44.0) as every payload carries it: on the
+ * venue timetable, the Classes feed, My bookings, a booking's answer and the
+ * Coach's plan classes. The server decides it by one rule and sends it ready
+ * to show, so it is kept EXACTLY as sent (never trimmed, re-cased or
+ * translated: it is the sign on the door).
+ *
+ * Read fail-soft, as a garnish: an absent key (a shared-cached feed page or a
+ * Coach answer from before 0.44.0), `null`, a blank string or a value of the
+ * wrong type are all "no room", which shows nothing at all. A malformed room
+ * never costs the member the timetable or the booking it rides on.
+ */
+export function readRoom(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+/**
  * A request body as JSON. Dates go out as `toWireDate`; `undefined` members
  * are left out (as Swift's `encodeIfPresent` does), `null` stays `null`.
  */

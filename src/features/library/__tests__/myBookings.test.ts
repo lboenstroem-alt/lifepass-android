@@ -30,6 +30,7 @@ const booking: MemberBooking = {
   activity: null,
   externalTitle: 'Yoga Flow',
   location: null,
+  room: null,
 };
 
 const emptyPage: StubReply = Reply.ok({ data: [], pagination: { nextCursor: null, hasMore: false, limit: 100 } });

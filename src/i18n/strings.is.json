@@ -547,6 +547,7 @@
  "booking.reminder.title": "Tíminn þinn er að hefjast",
  "booking.reminder10.body": "{class} er alveg að byrja. Skannaðu QR-kóðann á staðnum og veldu 'Skrá mætingu' — mætingarskráning er ókeypis.",
  "booking.reminder10.title": "Tíminn byrjar eftir 10 mínútur",
+ "booking.room.label": "Salur",
  "booking.select_class": "Veldu tíma",
  "booking.select_date": "Veldu dagsetningu",
  "booking.select_time": "Veldu tíma",

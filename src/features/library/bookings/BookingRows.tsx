@@ -3,6 +3,11 @@
  * My bookings' rows: the ports of iOS `UnifiedBookingCard` (Upcoming) and
  * `UnifiedBookingRow` (Past) in Views/Profile/LibraryView.swift.
  *
+ * THE ROOM. A class booking with a room shows it after the venue name, "World
+ * Class Laugar & Pool · Salur 4" (API 0.44.0), on both rows. It is this read's
+ * value (`GET /bookings` follows a class the club moves), never one kept from
+ * the confirmation.
+ *
  * NEVER A PHOTO. The bookings API carries no venue image, so a booking shows
  * a calendar tile (Upcoming) or a clock tile (Past), never a stock picture
  * standing in for the venue (the first Android build drew random photos).
@@ -19,6 +24,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { LPText } from '../../../components/ui';
+import { venueWithRoom } from '../../../copy/classRoom';
 import { useT } from '../../../i18n';
 import { bookingActivityName, type MemberBooking } from '../../../api/bookingsList';
 import { colors, hairline } from '../../../theme';
@@ -66,8 +72,15 @@ export function UpcomingBookingCard({ booking, onCancel, cancelInFlight = false,
       </View>
 
       <View style={styles.info} accessible>
-        <LPText size={14} weight="semibold" color={colors.paper} numberOfLines={1}>
-          {booking.venue.name}
+        {/* A second line for the room, so a long venue name never cuts it off. */}
+        <LPText
+          size={14}
+          weight="semibold"
+          color={colors.paper}
+          numberOfLines={booking.room ? 2 : 1}
+          testID={`library.booking.${booking.id}.venue`}
+        >
+          {venueWithRoom(booking.venue.name, booking.room)}
         </LPText>
         <LPText size={12} color={colors.paper3} numberOfLines={1}>
           {bookingActivityName(booking) ?? t('library.booking')}
@@ -119,8 +132,14 @@ export function PastBookingRow({ booking, now }: PastBookingRowProps) {
         <Ionicons name="time-outline" size={14} color={colors.paper3} />
       </View>
       <View style={styles.pastInfo} accessible>
-        <LPText size={13.5} weight="medium" color={colors.paper2} numberOfLines={1}>
-          {booking.venue.name}
+        <LPText
+          size={13.5}
+          weight="medium"
+          color={colors.paper2}
+          numberOfLines={booking.room ? 2 : 1}
+          testID={`library.past_venue.${booking.id}`}
+        >
+          {venueWithRoom(booking.venue.name, booking.room)}
         </LPText>
         <LPText size={11} color={colors.paper3} numberOfLines={1}>
           {detail}

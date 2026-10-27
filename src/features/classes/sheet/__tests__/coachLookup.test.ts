@@ -59,7 +59,7 @@ function feedItem(
 const ablerHandle = (eventId: number) => ({ kind: 'class', activityId: ACTIVITY_ID, eventId });
 
 function coachClass(title: string | null, booking: CoachPlanClass['booking'] = null, endsAt: Date | null = plus(START, 3600)): CoachPlanClass {
-  return { id: 'plan-class-1', title, startsAt: START, endsAt, venueSlug: 'hress', venueName: 'Hress', booking };
+  return { id: 'plan-class-1', title, startsAt: START, endsAt, venueSlug: 'hress', venueName: 'Hress', room: null, booking };
 }
 
 function page(classes: ClassFeedItem[], nextCursor: string | null = null): ClassFeedPage {

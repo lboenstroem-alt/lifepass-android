@@ -21,6 +21,7 @@ import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { LPText, normaliseImageUrl } from '../../../components/ui';
 import { hiddenFromAccessibility } from '../../../components/ui/a11y';
+import { venueWithRoom } from '../../../copy/classRoom';
 import { useT } from '../../../i18n';
 import { colors } from '../../../theme';
 import { AttractionRing, kindRegionLine, PLATE_PAPER } from '../../attractions';
@@ -161,9 +162,11 @@ export function PlanVenueCard({
 // MARK: - Class
 
 /**
- * A class step: when (Reykjavík time), what, where, how far, and Book. The
- * feed lookup can take a moment when the plan carried no booking handle;
- * the button shows a spinner and ignores a second tap meanwhile.
+ * A class step: when (Reykjavík time), what, where (the venue, with the
+ * class's room after it when the plan names one: "Hress · Salur 3", API
+ * 0.44.0), how far, and Book. The feed lookup can take a moment when the plan
+ * carried no booking handle; the button shows a spinner and ignores a second
+ * tap meanwhile.
  */
 export function PlanClassCard({
   session,
@@ -215,8 +218,15 @@ export function PlanClassCard({
       </LPText>
       <View style={styles.iconRow}>
         <Ionicons name="location-sharp" size={11} color={coachPalette.textMeta} {...hiddenFromAccessibility} />
-        <LPText size={12} color={coachPalette.textMeta} numberOfLines={1} style={styles.flexShrink}>
-          {session.venueName}
+        <LPText
+          size={12}
+          color={coachPalette.textMeta}
+          // A second line for the room, so a long venue name never cuts it off.
+          numberOfLines={session.room ? 2 : 1}
+          style={styles.flexShrink}
+          testID={`coach.plan.class.${session.id}.venue`}
+        >
+          {venueWithRoom(session.venueName, session.room)}
         </LPText>
       </View>
       {distance ? <DistanceLine text={distance} basis={basis} testID={`coach.plan.class.${session.id}.distance`} /> : null}

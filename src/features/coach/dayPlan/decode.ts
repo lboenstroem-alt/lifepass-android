@@ -23,7 +23,7 @@
  * seconds (`parseIsoDate`).
  */
 import { decodeCoachFreeMessages, type CoachFreeMessages } from '../../../api';
-import { parseIsoDate } from '../../../api/wire';
+import { parseIsoDate, readRoom } from '../../../api/wire';
 import {
   parseAttractionDrive,
   parseRoadAccess,
@@ -223,6 +223,8 @@ export function decodePlanClass(raw: unknown): CoachPlanClass {
     endsAt,
     venueSlug: requiredString(raw, 'venueSlug'),
     venueName: requiredString(raw, 'venueName'),
+    // Optional, fail-soft: a cached answer from before 0.44.0 has no key.
+    room: readRoom(raw.room),
     booking: decodeClassBooking(raw.booking),
   };
 }

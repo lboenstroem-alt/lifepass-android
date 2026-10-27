@@ -46,7 +46,13 @@ export const FULL_SNAPSHOT: ClassOccurrenceSnapshot = {
 
 /** An Abler class as a feed row hands it to the sheet. */
 export function ablerOccurrence(
-  options: { eventId?: number; startsAt?: Date; snapshot?: ClassOccurrenceSnapshot | null; surchargeFromIsk?: number | null } = {},
+  options: {
+    eventId?: number;
+    startsAt?: Date;
+    snapshot?: ClassOccurrenceSnapshot | null;
+    surchargeFromIsk?: number | null;
+    room?: string | null;
+  } = {},
 ): ClassOccurrence {
   const startsAt = options.startsAt ?? START;
   const eventId = options.eventId ?? 4242;
@@ -61,6 +67,7 @@ export function ablerOccurrence(
     className: 'Yoga Flow',
     venueName: 'Hress',
     instructor: null,
+    room: options.room ?? null,
     surchargeFromIsk: options.surchargeFromIsk ?? null,
     snapshot: options.snapshot === undefined ? OPEN_SNAPSHOT : options.snapshot,
   };
@@ -79,6 +86,7 @@ export function slotOccurrence(endsAt: Date | null, snapshot: ClassOccurrenceSna
     className: 'Spin',
     venueName: 'LifePass Studio',
     instructor: null,
+    room: null,
     surchargeFromIsk: 1_990,
     snapshot,
   };
@@ -87,9 +95,11 @@ export function slotOccurrence(endsAt: Date | null, snapshot: ClassOccurrenceSna
 export function klass(
   eventId: number,
   at: Date,
-  options: { canBook?: boolean; reason?: string | null; full?: boolean; opensAt?: Date | null } = {},
+  options: { canBook?: boolean; reason?: string | null; full?: boolean; opensAt?: Date | null; room?: string | null } = {},
 ): Record<string, unknown> {
   return {
+    // The class room (API 0.44.0): only when the test names one.
+    ...(options.room !== undefined ? { room: options.room } : {}),
     eventId,
     name: `Class ${eventId}`,
     description: null,

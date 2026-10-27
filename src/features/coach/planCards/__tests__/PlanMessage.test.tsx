@@ -334,3 +334,27 @@ it('a message without a plan payload draws as a plain bubble', async () => {
   expect(screen.getByText('Saved intro.')).toBeOnTheScreen();
   expect(screen.queryByTestId('coach.plan.9')).toBeNull();
 });
+
+describe('the class card’s room (API 0.44.0)', () => {
+  const withRoom = (room: unknown) => ({
+    ...WIRE_PLAN,
+    steps: WIRE_PLAN.steps.map((step) =>
+      step.kind === 'class' ? { ...step, class: { ...(step.class as object), ...(room === undefined ? {} : { room }) } } : step,
+    ),
+  });
+
+  it('follows the venue name: "Hress · Salur 3", on a second line if it needs one', async () => {
+    await draw(planMessage(withRoom('Salur 3')));
+    const venue = screen.getByTestId('coach.plan.class.cls_1.venue');
+    expect(venue).toHaveTextContent('Hress · Salur 3', { exact: true });
+    expect(venue).toHaveProp('numberOfLines', 2);
+  });
+
+  it('is left out when the plan names none, or was cached before 0.44.0', async () => {
+    await draw(planMessage(withRoom(null)));
+    expect(screen.getByTestId('coach.plan.class.cls_1.venue')).toHaveTextContent('Hress', { exact: true });
+    screen.unmount();
+    await draw(planMessage(withRoom(undefined)));
+    expect(screen.getByTestId('coach.plan.class.cls_1.venue')).toHaveTextContent('Hress', { exact: true });
+  });
+});

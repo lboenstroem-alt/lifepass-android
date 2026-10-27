@@ -82,6 +82,7 @@ function occurrence(overrides: Partial<ClassOccurrence> = {}): ClassOccurrence {
     className: 'Yoga Flow',
     venueName: 'Hress',
     instructor: null,
+    room: null,
     surchargeFromIsk: null,
     snapshot: null,
     ...overrides,
@@ -323,7 +324,7 @@ describe('the session the booking core books', () => {
       attendanceLimit: 12,
       registrationOpensAt: null,
     };
-    const abler = toBookingOccurrence(occurrence({ instructor: 'Sigrún', snapshot }));
+    const abler = toBookingOccurrence(occurrence({ instructor: 'Sigrún', room: 'Salur 3', snapshot }));
     expect(abler).toEqual({
       activity: { id: '0b7d4a62-3c9e-4f1a-a2d5-6e8f9c1b2a34', name: 'Hress', provider: 'abler' },
       handle: { kind: 'ablerClass', eventId: 4242 },
@@ -331,6 +332,8 @@ describe('the session the booking core books', () => {
       endsAt: new Date(START.getTime() + 3_600_000),
       className: 'Yoga Flow',
       instructor: 'Sigrún',
+      // The row's room rides along, seeding the class until the re-check answers.
+      room: 'Salur 3',
       snapshot,
     });
     const slotOccurrence = toBookingOccurrence(

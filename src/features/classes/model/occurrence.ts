@@ -58,6 +58,12 @@ export interface ClassOccurrence {
   readonly className: string | null;
   readonly venueName: string;
   readonly instructor: string | null;
+  /**
+   * The room the row showed ("Salur 3", API 0.44.0), or null. The sheet shows
+   * the day's timetable's room once its re-check answers (computed live), this
+   * one until then.
+   */
+  readonly room: string | null;
   readonly surchargeFromIsk: number | null;
   readonly snapshot: ClassOccurrenceSnapshot | null;
 }
@@ -129,6 +135,7 @@ export function toOccurrence(item: ClassFeedItem): ClassOccurrence | null {
     className: item.name,
     venueName: item.venue.name,
     instructor: item.instructor,
+    room: item.room,
     surchargeFromIsk: item.surchargeFromIsk,
     snapshot: {
       canBook: item.canBook,

@@ -2,6 +2,7 @@
 // keys (ClassesDiscoveryView `quickDateLabel`, `timeLine`, `venueLine`,
 // `stateChip`, `daySection`). Pure, so a test reads what a member reads.
 import type { ClassFeedItem } from '../../../api/classFeed';
+import { venueWithRoom } from '../../../copy/classRoom';
 import { formatDistance, iskPrefix, translate, type Lang } from '../../../i18n';
 import { formatDatePattern, venueTime } from '../../../i18n/format';
 import { startOfIsoDay } from '../feed/days';
@@ -36,6 +37,14 @@ export function timeLine(item: ClassFeedItem): string {
   return line;
 }
 
+/**
+ * The venue, with the class's room after it when it has one: "World Class
+ * Laugar & Pool · Salur 4" (API 0.44.0). Never the raw `locationText`.
+ */
+export function venueLine(item: Pick<ClassFeedItem, 'venue' | 'room'>): string {
+  return venueWithRoom(item.venue.name, item.room);
+}
+
 /** "350 m", "2.4 km" / "2,4 km", "12 km": only ever from the member's real position. */
 export function distanceText(distanceKm: number | null, lang: Lang): string | null {
   return distanceKm === null ? null : formatDistance(distanceKm, lang);
@@ -59,15 +68,15 @@ export function radiusLabel(km: number): string {
 
 /**
  * What TalkBack reads for a card, one element as VoiceOver reads the iOS
- * button: the name, the time, the venue, how far ("2.4 km away"), any
- * surcharge, and the registration state.
+ * button: the name, the time, the venue (and its room), how far ("2.4 km
+ * away"), any surcharge, and the registration state.
  */
 export function cardAccessibilityLabel(item: ClassFeedItem, distanceKm: number | null, now: Date, lang: Lang): string {
   const distance = distanceText(distanceKm, lang);
   return [
     item.name ?? translate('classes.unnamed', lang),
     timeLine(item),
-    item.venue.name,
+    venueLine(item),
     distance ? translate('classes.distance_a11y', lang, { distance }) : null,
     surchargeText(item, lang),
     chipText(item, now, lang),

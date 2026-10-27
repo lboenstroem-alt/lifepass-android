@@ -45,6 +45,7 @@ export function toBookingOccurrence(occurrence: ClassOccurrence): BookingOccurre
     endsAt: occurrence.endsAt,
     className: occurrence.className,
     instructor: occurrence.instructor,
+    room: occurrence.room,
     snapshot: occurrence.snapshot,
   };
 }
@@ -78,6 +79,17 @@ export function instructorLine(occurrence: Pick<ClassOccurrence, 'instructor'>, 
     s.selectedSlot?.instructor ?? null,
   ];
   return candidates.find((candidate): candidate is string => !!candidate) ?? null;
+}
+
+/**
+ * The class's room ("Salur 4", API 0.44.0): the re-checked class's once the
+ * day's timetable has answered (the server computes it live on every read, so
+ * it follows a class the club moved), else the row's. Null for a slot and a
+ * class with none: the sheet then shows no room row at all.
+ */
+export function sheetRoom(occurrence: Pick<ClassOccurrence, 'room'>, s: Selection): string | null {
+  if (s.selectedClass) return s.selectedClass.room;
+  return occurrence.room;
 }
 
 /** "{count} spots left", from the re-checked session, once it is known to be open. */

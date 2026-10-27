@@ -713,6 +713,7 @@ describe('the cards’ actions', () => {
       endsAt: null,
       venueSlug: 'hress',
       venueName: 'Hress',
+      room: null,
       booking: null,
     };
     await bookPlanClass(session);

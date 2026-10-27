@@ -1,5 +1,8 @@
 // Step 1: the timetable (iOS BookingFlowView.timetableStep). Slots in a
 // three-column grid, or Abler classes in a list, read on the venue's clock.
+// A class shows its room ("Salur 4", API 0.44.0) on a line of its own, alone:
+// this is the venue's own timetable, so the row carries no venue name to put
+// it after (src/copy/classRoom.ts).
 // Not-bookable rows say why honestly ("Registration opens Thu 25 Sep,
 // 14:00" in grey, "Full" in red) and can't be picked. Back and Next; Next is
 // the readable grey until something is chosen. A Bókun activity shows the
@@ -150,6 +153,7 @@ function ClassList({ classes, selectedEventId, onSelectClass, activityName }: Ti
         const name = klass.name ?? activityName;
         const when = VenueTimeFormat.weekdayTime(klass.start, language);
         const coaches = coachNames(klass);
+        const room = klass.room;
         const spots =
           klass.attendance.limit > 0
             ? t('booking.spots_left', { count: `${Math.max(klass.attendance.limit - klass.attendance.current, 0)}` })
@@ -164,7 +168,7 @@ function ClassList({ classes, selectedEventId, onSelectClass, activityName }: Ti
             onPress={() => onSelectClass(klass)}
             disabled={!bookable}
             accessibilityRole="button"
-            accessibilityLabel={[name, when, coaches, spots, notBookable].filter(Boolean).join(', ')}
+            accessibilityLabel={[name, when, coaches, room, spots, notBookable].filter(Boolean).join(', ')}
             accessibilityState={{ selected, disabled: !bookable }}
             style={[styles.row, selected && styles.tileSelected, !bookable && styles.half]}
             testID={`booking.class.${klass.eventId}`}
@@ -180,6 +184,11 @@ function ClassList({ classes, selectedEventId, onSelectClass, activityName }: Ti
             {coaches ? (
               <LPText size={11} color={colors.mutedTextStrong}>
                 {coaches}
+              </LPText>
+            ) : null}
+            {room ? (
+              <LPText size={11} color={colors.mutedTextStrong} testID={`booking.class.${klass.eventId}.room`}>
+                {room}
               </LPText>
             ) : null}
             {spots || notBookable ? (

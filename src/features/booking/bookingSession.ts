@@ -166,6 +166,12 @@ export interface BookingOccurrence {
   readonly endsAt: Date | null;
   readonly className: string | null;
   readonly instructor: string | null;
+  /**
+   * The row's room ("Salur 3", API 0.44.0), seeded onto the class until the
+   * day's timetable answers with the live one; null for none (always for a
+   * slot).
+   */
+  readonly room: string | null;
   readonly snapshot: OccurrenceSnapshot | null;
 }
 
@@ -1059,6 +1065,7 @@ export function createBookingSession(options: CreateBookingSessionOptions = {}):
           canBook: snapshot?.canBook ?? null,
           canBookReason: snapshot?.canBookReason ?? null,
           registrationOpensAt: snapshot?.registrationOpensAt ?? null,
+          room: occurrence.room,
         };
         set((state) => classPatch(state, seeded));
         return;

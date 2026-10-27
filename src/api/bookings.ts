@@ -31,10 +31,11 @@
  * Decoding is as strict as iOS's Decodable where the money and the time are
  * (a malformed slot, class or preview fails the read, shown as an error,
  * never as a wrong time or "free"), and lenient only for garnish iOS also
- * treats as optional (a class's coaches and location, a slot's extras).
+ * treats as optional (a class's coaches and location, a slot's extras, the
+ * class's room).
  */
 import { API_TIMEOUTS, apiGet, apiPost } from './client';
-import { parseIsoDate, toWireDate, wireId } from './wire';
+import { parseIsoDate, readRoom, toWireDate, wireId } from './wire';
 
 // ---------------------------------------------------------------------------
 // Models
@@ -108,6 +109,12 @@ export interface ActivityClass {
   readonly canBookReason: string | null;
   /** When registration opens, if the provider says: "Registration opens {time}". */
   readonly registrationOpensAt: Date | null;
+  /**
+   * The room the class is in ("Salur 4"), computed live by the server on every
+   * read (API 0.44.0), or null: shown alone on the venue's timetable and as the
+   * "Room" row of the confirm card (src/copy/classRoom.ts).
+   */
+  readonly room: string | null;
 }
 
 /** The server's `canBook` when present; else derived (iOS `isBookable`). */
@@ -239,6 +246,13 @@ export interface CreateBookingResult {
   readonly remainingMonthly: number | null;
   readonly isLastBeforeTopUp: boolean | null;
   readonly topUpApplied: boolean | null;
+  /**
+   * The booked class's room ("Salur 4", API 0.44.0), or null (every slot
+   * booking, and a class with none). Decoded for completeness: My bookings
+   * shows the room from the latest `GET /bookings`, which follows a class the
+   * club moves, never this snapshot.
+   */
+  readonly room: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -417,6 +431,8 @@ export function decodeActivityClass(raw: unknown, path = 'class'): ActivityClass
     canBook: optional(json.canBook, (v) => bool(v, `${path}.canBook`)),
     canBookReason: optional(json.canBookReason, (v) => string(v, `${path}.canBookReason`)),
     registrationOpensAt: optional(json.registrationOpensAt, (v) => date(v, `${path}.registrationOpensAt`)),
+    // Garnish, read fail-soft (src/api/wire.ts `readRoom`).
+    room: readRoom(json.room),
   };
 }
 
@@ -484,5 +500,6 @@ export function decodeCreateBookingResult(raw: unknown): CreateBookingResult {
     remainingMonthly: optional(json.remainingMonthly, (v) => int(v, 'booking.remainingMonthly')),
     isLastBeforeTopUp: optional(json.isLastBeforeTopUp, (v) => bool(v, 'booking.isLastBeforeTopUp')),
     topUpApplied: optional(json.topUpApplied, (v) => bool(v, 'booking.topUpApplied')),
+    room: readRoom(json.room),
   };
 }

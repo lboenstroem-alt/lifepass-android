@@ -75,6 +75,7 @@ export function classSheetFixtureOccurrence(variant: ClassSheetFixtureVariant, n
     className: 'Yoga Flow',
     venueName: 'Hress',
     instructor: 'Sigrún Jónsdóttir',
+    room: 'Salur 3',
     surchargeFromIsk: variant === 'surcharge' ? 1_990 : null,
     snapshot: {
       canBook: true,
@@ -121,6 +122,7 @@ export function seedClassSheetFixture(store: BookingSessionStore, occurrence: Cl
     canBook: !full,
     canBookReason: full ? 'class_full' : null,
     registrationOpensAt: null,
+    room: occurrence.room,
   };
   const free: BookingPreview = {
     kind: 'free',

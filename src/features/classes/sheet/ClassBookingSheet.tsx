@@ -43,6 +43,7 @@ import { AccessibilityInfo, ActivityIndicator, AppState, findNodeHandle, Pressab
 
 import type { RefusalCta } from '../../../api/refusals';
 import { announce, LPText, PrimaryButton, Sheet } from '../../../components/ui';
+import { roomRowText } from '../../../copy/classRoom';
 import { hiddenFromAccessibility } from '../../../components/ui/a11y';
 import { useA11ySize } from '../../../hooks/useA11ySize';
 import { useT, type Lang } from '../../../i18n';
@@ -77,6 +78,7 @@ import {
   otherTimesTarget,
   sheetClassName,
   sheetPriceLine,
+  sheetRoom,
   showsConfirm,
   showsOtherTimes,
   spotsLine,
@@ -376,6 +378,10 @@ export default function ClassBookingSheet({
   const when = whenLine(start, end, language);
   const instructor = instructorLine(occurrence, selection);
   const spots = spotsLine(status, selection, language);
+  // "Room: Salur 4" / "Salur: 4": the day's timetable's room once the
+  // re-check has answered (it is computed live), the row's until then.
+  const room = sheetRoom(occurrence, selection);
+  const roomText = room ? roomRowText(room, language) : null;
 
   // Opened out for the rung picker, and kept there.
   const needsFullHeight = ClassSheetHeight.expands(status === 'ready', gateRefusal !== null, offersRung);
@@ -454,7 +460,7 @@ export default function ClassBookingSheet({
             accessibilityRole="header"
             accessibilityLabel={headerAccessibilityLabel(
               { name, venue: occurrence.venueName, when },
-              [instructor, spots],
+              [roomText, instructor, spots],
               language,
             )}
             testID="classsheet.header"
@@ -464,6 +470,7 @@ export default function ClassBookingSheet({
             </LPText>
             <MetaRow icon="location-outline" text={occurrence.venueName} />
             <MetaRow icon="calendar-outline" text={when} />
+            {roomText ? <MetaRow icon="enter-outline" text={roomText} testID="classsheet.room" /> : null}
             {instructor ? <MetaRow icon="person-outline" text={instructor} /> : null}
             {spots ? <MetaRow icon="people-outline" text={spots} testID="classsheet.spots" /> : null}
           </View>

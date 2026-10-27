@@ -1,6 +1,8 @@
 // One class on the feed (iOS ClassesDiscoveryView `classRow` / `classCard`):
 // the name (or "Class"), "06:00–07:00 · instructor" in Reykjavík time, the
-// venue with its distance and any surcharge, and the registration chip.
+// venue (with the class's room after it, "World Class Laugar & Pool · Salur
+// 4", when the class has one: API 0.44.0) with its distance and any
+// surcharge, and the registration chip.
 //
 // A row opens the class sheet for its own session. A booking kind this build
 // does not know stays a plain card that cannot be pressed.
@@ -22,7 +24,7 @@ import type { FeedEntry } from '../feed/clientFilters';
 import { chipCopy, classFeedChip, type ChipTone } from '../model/chip';
 import { toOccurrence, type ClassOccurrence } from '../model/occurrence';
 import { tint } from './color';
-import { cardAccessibilityLabel, distanceText, surchargeText, timeLine } from './labels';
+import { cardAccessibilityLabel, distanceText, surchargeText, timeLine, venueLine } from './labels';
 
 export interface ClassCardProps {
   readonly entry: FeedEntry;
@@ -58,8 +60,8 @@ function ClassCard({ entry, now, onOpen }: ClassCardProps) {
         <View style={styles.venueLine}>
           <View style={styles.venue}>
             <Ionicons name="location-outline" size={9} color={colors.paper3} style={styles.pin} />
-            <LPText size={11} color={colors.paper3} numberOfLines={2} style={styles.venueName}>
-              {item.venue.name}
+            <LPText size={11} color={colors.paper3} numberOfLines={2} style={styles.venueName} testID="classes.row.venue">
+              {venueLine(item)}
             </LPText>
           </View>
           {distance !== null || surcharge !== null ? (

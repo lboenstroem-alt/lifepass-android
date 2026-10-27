@@ -167,8 +167,18 @@ describe('the class card', () => {
       endsAt: new Date('2026-10-22T19:00:00Z'),
       venueSlug: 'hress',
       venueName: 'Hress',
+      room: null,
       booking: { kind: 'class', activityId: ACTIVITY, eventId: 4242 },
     });
+  });
+
+  it('reads the class room exactly as sent; absent (a cached answer from before 0.44.0), null or blank is none', () => {
+    expect(decodePlanClass({ ...classStep('main').class, room: 'Salur 3' }).room).toBe('Salur 3');
+    expect(decodePlanClass({ ...classStep('main').class, room: 'Salur 1 - 1. hæð' }).room).toBe('Salur 1 - 1. hæð');
+    expect(decodePlanClass({ ...classStep('main').class, room: null }).room).toBeNull();
+    expect(decodePlanClass({ ...classStep('main').class, room: '  ' }).room).toBeNull();
+    // A malformed room never costs the class: it is just no room.
+    expect(decodePlanClass({ ...classStep('main').class, room: 3 }).room).toBeNull();
   });
 
   it('a numeric id is read as text; no id, no start or no venue drops the class', () => {

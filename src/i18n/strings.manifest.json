@@ -5,7 +5,8 @@
  ],
  "aheadOfIos": [
   "Booking confirm card (IS): the service row says Þjónusta, not Tími, the Time row's word (lifepass-ios: the feat/booking-layout-update-prompt follow-up)",
-  "Venue hours kicker: Usual hours / Almennur opnunartími, not This week / Þessa viku, key venue.hours_this_week to venue.hours_usual (lifepass-ios feat/venue-usual-hours-is-description bb92f16)"
+  "Venue hours kicker: Usual hours / Almennur opnunartími, not This week / Þessa viku, key venue.hours_this_week to venue.hours_usual (lifepass-ios feat/venue-usual-hours-is-description bb92f16)",
+  "Class room row: Room / Salur, key booking.room.label (API 0.44.0; lifepass-ios feat/member-feedback, the app version after 3.1.0)"
  ],
  "dictionaries": [
   {
@@ -284,6 +285,7 @@
     "booking.reminder.title",
     "booking.reminder10.body",
     "booking.reminder10.title",
+    "booking.room.label",
     "booking.select_class",
     "booking.select_date",
     "booking.select_time",
@@ -2420,7 +2422,7 @@
   }
  ],
  "counts": {
-  "en": 2360,
-  "is": 2360
+  "en": 2361,
+  "is": 2361
  }
 }

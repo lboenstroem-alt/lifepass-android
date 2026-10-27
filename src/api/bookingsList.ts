@@ -25,7 +25,7 @@
  * never half a list). Ids are kept in lower case, as every Android id is.
  */
 import { apiGet, apiPost, type RequestOptions } from './client';
-import { parseIsoDate, wireId } from './wire';
+import { parseIsoDate, readRoom, wireId } from './wire';
 
 /** Which half of the feed (`GET /bookings?range=`). */
 export type BookingRange = 'upcoming' | 'past' | 'all';
@@ -47,8 +47,18 @@ export interface MemberBooking {
   readonly activity: { readonly id: string; readonly name: string } | null;
   /** The provider class's snapshotted name ("Hot Yoga"); null for slot bookings. */
   readonly externalTitle: string | null;
-  /** The class's snapshotted location label; null for slot bookings. */
+  /**
+   * The provider's raw location prose; null for slot bookings. Kept for older
+   * builds and NEVER shown: the room is `room`.
+   */
   readonly location: string | null;
+  /**
+   * The class's room ("Salur 4", API 0.44.0), or null (every non-Abler
+   * booking, and a class with none). It follows a class the club moves until
+   * the class is over, so it is always this read's value, never one kept from
+   * the confirmation. Shown after the venue name (src/copy/classRoom.ts).
+   */
+  readonly room: string | null;
 }
 
 /**
@@ -155,6 +165,9 @@ export function decodeMemberBooking(raw: unknown, path = 'booking'): MemberBooki
     activity,
     externalTitle: optional(json.externalTitle, (value) => string(value, `${path}.externalTitle`)),
     location: optional(json.location, (value) => string(value, `${path}.location`)),
+    // Garnish, read fail-soft (src/api/wire.ts `readRoom`): a malformed room
+    // never costs the member the list.
+    room: readRoom(json.room),
   };
 }
 

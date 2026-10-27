@@ -61,6 +61,7 @@ export function ablerOccurrence(
     endsAt: plus(startsAt, 3600),
     className: 'Yoga Flow',
     instructor: null,
+    room: null,
     snapshot: options.snapshot === undefined ? OPEN_SNAPSHOT : options.snapshot,
   };
 }
@@ -73,6 +74,7 @@ export function slotOccurrence(endsAt: Date | null, snapshot: OccurrenceSnapshot
     endsAt,
     className: 'Spin',
     instructor: null,
+    room: null,
     snapshot,
   };
 }
@@ -80,9 +82,12 @@ export function slotOccurrence(endsAt: Date | null, snapshot: OccurrenceSnapshot
 export function klass(
   eventId: number,
   at: Date,
-  options: { canBook?: boolean; reason?: string | null; full?: boolean; opensAt?: Date | null } = {},
+  options: { canBook?: boolean; reason?: string | null; full?: boolean; opensAt?: Date | null; room?: string | null } = {},
 ): Record<string, unknown> {
   return {
+    // The class room (API 0.44.0): only when the test names one, so the
+    // other tests read a server from before it.
+    ...(options.room !== undefined ? { room: options.room } : {}),
     eventId,
     name: `Class ${eventId}`,
     description: null,

@@ -76,6 +76,8 @@ describe('GET /bookings', () => {
       activity: { id: VENUE, name: 'Gym' },
       externalTitle: 'Yoga Flow',
       location: 'Salur 2',
+      // No `room` on this row: the raw `location` is never taken for it.
+      room: null,
     });
   });
 

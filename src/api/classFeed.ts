@@ -23,7 +23,7 @@
  */
 import { apiGet, type RequestOptions } from './client';
 import { TransportError } from './errors';
-import { parseIsoDate } from './wire';
+import { parseIsoDate, readRoom } from './wire';
 
 /** Every request asks for a full page (iOS `limit: Int = 100`). */
 export const CLASS_FEED_PAGE_LIMIT = 100;
@@ -80,7 +80,17 @@ export interface ClassFeedItem {
   readonly startsAt: Date;
   readonly endsAt: Date;
   readonly instructor: string | null;
+  /**
+   * The provider's raw location prose ("Salur 3 · World Class, Austurberg,
+   * ..."), kept for older builds. NEVER shown: the room is `room`.
+   */
   readonly locationText: string | null;
+  /**
+   * The class's room ("Salur 3", API 0.44.0), or null: always null for a
+   * first-party class, and absent (null) on a feed page cached from before
+   * 0.44.0. Shown after the venue name (src/copy/classRoom.ts).
+   */
+  readonly room: string | null;
   readonly attendance: ClassFeedAttendance | null;
   readonly full: boolean;
   /** The provider's bookability verdict; null when unknown (first-party classes). */
@@ -367,6 +377,8 @@ export function decodeClassFeedItem(value: unknown, path = 'item'): ClassFeedIte
     endsAt: requiredDate(json, 'endsAt', path),
     instructor: optionalString(json, 'instructor', path),
     locationText: optionalString(json, 'locationText', path),
+    // Garnish, read fail-soft (src/api/wire.ts `readRoom`).
+    room: readRoom(json.room),
     attendance: decodeAttendance(json, path),
     full: requiredBool(json, 'full', path),
     canBook: optionalBool(json, 'canBook', path),

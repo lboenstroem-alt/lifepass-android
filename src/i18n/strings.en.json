@@ -547,6 +547,7 @@
  "booking.reminder.title": "Time for your class",
  "booking.reminder10.body": "{class} is about to start. Scan the venue QR code and tap 'Mark me as present' — attendance check-in is free.",
  "booking.reminder10.title": "Class starts in 10 minutes",
+ "booking.room.label": "Room",
  "booking.select_class": "Select a class",
  "booking.select_date": "Select a date",
  "booking.select_time": "Select a time",

@@ -1,6 +1,8 @@
 // Step 2: confirm (iOS BookingFlowView.confirmStep). The card (Activity,
-// Venue, then Class and When for a class, or Date and Time for a slot, all
-// on the venue's clock), the charge section, and Back plus Confirm. A gate
+// Venue, then Class, When and the class's Room for a class, or Date and Time
+// for a slot, all on the venue's clock), the charge section, and Back plus
+// Confirm. The Room row ("Room: Salur 4" / "Salur: 4", API 0.44.0) shows only
+// when the chosen class has one, as the timetable read it. A gate
 // refusal hides Confirm entirely: the launcher blocks at disclosure time
 // rather than letting the tap fail again.
 //
@@ -13,6 +15,7 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 
 import type { RefusalCta } from '../../../api/refusals';
 import { LPText, PrimaryButton } from '../../../components/ui';
+import { roomRowValue } from '../../../copy/classRoom';
 import { useT, VenueTimeFormat } from '../../../i18n';
 import { colors, radius } from '../../../theme';
 import { bookingInProgress, usesClasses as sessionUsesClasses, type BookingSessionStore } from '../bookingSession';
@@ -50,6 +53,9 @@ export default function ConfirmStep({ store, activityName, venueName, offers, on
   if (classes && selectedClass) {
     if (selectedClass.name) rows.push({ id: 'class', label: t('booking.class'), value: selectedClass.name });
     rows.push({ id: 'when', label: t('booking.when'), value: VenueTimeFormat.dayTime(selectedClass.start, language) });
+    if (selectedClass.room) {
+      rows.push({ id: 'room', label: t('booking.room.label'), value: roomRowValue(selectedClass.room, language) });
+    }
   } else if (!classes && selectedSlot) {
     rows.push({ id: 'date', label: t('booking.date'), value: VenueTimeFormat.date(selectedSlot.startTime, language) });
     rows.push({ id: 'time', label: t('booking.time'), value: VenueTimeFormat.time(selectedSlot.startTime) });
@@ -63,7 +69,13 @@ export default function ConfirmStep({ store, activityName, venueName, offers, on
         </LPText>
         <View style={styles.card} testID="booking.confirm.card">
           {rows.map((row) => (
-            <View key={row.id} style={styles.row} accessible accessibilityLabel={`${row.label}, ${row.value}`}>
+            <View
+              key={row.id}
+              style={styles.row}
+              accessible
+              accessibilityLabel={`${row.label}, ${row.value}`}
+              testID={`booking.confirm.row.${row.id}`}
+            >
               <LPText size={13} color={colors.mutedTextStrong}>
                 {row.label}
               </LPText>

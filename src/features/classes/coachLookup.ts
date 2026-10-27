@@ -58,6 +58,11 @@ export interface CoachPlanClass {
   readonly endsAt: Date | null;
   readonly venueSlug: string;
   readonly venueName: string;
+  /**
+   * The class's room ("Salur 3", API 0.44.0), or null; absent from a Coach
+   * answer cached before 0.44.0 (null). Shown after the venue name.
+   */
+  readonly room: string | null;
   /** The class feed's booking handle, when the server included it. */
   readonly booking: CoachClassBooking | null;
 }
@@ -103,6 +108,7 @@ export function coachClassOccurrence(
     className: session.title,
     venueName: session.venueName,
     instructor: null,
+    room: session.room,
     surchargeFromIsk: null,
     snapshot: null,
   };
