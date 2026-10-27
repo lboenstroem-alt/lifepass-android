@@ -1,11 +1,13 @@
 /**
  * Log in (iOS LoginView + AuthViewModel.signIn): the checks and Supabase's
  * refusals in the screen's language, "Signing in…" while it runs, the
- * signed-in member, the failed-link banner, and Forgot password's sheet.
+ * signed-in member, the email and provider sign-ins blocking each other
+ * (iOS's one `isLoading`), the failed-link banner, and Forgot password's sheet.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 
+import { setEnv } from '@test/harness';
 import { api, Reply, supabase as authHost, type StubReply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../api/testing';
@@ -23,6 +25,8 @@ import {
 import { resetAppStoreForTests, useAppStore } from '../../../stores/appStore';
 import { supabase } from '../../../supabase/lib/client';
 import { RECOVERY_REQUESTED_AT_KEY } from '../../../supabase/services/auth';
+import { resetSocialProviderSettingsForTests } from '../providerSettings';
+import { signInWithSocialProvider, useSocialSignInStore } from '../social';
 import { authNavigation, currentAuthRoute, renderAuth } from './authHarness';
 
 jest.mock('@gorhom/bottom-sheet', () =>
@@ -30,6 +34,13 @@ jest.mock('@gorhom/bottom-sheet', () =>
   require('../../../components/ui/testing/bottomSheetMock').bottomSheetModule,
 );
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
+// The provider flow itself (Custom Tab, exchange) is socialSignIn.test.ts's; here only whether it starts.
+jest.mock('../social', () => ({
+  ...jest.requireActual('../social'),
+  signInWithSocialProvider: jest.fn(),
+}));
+
+const startSocial = jest.mocked(signInWithSocialProvider);
 
 stubApiClientPerTest();
 freshStorePerTest();
@@ -129,6 +140,58 @@ describe('a sign-in', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.query.grant_type).toBe('password');
     expect(sent[0]!.body).toMatchObject({ email: 'member@example.is', password: 'the password' });
+  });
+});
+
+describe('one sign-in at a time (iOS: one isLoading for the screen)', () => {
+  beforeEach(() => {
+    resetSocialProviderSettingsForTests();
+    useSocialSignInStore.setState({ busy: false, unreportedFailure: false });
+    startSocial.mockReset().mockResolvedValue('cancelled');
+    setEnv({ EXPO_PUBLIC_SOCIAL_SIGN_IN: 'YES' });
+    authHost.on('GET', '/auth/v1/settings', Reply.json(200, { external: { email: true, apple: true, google: true } }));
+  });
+
+  it('while the email sign-in runs, Apple and Google are disabled and dimmed', async () => {
+    await openLogin();
+    await screen.findByTestId('auth.google');
+    let answer: (reply: StubReply) => void = () => undefined;
+    authHost.on('POST', '/auth/v1/token', () => new Promise<StubReply>((resolve) => (answer = resolve)));
+
+    await signInWith('member@example.is', 'the password');
+    await waitFor(() => expect(screen.getByTestId('auth.social')).toHaveStyle({ opacity: 0.6 }));
+    for (const id of ['auth.apple', 'auth.google']) {
+      expect(screen.getByTestId(id)).toHaveProp('accessibilityState', { disabled: true, busy: false });
+    }
+    await fireEvent.press(screen.getByTestId('auth.google'));
+    expect(startSocial).not.toHaveBeenCalled();
+
+    await act(async () => {
+      answer(refuse('invalid_credentials', 'Invalid login credentials'));
+      await settle();
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('auth.google')).toHaveProp('accessibilityState', { disabled: false, busy: false }),
+    );
+    await fireEvent.press(screen.getByTestId('auth.google'));
+    expect(startSocial).toHaveBeenCalledWith('google');
+  });
+
+  it('while a provider sign-in runs, Sign in says "Signing in…" and takes no press or keyboard Go', async () => {
+    await openLogin();
+    await screen.findByTestId('auth.google');
+    await fireEvent.changeText(emailField(), 'member@example.is');
+    await fireEvent.changeText(passwordField(), 'the password');
+
+    await act(() => useSocialSignInStore.setState({ busy: true }));
+    expect(screen.getByRole('button', { name: en('auth.signing_in') })).toBeDisabled();
+    await fireEvent.press(signInButton());
+    await fireEvent(passwordField(), 'submitEditing');
+    await act(async () => settle());
+    expect(authHost.sentAll('/auth/v1/token', 'POST')).toHaveLength(0);
+
+    await act(() => useSocialSignInStore.setState({ busy: false }));
+    expect(screen.getByRole('button', { name: en('auth.signin') })).toBeEnabled();
   });
 });
 
