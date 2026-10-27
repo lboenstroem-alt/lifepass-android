@@ -239,6 +239,19 @@ interface UnsentAnswer {
 // ---------------------------------------------------------------------------
 // The store
 
+/** Each store's dependencies, so a development fixture can swap them on the app's own store. */
+const storeDeps = new WeakMap<StoreApi<VisitRatingStore>, VisitRatingDeps>();
+
+/**
+ * Replaces some of `store`'s dependencies (a development fixture: nothing
+ * reaches the server). `configureVisitRatingDeps(store, defaultVisitRatingDeps)`
+ * puts them back.
+ */
+export function configureVisitRatingDeps(store: StoreApi<VisitRatingStore>, overrides: Partial<VisitRatingDeps>): void {
+  const deps = storeDeps.get(store);
+  if (deps) Object.assign(deps, overrides);
+}
+
 export function createVisitRatingStore(overrides: Partial<VisitRatingDeps> = {}): StoreApi<VisitRatingStore> {
   const deps: VisitRatingDeps = { ...defaultVisitRatingDeps, ...overrides };
   /** Bumped at sign-out: an answer for the member who left writes nothing. */
@@ -252,7 +265,7 @@ export function createVisitRatingStore(overrides: Partial<VisitRatingDeps> = {})
   /** The thank-you of a 4 or 5 star answer closed: the Google Play ask, once the sheet has gone. */
   let happyMomentPending = false;
 
-  return createStore<VisitRatingStore>()((set, get) => {
+  const store = createStore<VisitRatingStore>()((set, get) => {
     /** One `current` at a time; a second caller joins it. Never rejects. */
     function askCurrent(): Promise<CurrentOutcome> {
       if (inFlight) return inFlight;
@@ -468,6 +481,8 @@ export function createVisitRatingStore(overrides: Partial<VisitRatingDeps> = {})
       },
     };
   });
+  storeDeps.set(store, deps);
+  return store;
 }
 
 /** The app's one visit rating. */

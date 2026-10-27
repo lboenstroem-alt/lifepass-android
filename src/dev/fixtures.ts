@@ -32,7 +32,7 @@
  * type check.
  */
 
-/** Every iOS debug argument (LifePass 2.5.6), by its Android key. */
+/** Every iOS debug argument (LifePass 2.5.6, and the visit rating's after 3.1.0), by its Android key. */
 export const FIXTURE_KEYS = [
   // App state and navigation (iOS ScreenshotFixtures).
   'state',
@@ -91,6 +91,9 @@ export const FIXTURE_KEYS = [
   'mapLegendOpen',
   'mapZoomOut',
   'browseSeed',
+  // Member feedback (API 0.46.0, the app version after 3.1.0): "How was your
+  // visit?" in a known state (src/features/visitRating/fixtures.ts).
+  'visitRating',
   // Debug aids.
   'debugAssistiveTech',
   'debugActivatePin',

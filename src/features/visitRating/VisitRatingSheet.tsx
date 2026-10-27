@@ -30,6 +30,9 @@
  * THE NOTIFICATION TAP (src/app/notificationRouter.ts parks it): the sheet
  * opens for whatever ask the server says is current, once no booking,
  * payment or check-in flow is on screen, within the intent store's window.
+ *
+ * A development build started with `visitRating=<variant>` puts the card or
+ * the sheet in a known state, with no request (./fixtures.ts).
  */
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -51,6 +54,7 @@ import { navigateInCurrentTab } from '../../navigation/navigationRef';
 import { useIntentStore } from '../../stores/intentStore';
 import { colors, hairline, minTouch, radius, sans } from '../../theme';
 
+import { applyVisitRatingFixture, takeVisitRatingFixture } from './fixtures';
 import StarRating from './StarRating';
 import { canSend, type StarRow, type VisitRatingSheetState } from './store';
 import { useVisitRating, visitRatingActions } from './useVisitRating';
@@ -209,6 +213,12 @@ export default function VisitRatingSheetHost() {
   const sheet = useVisitRating((state) => state.sheet);
   useNotificationTap();
   useSendUnblock(sheet?.sendBlockedUntil ?? null);
+
+  // A development build started with `visitRating=<variant>` (./fixtures.ts), once.
+  useEffect(() => {
+    const variant = takeVisitRatingFixture();
+    if (variant) void applyVisitRatingFixture(variant);
+  }, []);
 
   // The thank-you replaces the form under TalkBack's focus: say it.
   const thanked = sheet?.phase === 'thanks';

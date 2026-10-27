@@ -27,6 +27,8 @@ const IOS_ARGUMENTS = [
   '-LPScreenshotProfileHint', '-LPScreenshotPlansSheet', '-LPScreenshotMapLegendOpen', '-LPScreenshotKenni',
   '-LPScreenshotExploreHint', '-LPScreenshotClassFeed', '-LPScreenshotAuth', '-LPRunnerWidth',
   '-LPRunnerScreen', '-LPLogWorkoutPrefill', '-LPForceSocialButtons', '-LPBrowseSeed',
+  // After 3.1.0 (API 0.46.0): the visit rating's states.
+  '-LPScreenshotVisitRating',
 ];
 
 describe('fixture keys', () => {
