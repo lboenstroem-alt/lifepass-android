@@ -51,7 +51,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Dialog, LPText, PrimaryButton, type DialogButton } from '../../components/ui';
-import { useFavourite } from '../favourites';
+import { favouritesStore, useFavourite } from '../favourites';
 import { useReduceMotion } from '../../hooks/useReduceMotion';
 import { useT } from '../../i18n';
 import type { BookableActivity } from '../../api/walkInPreview';
@@ -129,6 +129,9 @@ export default function VenueDetailScreen({ navigation, route }: SharedRouteProp
         return;
       }
       refresh();
+      // iOS VenueDetailViewModel.load reads GET /favourites on every
+      // appearance, so a save or unsave made elsewhere meanwhile shows here.
+      void favouritesStore.getState().load();
     });
     setIsFocused(navigation.isFocused());
     return () => {
@@ -316,7 +319,9 @@ function VenueHero({
   readonly onShare: () => void;
   readonly onHeight: (height: number) => void;
 }) {
-  const favourite = useFavourite(venue.id);
+  // Read again on arrival (iOS's load asks GET /favourites each time), not
+  // only once per session.
+  const favourite = useFavourite(venue.id, { refresh: true });
   const toggle = favourite.toggle;
   const onToggleFavourite = useCallback(() => {
     // The store flips the heart at once, reverts it and says so on a failure
