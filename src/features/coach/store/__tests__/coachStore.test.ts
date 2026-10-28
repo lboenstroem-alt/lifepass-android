@@ -44,7 +44,7 @@ import {
   useCoachStore,
 } from '../coachStore';
 import { coachHost } from '../host';
-import { GREETING_ID, type CoachMessage } from '../messages';
+import { GREETING_ID, isReportableReply, type CoachMessage } from '../messages';
 import { clearFakeFlows, fake } from './fakeFlows';
 
 /* eslint-disable @typescript-eslint/no-require-imports */
@@ -533,6 +533,92 @@ describe('venue documents', () => {
     await coach().send('somewhere calm?');
     expect(texts().at(-1)).toBe(`• Made Up Spa, Nowhere\n\n${en('coach.explore_nudge')}`);
     expect(coach().messages.at(-1)!.venues).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('which bubbles are the model\'s own words ("Report this reply", Android COACH-7)', () => {
+  const last = () => coach().messages.at(-1)!;
+  const reportable = () => coach().messages.filter(isReportableReply).map((message) => message.text);
+
+  it('marks the model\'s prose answer, never the greeting or the member\'s turn', async () => {
+    answer('Laugardalslaug is open until 22.');
+    await coach().send('where can I swim tonight?');
+    expect(last().aiReply).toBe(true);
+    expect(coach().messages.filter((message) => message.aiReply).map((message) => message.text)).toEqual([
+      'Laugardalslaug is open until 22.',
+    ]);
+    expect(reportable()).toEqual(['Laugardalslaug is open until 22.']);
+  });
+
+  it('marks a class answer\'s reply', async () => {
+    api.on('POST', '/coach', Reply.json(200, envelope(CARDS_EN)));
+    await coach().send('Are there any classes in Akureyri today?');
+    expect(last().classCards?.length).toBeGreaterThan(0);
+    expect(last().aiReply).toBe(true);
+  });
+
+  it('never marks the app\'s own words: an empty answer\'s apology, a limit, a busy server, an error', async () => {
+    answer('   ');
+    await coach().send('hello');
+    expect(last().text).toBe(en('coach.ai_unavailable'));
+    expect(last().aiReply).toBeUndefined();
+
+    api.on('POST', '/coach', Reply.problem(503, 'coach-busy'));
+    await coach().send('hello again');
+    expect(last().text).toBe(en('coach.busy'));
+    expect(last().aiReply).toBeUndefined();
+
+    api.on('POST', '/coach', Reply.problem(500, 'internal_error'));
+    await coach().send('and again');
+    expect(last().aiReply).toBeUndefined();
+
+    api.on('POST', '/coach', Reply.problem(429, 'coach-daily-limit', { detail: "You have used all of today's coach messages." }));
+    await coach().send('one more');
+    expect(last().aiReply).toBeUndefined();
+    expect(reportable()).toEqual([]);
+  });
+
+  it('marks a venue answer\'s own intro, not the app\'s fallback intro', async () => {
+    const sky = venue(2, 'Sky Lagoon', 'sky-lagoon');
+    api.on('GET', '/venues/by-slug/:slug', Reply.ok(venueToApi(sky)));
+    answer('{"type":"venues","intro":"A calm evening.","venues":[{"id":"sky-lagoon","name":"Sky Lagoon"}]}');
+    await coach().send('somewhere calm tonight?');
+    expect(last().text).toBe('A calm evening.');
+    expect(last().aiReply).toBe(true);
+
+    answer('{"type":"venues","intro":"","venues":[{"id":"sky-lagoon","name":"Sky Lagoon"}]}');
+    await coach().send('and another?');
+    expect(last().text).toBe(en('coach.explore_fallback'));
+    expect(last().aiReply).toBeUndefined();
+  });
+
+  it('marks a venue answer read as a list when it names a place, not the bare fallback', async () => {
+    api.on('GET', '/venues/by-slug/:slug', Reply.problem(404, 'not_found'));
+    api.on('GET', '/venues', Reply.ok({ data: [], pagination: { nextCursor: null, hasMore: false, limit: 50 } }));
+    answer('{"type":"venues","intro":"","venues":[{"id":"made-up","name":"Made Up Spa"}]}');
+    await coach().send('somewhere calm?');
+    expect(last().aiReply).toBe(true);
+
+    answer('{"type":"venues","intro":"","venues":[]}');
+    await coach().send('anything?');
+    expect(last().text).toBe(en('coach.explore_fallback'));
+    expect(last().aiReply).toBeUndefined();
+  });
+
+  it('a saved chat keeps the mark, so a reopened reply can still be reported', async () => {
+    await claimCoachForMember(MEMBER_A, false);
+    answer('Three pools.');
+    await coach().send('pools?');
+    const sessionId = coach().currentSessionId;
+    coach().resetChat();
+    await pendingCoachSaves();
+    const stored = (await loadSavedSessions())[0]!;
+    expect(stored.messages.map((message) => message.aiReply ?? false)).toEqual([false, false, true]);
+
+    coach().restoreSession(sessionId ?? stored.id);
+    expect(reportable()).toEqual(['Three pools.']);
   });
 });
 

@@ -183,6 +183,12 @@ export interface CoachMessageRendererProps {
   readonly message: CoachFlowMessage;
   /** A reply or a build is in flight (iOS `isBusy: vm.isTyping`): chips that would call out wait. */
   readonly busy: boolean;
+  /**
+   * Set only for a message in the model's own words (`isReportableReply`,
+   * Android COACH-7): the renderer offers "Report this reply" and passes the
+   * model's words it draws, which are what the report sends.
+   */
+  readonly onReport?: (words: string) => void;
 }
 
 /**

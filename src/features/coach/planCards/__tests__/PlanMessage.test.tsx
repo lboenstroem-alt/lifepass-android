@@ -1,8 +1,9 @@
 /**
  * The day plan as drawn (iOS CoachPlanView.swift): the intro, the steps in
  * Before / Main / After order with their slot labels and notes, the three
- * kinds of card with their honesty rules, and the chips (worded, waiting
- * while a reply is in flight). The actions are the wizard's (tested in
+ * kinds of card with their honesty rules, the chips (worded, waiting
+ * while a reply is in flight), and "Report this reply" on a plan in the
+ * model's words (Android COACH-7). The actions are the wizard's (tested in
  * ../../dayPlan/__tests__/wizard.test.ts); here only that each control
  * calls the right one with the right argument.
  */
@@ -10,7 +11,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { StrictMode } from 'react';
 
 import { decodeVenue } from '../../../../api/venues';
-import { setCurrentLanguage, translate, type Params } from '../../../../i18n';
+import { lookup, setCurrentLanguage, translate, type Params } from '../../../../i18n';
 import type { CoachFlowBubble } from '../../store/messages';
 import { decodeCoachPlan } from '../../dayPlan/decode';
 import { PLAN_MESSAGE_KIND, type PlanMessagePayload } from '../../dayPlan/wizard';
@@ -333,4 +334,39 @@ it('a message without a plan payload draws as a plain bubble', async () => {
   await draw({ id: '9', role: 'assistant', text: 'Saved intro.', flow: 'dayPlan', kind: PLAN_MESSAGE_KIND });
   expect(screen.getByText('Saved intro.')).toBeOnTheScreen();
   expect(screen.queryByTestId('coach.plan.9')).toBeNull();
+});
+
+describe('"Report this reply" (Android COACH-7)', () => {
+  const REPORT = lookup('coach.report.action', 'en');
+  // Drawn order: Before (no note), Main, After.
+  const WORDS = 'A calm evening by the water.\n\nSoak for an hour.\n\nCatch the falls before dark.';
+
+  it('is not offered on a plan the chat did not mark as the model\'s words', async () => {
+    await draw(planMessage());
+    expect(screen.queryByRole('button', { name: REPORT })).toBeNull();
+    expect(screen.queryByTestId('coach.reply')).toBeNull();
+  });
+
+  it('on the model\'s intro: the "...", a long-press and TalkBack\'s action report the plan\'s words as drawn', async () => {
+    const onReport = jest.fn();
+    await render(<PlanMessage message={planMessage()} busy={false} onReport={onReport} />);
+    await act(async () => undefined);
+    const intro = screen.getByTestId('coach.reply');
+    expect(intro).toHaveTextContent('A calm evening by the water.');
+    await fireEvent.press(screen.getByRole('button', { name: REPORT }));
+    await fireEvent(intro, 'longPress');
+    await fireEvent(intro, 'accessibilityAction', { nativeEvent: { actionName: 'reportReply' } });
+    expect(onReport.mock.calls).toEqual([[WORDS], [WORDS], [WORDS]]);
+    // The rest of the card is as it was.
+    expect(screen.getAllByTestId(/^coach\.plan\.step\./)).toHaveLength(3);
+    expect(screen.getByTestId('coach.plan.new')).toBeOnTheScreen();
+  });
+
+  it('a saved chat\'s plan (no cards left) reports its intro', async () => {
+    const onReport = jest.fn();
+    const saved: CoachFlowBubble = { id: '9', role: 'assistant', text: 'Saved intro.', flow: 'dayPlan', kind: PLAN_MESSAGE_KIND, aiReply: true };
+    await render(<PlanMessage message={saved} busy={false} onReport={onReport} />);
+    await fireEvent.press(screen.getByRole('button', { name: REPORT }));
+    expect(onReport).toHaveBeenCalledWith('Saved intro.');
+  });
 });

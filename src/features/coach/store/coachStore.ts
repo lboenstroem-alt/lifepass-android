@@ -44,7 +44,7 @@ import { currentLanguage, translate, type Lang, type Params } from '../../../i18
 import { useIntentStore, type CoachProgramEntry } from '../../../stores/intentStore';
 import { postCoachChat, type CoachApiMessage } from '../chat/coachApi';
 import { modelMessages as buildModelMessages } from '../chat/modelMessages';
-import { parseVenuePayload, resolveVenueCards, venuesReplyAsText } from '../chat/venueReply';
+import { parseVenuePayload, resolveVenueCards, venuesReplyAsText, venuesReplyHasModelWords } from '../chat/venueReply';
 import { adjustFlow } from '../flows/adjust';
 import { dayPlanFlow } from '../flows/dayPlan';
 import { planEditFlow } from '../flows/planEdit';
@@ -88,6 +88,7 @@ import {
   greetingMessage,
   GREETING_ID,
   isOpenQuestion,
+  modelWords,
   type CoachMessage,
   type CoachMessageDraft,
 } from './messages';
@@ -463,22 +464,39 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
    * else the text with its class cards. Class cards ride on a prose reply
    * only: the server never sends them with a venues document, and if one
    * ever did the venues would win (iOS `appendAssistantReply`).
+   *
+   * `fromModel` is false when `text` is the app's own stand-in for a reply
+   * with no words: only the model's own words are marked `aiReply` (the
+   * bubbles that offer "Report this reply").
    */
-  const appendAssistantReply = async (text: string, classes: readonly CoachPlanClass[], token: CoachBusyToken) => {
+  const appendAssistantReply = async (
+    text: string,
+    classes: readonly CoachPlanClass[],
+    token: CoachBusyToken,
+    fromModel: boolean,
+  ) => {
     const payload = parseVenuePayload(text);
     if (!payload) {
       // A reply with up to six class cards can be taller than the screen:
       // the chat lands on its top, so the reply and the earliest class show first.
-      append(classes.length > 0 ? { role: 'assistant', text, classCards: classes, anchorTop: true } : { role: 'assistant', text });
+      append(
+        classes.length > 0
+          ? { role: 'assistant', text, classCards: classes, anchorTop: true, ...modelWords(fromModel) }
+          : { role: 'assistant', text, ...modelWords(fromModel) },
+      );
       return;
     }
     const cards = await resolveVenueCards(payload);
     if (!token.isCurrent()) return;
     if (cards.length > 0) {
       const intro = payload.intro?.trim();
-      append({ role: 'assistant', text: intro ? intro : tr('coach.explore_fallback'), venues: cards });
+      append({ role: 'assistant', text: intro ? intro : tr('coach.explore_fallback'), venues: cards, ...modelWords(!!intro) });
     } else {
-      append({ role: 'assistant', text: venuesReplyAsText(payload, (key) => tr(key)) });
+      append({
+        role: 'assistant',
+        text: venuesReplyAsText(payload, (key) => tr(key)),
+        ...modelWords(venuesReplyHasModelWords(payload)),
+      });
     }
   };
 
@@ -497,7 +515,8 @@ export const useCoachStore = create<CoachStore>()((set, get) => {
       // A reply that came with class cards but no words still needs a line
       // above the list, not the "unavailable" apology.
       const fallback = reply.classes.length > 0 ? tr('coach.classes.intro') : tr('coach.ai_unavailable');
-      await appendAssistantReply(reply.reply.trim() ? reply.reply : fallback, reply.classes, token);
+      const hasWords = reply.reply.trim().length > 0;
+      await appendAssistantReply(hasWords ? reply.reply : fallback, reply.classes, token, hasWords);
     } catch (error) {
       if (isApiError(error)) {
         // 429: an allowance is spent (a member's 10 today, or a free

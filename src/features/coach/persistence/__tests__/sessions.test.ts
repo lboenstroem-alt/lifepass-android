@@ -248,6 +248,44 @@ describe('on disk', () => {
     expect(loaded!.messages[3]!.classCards).toBeUndefined();
   });
 
+  it("keeps a reply's AI mark (Android, for \"Report this reply\"), and only a true one on a reply", async () => {
+    const built = buildSession(
+      [
+        message('1', 'user', 'pools?'),
+        message('2', 'assistant', 'Three pools.', { aiReply: true }),
+        message('3', 'assistant', 'The Coach is unavailable.'),
+      ],
+      's1',
+    )!;
+    expect(built.messages.map((entry) => entry.aiReply)).toEqual([undefined, true, undefined]);
+    await writeSavedSessions([built]);
+    const raw = JSON.parse((await AsyncStorage.getItem(COACH_SESSIONS_KEY))!) as { messages: Record<string, unknown>[] }[];
+    // Written only where it is true.
+    expect(raw[0]!.messages.map((entry) => 'aiReply' in entry)).toEqual([false, true, false]);
+    expect(messagesFromSession((await loadSavedSessions())[0]!).map((entry) => entry.aiReply)).toEqual([
+      undefined,
+      true,
+      undefined,
+    ]);
+
+    // A member's turn, or a value that is not `true`, never reads as one.
+    await AsyncStorage.setItem(
+      COACH_SESSIONS_KEY,
+      JSON.stringify([
+        {
+          id: 's2',
+          title: 'x',
+          date: '2026-10-01T10:00:00.000Z',
+          messages: [
+            { id: '1', role: 'user', text: 'x', aiReply: true },
+            { id: '2', role: 'assistant', text: 'y', aiReply: 'yes' },
+          ],
+        },
+      ]),
+    );
+    expect((await loadSavedSessions())[0]!.messages.map((entry) => entry.aiReply)).toEqual([undefined, undefined]);
+  });
+
   it('an unreadable store reads as no chats', async () => {
     await AsyncStorage.setItem(COACH_SESSIONS_KEY, '{not json');
     expect(await loadSavedSessions()).toEqual([]);

@@ -23,12 +23,14 @@ type Props = {
   intro: string;
   venues: readonly Venue[];
   onBook: (venue: Venue) => void;
+  /** The intro is the model's own words: it offers "Report this reply" (./MessageBubble.tsx). */
+  onReport?: () => void;
 };
 
-export default function VenueCarouselMessage({ intro, venues, onBook }: Props) {
+export default function VenueCarouselMessage({ intro, venues, onBook, onReport }: Props) {
   return (
     <View style={styles.root}>
-      <AssistantText text={intro} />
+      <AssistantText text={intro} onReport={onReport} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.cards}>
         {venues.map((venue) => (
           <VenueMiniCard key={venue.id} venue={venue} onBook={onBook} />

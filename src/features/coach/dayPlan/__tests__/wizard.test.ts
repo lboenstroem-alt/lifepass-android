@@ -35,6 +35,7 @@ import {
   openPlanVenue,
   PLAN_MESSAGE_KIND,
   planPayloadOf,
+  planReportWords,
   refineDayPlan,
   resetDayPlan,
   restartDayPlan,
@@ -484,11 +485,32 @@ describe('the call', () => {
     await coach().startPlan('coach.chip.plan_day');
     await answerAll({ goal: 'relax', area: 'capital', when: 'now', duration: 'short' });
     expect(planMessages().at(-1)!.text).toBe('The reply.');
+    // The model's words: "Report this reply" (Android COACH-7).
+    expect(planMessages().at(-1)!.aiReply).toBe(true);
 
     api.once('POST', '/coach', Reply.ok({ reply: '', plan: { ...PLAN, intro: '' } }));
     restartDayPlan();
     await answerAll({ goal: 'relax', area: 'capital', when: 'now', duration: 'short' });
     expect(planMessages().at(-1)!.text).toBe(en('coach.plan.intro_fallback'));
+    // The app's own sentence: no report on it.
+    expect(planMessages().at(-1)!.aiReply).toBeUndefined();
+  });
+
+  it('a plan in the model’s words can be reported: its intro and its steps’ notes, in the order drawn', async () => {
+    api.once('POST', '/coach', Reply.ok({ reply: PLAN.intro, plan: PLAN }));
+    await coach().startPlan('coach.chip.plan_day');
+    await answerAll({ goal: 'relax', area: 'capital', when: 'now', duration: 'short' });
+    const plan = planMessages().at(-1)!;
+    expect(plan.aiReply).toBe(true);
+    // Before, then Main, whatever order the wire used.
+    expect(planReportWords(plan)).toBe('A calm evening by the water.\n\nLoosen up first.\n\nSoak for an hour.');
+    // A step with no note adds nothing; a message whose cards are gone (a saved chat) is its intro.
+    const quiet = { ...plan, payload: { plan: { ...planPayloadOf(plan)!.plan, steps: planPayloadOf(plan)!.plan.steps.map((step) => ({ ...step, note: '' })) }, venues: {} } };
+    expect(planReportWords(quiet)).toBe('A calm evening by the water.');
+    expect(planReportWords({ text: 'A calm evening by the water.' })).toBe('A calm evening by the water.');
+    // A saved chat keeps the mark, so the reopened intro can still be reported.
+    const saved = buildSession(messages(), null)!;
+    expect(saved.messages.find((message) => message.id === plan.id)).toMatchObject({ text: PLAN.intro, aiReply: true });
   });
 
   it('no plan and no reply says so; no plan but a reply is the chat’s reply', async () => {
@@ -496,11 +518,15 @@ describe('the call', () => {
     await coach().startPlan('coach.chip.plan_day');
     await answerAll({ goal: 'relax', area: 'capital', when: 'now', duration: 'short' });
     expect(texts().at(-1)).toBe(en('coach.plan.empty'));
+    // The app's own sentence: no "Report this reply" on it (Android COACH-7).
+    expect(messages().at(-1)!.aiReply).toBeUndefined();
 
     api.once('POST', '/coach', Reply.ok({ reply: 'Nothing fits, but Sky Lagoon is lovely tonight.' }));
     restartDayPlan();
     await answerAll({ goal: 'relax', area: 'capital', when: 'now', duration: 'short' });
     expect(messages().at(-1)).toMatchObject({ role: 'assistant', text: 'Nothing fits, but Sky Lagoon is lovely tonight.' });
+    // The model's own words: they can be reported.
+    expect(messages().at(-1)!.aiReply).toBe(true);
     expect(planMessages()).toHaveLength(0);
   });
 
@@ -730,7 +756,10 @@ describe('what is kept', () => {
     await answerAll({ goal: 'relax', area: 'capital', when: 'now', duration: 'short' });
     const session = buildSession(messages(), null)!;
     const saved = session.messages.find((message) => message.text === PLAN.intro)!;
-    expect(Object.keys(saved).sort()).toEqual(['id', 'role', 'text']);
+    // No cards and no steps: the intro, with the mark that it is the model's
+    // words (so a reopened chat can still report it, Android COACH-7).
+    expect(Object.keys(saved).sort()).toEqual(['aiReply', 'id', 'role', 'text']);
+    expect(saved.aiReply).toBe(true);
     // Question bubbles never leave the phone; the intro does, as the Coach's words.
     expect(modelMessages(messages()).map((message) => message.content)).toContain(PLAN.intro);
     expect(modelMessages(messages()).map((message) => message.content)).not.toContain(en('coach.plan.q.goal'));

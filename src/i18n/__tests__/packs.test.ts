@@ -28,6 +28,8 @@ const PACKAGE_IDS = [
   'COACH-6',
   // After the parity plan: the update prompt (src/features/appUpdate).
   'UPDATE-1',
+  // "Report this reply" on the Coach's replies (src/features/coach/report), Android only.
+  'COACH-7',
 ];
 
 const PACK_DIR = path.join(__dirname, '..', 'android');

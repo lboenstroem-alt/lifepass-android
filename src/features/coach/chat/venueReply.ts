@@ -236,3 +236,13 @@ export function venuesReplyAsText(payload: CoachVenuePayload, t: (key: string) =
   parts.push(t('coach.explore_nudge'));
   return parts.length === 1 ? t('coach.explore_fallback') : parts.join('\n\n');
 }
+
+/**
+ * Whether `venuesReplyAsText` shows any of the model's own words (its intro
+ * or a venue it named), rather than the explore fallback alone: such a
+ * bubble can be reported (src/features/coach/report).
+ */
+export function venuesReplyHasModelWords(payload: CoachVenuePayload): boolean {
+  if (payload.intro?.trim()) return true;
+  return (payload.venues ?? []).some((card) => !!card.name);
+}

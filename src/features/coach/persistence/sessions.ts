@@ -3,13 +3,19 @@
  * `CoachViewModel`'s session persistence (ViewModels/CoachViewModel.swift).
  *
  * WHAT IS KEPT. Up to three chats, newest first, each `{ id, title, date,
- * messages: [{ id, role, text, classCards? }] }`. TEXT, plus a class answer's
+ * messages: [{ id, role, text, classCards?, aiReply? }] }`. TEXT, plus a class answer's
  * cards: no question bubbles, no category strips, no venue cards (a card
  * reply keeps its intro), and no health turn ever (privacy policy 2.A,
  * ruling 2). A chat made only of health turns is not saved at all, and a
  * health turn never titles one. The first build kept four chats with their
  * venue cards and every Q&A answer; what it saved is read back the new way
  * (text only, three at most).
+ *
+ * AI REPLY MARK (Android only). A reply in the model's own words is saved
+ * with `aiReply: true`, so a reopened chat still offers "Report this reply"
+ * on it (src/features/coach/report) and never on the app's own sentences.
+ * A chat saved before the mark has no reportable replies; a reader that
+ * does not know the key ignores it.
  *
  * CLASS CARDS (API 0.36.0) are kept with their reply, in the server's own
  * shape, so a reopened chat's "Tap one to book" still has its list under it
@@ -51,6 +57,8 @@ export interface PersistedMessage {
   readonly text: string;
   /** A class answer's cards (never empty when present); written in the server's shape. */
   readonly classCards?: readonly CoachPlanClass[];
+  /** The model's own words (the reply can be reported); present only when true. */
+  readonly aiReply?: true;
 }
 
 export interface ChatSession {
@@ -90,7 +98,8 @@ function readMessage(value: unknown): PersistedMessage | null {
   if (value.categoryPicker === true || value.isHealth === true) return null;
   // FAIL SOFT: cards this build cannot read back are dropped one by one.
   const classCards = decodeClassCards(value.classCards);
-  return classCards.length > 0 ? { id, role, text, classCards } : { id, role, text };
+  const message: PersistedMessage = classCards.length > 0 ? { id, role, text, classCards } : { id, role, text };
+  return role === 'assistant' && value.aiReply === true ? { ...message, aiReply: true } : message;
 }
 
 /** A message as it is written: its class cards in the server's shape. */
@@ -184,9 +193,11 @@ export function buildSession(
     date: now.toISOString(),
     messages: messages.filter(isConversationTurn).map((message) => {
       const cards = message.role === 'assistant' ? message.classCards : undefined;
-      return cards && cards.length > 0
-        ? { id: message.id, role: message.role, text: message.text, classCards: cards }
-        : { id: message.id, role: message.role, text: message.text };
+      const saved: PersistedMessage =
+        cards && cards.length > 0
+          ? { id: message.id, role: message.role, text: message.text, classCards: cards }
+          : { id: message.id, role: message.role, text: message.text };
+      return message.role === 'assistant' && message.aiReply === true ? { ...saved, aiReply: true } : saved;
     }),
   };
 }
@@ -196,13 +207,15 @@ export function upsertSession(sessions: readonly ChatSession[], session: ChatSes
   return [session, ...sessions.filter((existing) => existing.id !== session.id)].slice(0, MAX_SESSIONS);
 }
 
-/** A saved session back as chat messages: the text, and a reply's class cards (open). */
+/** A saved session back as chat messages: the text, a reply's class cards (open) and its AI mark. */
 export function messagesFromSession(session: ChatSession): CoachMessage[] {
-  return session.messages.map((message) =>
-    message.role !== 'user' && message.classCards && message.classCards.length > 0
-      ? { id: message.id, role: message.role, text: message.text, classCards: message.classCards }
-      : { id: message.id, role: message.role, text: message.text },
-  );
+  return session.messages.map((message) => {
+    const restored: CoachMessage =
+      message.role !== 'user' && message.classCards && message.classCards.length > 0
+        ? { id: message.id, role: message.role, text: message.text, classCards: message.classCards }
+        : { id: message.id, role: message.role, text: message.text };
+    return message.role === 'assistant' && message.aiReply === true ? { ...restored, aiReply: true } : restored;
+  });
 }
 
 // ---------------------------------------------------------------------------

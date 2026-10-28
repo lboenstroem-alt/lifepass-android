@@ -65,6 +65,18 @@ export interface CoachMessage {
    * end, where its chips and buttons are.
    */
   readonly anchorTop?: boolean;
+
+  /**
+   * The bubble shows the MODEL'S OWN WORDS: a chat answer from `/coach` (its
+   * prose, a class answer's reply, a venue answer's intro, a day plan's
+   * intro; the plan's card then reports its steps' notes too). Only such a
+   * bubble offers "Report this reply" (Android, Play's AI-generated content
+   * policy). Never set on the member's turns, the greeting, a flow's
+   * questions or cards, or the app's own sentences (an apology, a limit, a
+   * fallback intro). A saved chat keeps it, so a reopened chat's replies can
+   * still be reported.
+   */
+  readonly aiReply?: boolean;
 }
 
 /** A flow's own bubble (a `kind` its flow draws). */
@@ -107,6 +119,20 @@ export function isQuestion(message: CoachMessage): boolean {
  */
 export function isConversationTurn(message: CoachMessage): boolean {
   return !isQuestion(message) && !message.showCategoryStrip && !message.isHealth;
+}
+
+/** `{ aiReply: true }` when a bubble's words are the model's own, else nothing: spread into a draft. */
+export function modelWords(fromModel: boolean): { readonly aiReply?: true } {
+  return fromModel ? { aiReply: true } : {};
+}
+
+/**
+ * The Coach's own reply, with words to report: an assistant bubble marked
+ * `aiReply` whose text is not blank. Never a member's turn, never a health
+ * turn's bubble (none is marked), never a question.
+ */
+export function isReportableReply(message: CoachMessage): boolean {
+  return message.role === 'assistant' && message.aiReply === true && !isQuestion(message) && message.text.trim().length > 0;
 }
 
 /** True once the member has said anything (iOS `hasStartedChat`): the empty state gives way to the list. */
