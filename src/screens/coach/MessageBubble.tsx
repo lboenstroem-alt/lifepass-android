@@ -14,7 +14,7 @@
 // store marks which bubbles are the model's: `isReportableReply`).
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, View, useWindowDimensions, type AccessibilityActionEvent } from 'react-native';
+import { Keyboard, Pressable, StyleSheet, View, useWindowDimensions, type AccessibilityActionEvent } from 'react-native';
 
 import { LPText } from '../../components/ui';
 import { hiddenFromAccessibility } from '../../components/ui/a11y';
@@ -79,8 +79,12 @@ export function AssistantText({ text, onReport }: { text: string; onReport?: () 
   return (
     <View style={styles.row}>
       <CoachAssistantAvatar />
-      {/* The bubble reads as its words; long-press and TalkBack's action report it. */}
+      {/* The bubble reads as its words; long-press and TalkBack's action report
+          it. A plain tap closes the keyboard, as a tap on any other bubble
+          does (the chat's keyboardShouldPersistTaps="handled" would
+          otherwise keep it up now that the bubble takes touches). */}
       <Pressable
+        onPress={() => Keyboard.dismiss()}
         onLongPress={onReport}
         delayLongPress={REPORT_LONG_PRESS_MS}
         accessibilityActions={[{ name: REPORT_REPLY_ACTION, label }]}

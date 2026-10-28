@@ -16,7 +16,7 @@
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
-import { Linking, Text } from 'react-native';
+import { Keyboard, Linking, Text } from 'react-native';
 import { api, Reply } from '@test/server';
 
 import { stubApiClientPerTest } from '../../../api/testing';
@@ -413,6 +413,16 @@ describe('"Report this reply" (Android COACH-7, Play\'s AI-generated content pol
     api.on('POST', '/coach', Reply.ok({ reply: REPLY }));
     await renderCoach();
     await ask('where can I swim tonight?');
+    // A plain tap only closes the keyboard, as on any bubble.
+    const dismiss = jest.spyOn(Keyboard, 'dismiss');
+    try {
+      await fireEvent.press(screen.getByTestId('coach.reply'));
+      await settle();
+      expect(sheetIsUp()).toBe(false);
+      expect(dismiss).toHaveBeenCalled();
+    } finally {
+      dismiss.mockRestore();
+    }
     await fireEvent(screen.getByTestId('coach.reply'), 'longPress');
     await settle();
     expect(sheetIsUp()).toBe(true);
