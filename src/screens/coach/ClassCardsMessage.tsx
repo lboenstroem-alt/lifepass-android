@@ -50,14 +50,16 @@ type Props = {
   onBook: (session: CoachPlanClass) => Promise<void>;
   /** The clock the "started" state reads. A test passes its own; the chat passes nothing. */
   now?: () => Date;
+  /** The reply is the model's own words: it offers "Report this reply" (./MessageBubble.tsx). */
+  onReport?: () => void;
 };
 
-export default function ClassCardsMessage({ intro, classes, hidden, onSetHidden, onBook, now = () => new Date() }: Props) {
+export default function ClassCardsMessage({ intro, classes, hidden, onSetHidden, onBook, now = () => new Date(), onReport }: Props) {
   const { t } = useT();
   const showLabel = t('coach.classes.show', { count: String(classes.length) });
   return (
     <View style={styles.root} testID="coach.classes.message">
-      <AssistantText text={intro} />
+      <AssistantText text={intro} onReport={onReport} />
       {hidden ? (
         <Pressable
           onPress={() => onSetHidden(false)}

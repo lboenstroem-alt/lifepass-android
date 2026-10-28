@@ -3,8 +3,9 @@
  * chips' gating, the free tier's line and card, the locking input, the
  * drawer (its Saved presenting the Saved sheet), venue cards' "Book it" by
  * slug, a class answer's cards (Book, close and show again), parked prompts
- * consumed on every appearance, and dictation (en-US, on the phone where it can, stopped when
- * the tab loses focus, never while locked).
+ * consumed on every appearance, dictation (en-US, on the phone where it can, stopped when
+ * the tab loses focus, never while locked), and "Report this reply" on the Coach's own
+ * replies only (Android COACH-7: the "...", long-press and TalkBack's action).
  *
  * The four flows are COACH-2 to COACH-5's. The venue wizard (COACH-2) is the
  * real one, so the words this file sends (typed, dictated or parked) name no
@@ -336,6 +337,132 @@ describe('the chat', () => {
     expect(screen.getByText('Here is a calm evening.')).toBeOnTheScreen();
     expect(useIntentStore.getState().pendingCoachPrompt).toBeNull();
     expect(api.sentAll('/coach')).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('"Report this reply" (Android COACH-7, Play\'s AI-generated content policy)', () => {
+  const REPLY = 'Laugardalslaug is open until 22.';
+  const REPORT = 'Report this reply';
+  const reportButtons = () => screen.queryAllByRole('button', { name: REPORT });
+
+  async function ask(words: string) {
+    const input = screen.getByTestId('coach.input');
+    await fireEvent.changeText(input, words);
+    await fireEvent(input, 'submitEditing');
+    await settle();
+  }
+
+  function sheetIsUp(): boolean {
+    return screen.queryByRole('header', { name: en('coach.report.title') }) !== null;
+  }
+
+  it('is offered on the Coach\'s reply only: never on the member\'s words or the greeting', async () => {
+    api.on('POST', '/coach', Reply.ok({ reply: REPLY }));
+    await renderCoach();
+    expect(reportButtons()).toHaveLength(0);
+    await ask('where can I swim tonight?');
+    expect(screen.getByText(en('coach.greeting'))).toBeOnTheScreen();
+    expect(screen.getByText('where can I swim tonight?')).toBeOnTheScreen();
+    expect(reportButtons()).toHaveLength(1);
+    // The one reportable bubble is the reply.
+    const bubbles = screen.getAllByTestId('coach.reply');
+    expect(bubbles).toHaveLength(1);
+    expect(within(bubbles[0]!).getByText(REPLY)).toBeOnTheScreen();
+  });
+
+  it('is never offered on the app\'s own sentences: a busy Coach, an error, an empty answer', async () => {
+    await renderCoach();
+    api.on('POST', '/coach', Reply.problem(503, 'coach-busy'));
+    await ask('hello');
+    expect(screen.getByText(en('coach.busy'))).toBeOnTheScreen();
+    api.on('POST', '/coach', Reply.problem(500, 'internal_error'));
+    await ask('hello again');
+    api.on('POST', '/coach', Reply.ok({ reply: '  ' }));
+    await ask('and again');
+    expect(screen.getByText(en('coach.ai_unavailable'))).toBeOnTheScreen();
+    expect(reportButtons()).toHaveLength(0);
+    expect(screen.queryAllByTestId('coach.reply')).toHaveLength(0);
+  });
+
+  it('the "..." opens the sheet, and Send reports the reply exactly as shown, with no other turn', async () => {
+    api.on('POST', '/coach', Reply.ok({ reply: REPLY }));
+    api.on('POST', '/coach/reports', Reply.ok({ id: 'f1e2d3c4-b5a6-4789-8abc-def012345678', createdAt: '2026-10-28T12:00:00Z' }, 201));
+    await renderCoach();
+    await ask('where can I swim tonight?');
+
+    await fireEvent.press(reportButtons()[0]!);
+    await settle();
+    expect(sheetIsUp()).toBe(true);
+    await fireEvent.press(screen.getByRole('radio', { name: 'Wrong or misleading' }));
+    await fireEvent.press(screen.getByRole('button', { name: en('coach.report.send') }));
+    await settle();
+
+    const sent = api.sent('/coach/reports', 'POST');
+    expect(sent.body).toEqual({ reply: REPLY, reason: 'inaccurate', locale: 'en' });
+    expect(JSON.stringify(sent.body)).not.toContain('where can I swim tonight?');
+    expect(sent.headers['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);
+    expect(screen.getByText("Thanks. We'll look at it.")).toBeOnTheScreen();
+    expect(sheetIsUp()).toBe(false);
+    // The chat is as it was.
+    expect(screen.getByText(REPLY)).toBeOnTheScreen();
+  });
+
+  it('a long-press on the reply opens the sheet too', async () => {
+    api.on('POST', '/coach', Reply.ok({ reply: REPLY }));
+    await renderCoach();
+    await ask('where can I swim tonight?');
+    await fireEvent(screen.getByTestId('coach.reply'), 'longPress');
+    await settle();
+    expect(sheetIsUp()).toBe(true);
+    // Cancel closes it with nothing sent.
+    await fireEvent.press(screen.getByRole('button', { name: en('common.cancel') }));
+    await settle();
+    expect(sheetIsUp()).toBe(false);
+    expect(api.sentAll('/coach/reports')).toHaveLength(0);
+  });
+
+  it('TalkBack reads the reply and offers "Report this reply" as an action on it', async () => {
+    api.on('POST', '/coach', Reply.ok({ reply: REPLY }));
+    await renderCoach();
+    await ask('where can I swim tonight?');
+    const bubble = screen.getByTestId('coach.reply');
+    // One focusable bubble that reads as its words, with the action on it.
+    expect(bubble.props.accessible).not.toBe(false);
+    expect(within(bubble).getByText(REPLY)).toBeOnTheScreen();
+    expect(bubble.props.accessibilityActions).toEqual([{ name: 'reportReply', label: REPORT }]);
+    await fireEvent(bubble, 'accessibilityAction', { nativeEvent: { actionName: 'activate' } });
+    await settle();
+    expect(sheetIsUp()).toBe(false);
+    await fireEvent(bubble, 'accessibilityAction', { nativeEvent: { actionName: 'reportReply' } });
+    await settle();
+    expect(sheetIsUp()).toBe(true);
+  });
+
+  it('is on a venue answer\'s own intro and on a class answer\'s reply', async () => {
+    const sky = decodeVenue({ id: '00000000-0000-4000-8000-000000000002', slug: 'sky-lagoon', name: 'Sky Lagoon', inBundle: true });
+    api.on('GET', '/venues/by-slug/:slug', Reply.ok(venueToApi(sky)));
+    api.on('POST', '/coach', Reply.ok({ reply: '{"type":"venues","intro":"A calm evening.","venues":[{"id":"sky-lagoon","name":"Sky Lagoon"}]}' }));
+    await renderCoach();
+    await ask('somewhere calm?');
+    expect(within(screen.getByTestId('coach.reply')).getByText('A calm evening.')).toBeOnTheScreen();
+
+    api.on('POST', '/coach', Reply.json(200, envelope(onDay(CARDS_EN, '2099-10-13'))));
+    await ask('any classes in Akureyri?');
+    expect(screen.getAllByTestId('coach.reply')).toHaveLength(2);
+    expect(reportButtons()).toHaveLength(2);
+  });
+
+  it('is in Icelandic for an Icelandic account', async () => {
+    useAppStore.setState({ profile: profile({ locale: 'is' }) });
+    api.on('POST', '/coach', Reply.ok({ reply: 'Laugardalslaug er opin til 22.' }));
+    await renderCoach();
+    await ask('hvar get ég synt?');
+    expect(screen.getAllByRole('button', { name: lookup('coach.report.action', 'is') })).toHaveLength(1);
+    expect(screen.getByTestId('coach.reply').props.accessibilityActions).toEqual([
+      { name: 'reportReply', label: lookup('coach.report.action', 'is') },
+    ]);
   });
 });
 

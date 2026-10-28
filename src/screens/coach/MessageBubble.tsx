@@ -4,9 +4,17 @@
 // the member's turns on the darker action blue (white text 6.0:1), the
 // Coach's on glass with a hairline. Both keep the iOS corner cut: 4 on the
 // side the bubble comes from, 18 elsewhere.
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+//
+// "Report this reply" (Android only, COACH-7; Google Play's AI-generated
+// content policy): a bubble with the model's own words gets `onReport`, and
+// then three ways to the report sheet, as a review card has its "...": a
+// small "..." button beside the bubble, a long-press on the bubble, and a
+// TalkBack action named "Report this reply" on it. The member's own
+// bubbles, the greeting and the app's own sentences never get one (the
+// store marks which bubbles are the model's: `isReportableReply`).
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Pressable, StyleSheet, View, useWindowDimensions, type AccessibilityActionEvent } from 'react-native';
 
 import { LPText } from '../../components/ui';
 import { hiddenFromAccessibility } from '../../components/ui/a11y';
@@ -37,24 +45,77 @@ export const assistantBubbleStyle = {
   borderBottomRightRadius: 18,
 } as const;
 
-/** A row with the avatar and a glass bubble of `text` (the venue carousel's and the strip's intro). */
-export function AssistantText({ text }: { text: string }) {
+/** The TalkBack action on a reportable bubble. */
+export const REPORT_REPLY_ACTION = 'reportReply';
+
+/** How long a press on a reply must last to open the report sheet (Android's own long-press is 400 to 500 ms). */
+const REPORT_LONG_PRESS_MS = 450;
+
+/**
+ * A row with the avatar and a glass bubble of `text` (a reply, the venue
+ * carousel's and the class list's intro, the strip's prompt). `onReport`:
+ * the bubble is the model's own words, and offers "Report this reply".
+ */
+export function AssistantText({ text, onReport }: { text: string; onReport?: () => void }) {
   const { width } = useWindowDimensions();
+  const { t } = useT();
+  const words = (
+    <LPText size={14} color={coachPalette.textPrimary} style={styles.text}>
+      {text}
+    </LPText>
+  );
+  if (!onReport) {
+    return (
+      <View style={styles.row}>
+        <CoachAssistantAvatar />
+        <View style={[styles.bubble, assistantBubbleStyle, { maxWidth: width * 0.75 }]}>{words}</View>
+      </View>
+    );
+  }
+  const label = t('coach.report.action');
+  const onAction = (event: AccessibilityActionEvent) => {
+    if (event.nativeEvent.actionName === REPORT_REPLY_ACTION) onReport();
+  };
   return (
     <View style={styles.row}>
       <CoachAssistantAvatar />
-      <View style={[styles.bubble, assistantBubbleStyle, { maxWidth: width * 0.75 }]}>
-        <LPText size={14} color={coachPalette.textPrimary} style={styles.text}>
-          {text}
-        </LPText>
-      </View>
+      {/* The bubble reads as its words; long-press and TalkBack's action report it. */}
+      <Pressable
+        onLongPress={onReport}
+        delayLongPress={REPORT_LONG_PRESS_MS}
+        accessibilityActions={[{ name: REPORT_REPLY_ACTION, label }]}
+        onAccessibilityAction={onAction}
+        style={[styles.bubble, assistantBubbleStyle, { maxWidth: width * 0.75 }]}
+        testID="coach.reply"
+      >
+        {words}
+      </Pressable>
+      <Pressable
+        onPress={onReport}
+        hitSlop={12}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        style={({ pressed }) => [styles.more, pressed && styles.morePressed]}
+        testID="coach.reply.report"
+      >
+        <Ionicons name="ellipsis-horizontal" size={16} color={coachPalette.textMeta} {...hiddenFromAccessibility} />
+      </Pressable>
     </View>
   );
 }
 
-export function MessageBubble({ role, text }: { role: 'user' | 'assistant'; text: string }) {
+export function MessageBubble({
+  role,
+  text,
+  onReport,
+}: {
+  role: 'user' | 'assistant';
+  text: string;
+  /** An assistant bubble with the model's own words: offers "Report this reply". Never on the member's own. */
+  onReport?: () => void;
+}) {
   const { width } = useWindowDimensions();
-  if (role === 'assistant') return <AssistantText text={text} />;
+  if (role === 'assistant') return <AssistantText text={text} onReport={onReport} />;
   return (
     <View style={[styles.row, styles.rowUser]}>
       <View style={[styles.bubble, styles.userBubble, { maxWidth: width * 0.75 }]}>
@@ -109,6 +170,9 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 18,
   },
   text: { lineHeight: 20 },
+  // The "..." beside a reply: 24 dp, 48 with its hit slop; it never squeezes the bubble's words away.
+  more: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  morePressed: { opacity: 0.6 },
   typing: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingVertical: 14 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: coachPalette.textSecondary },
 });

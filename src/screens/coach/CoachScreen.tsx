@@ -27,6 +27,11 @@
 // The saved chats are read only once the sign-in hook has claimed them for
 // this member (src/features/coach/register.ts); the screen never reads them
 // on a sign-in of its own, since the tabs can stay mounted through one.
+//
+// "Report this reply" (Android only, COACH-7): every bubble the store marks
+// as the model's own words (`isReportableReply`) offers it, and this screen
+// presents the report sheet (src/features/coach/report), one instance per
+// opening so each has its own choices and Idempotency-Key.
 import { useFocusEffect } from '@react-navigation/native';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -54,7 +59,8 @@ import { bookPlanClass } from '../../features/coach/dayPlan/wizard';
 import { inputPromptKey } from '../../features/coach/freeTier/freeTier';
 import FreeTierStrip from '../../features/coach/freeTier/FreeTierStrip';
 import type { CoachRoute } from '../../features/coach/store/host';
-import { hasStartedChat, isFlowBubble, type CoachMessage } from '../../features/coach/store/messages';
+import { ReplyReportSheet } from '../../features/coach/report';
+import { hasStartedChat, isFlowBubble, isReportableReply, type CoachMessage } from '../../features/coach/store/messages';
 import {
   COACH_FLOWS,
   selectIsAILocked,
@@ -121,6 +127,9 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
   const keyboard = useKeyboardCoverage();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
+  // The report sheet on screen (kept while it slides away), one per opening.
+  const [report, setReport] = useState<{ id: number; reply: string; visible: boolean } | null>(null);
+  const reportCount = useRef(0);
 
   // The input's text is NOT read here (./CoachInputBar below): a keystroke or
   // a dictation partial re-renders the bar, not every row of the chat.
@@ -265,6 +274,14 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
 
   const openVenue = useCallback((venue: Venue) => perform({ kind: 'venue', slug: venue.slug }), [perform]);
 
+  /** A reply's "...", long-press or TalkBack action: the report sheet for its words (one at a time). */
+  const openReport = useCallback((message: CoachMessage) => {
+    Keyboard.dismiss();
+    reportCount.current += 1;
+    const id = reportCount.current;
+    setReport((current) => current ?? { id, reply: message.text, visible: true });
+  }, []);
+
   /** The app's own memberships screen; the public plans page only when the server asks for one this build has no screen for. */
   const openMembership = useCallback(() => {
     if (upgrade?.action && upgrade.action !== 'plans' && upgrade.url) {
@@ -387,6 +404,7 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
                   message={message}
                   busy={isFlowBubble(message) ? isTyping : false}
                   onBook={openVenue}
+                  onReport={openReport}
                   onOffset={noteOffset}
                 />
               ))}
@@ -444,6 +462,16 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
       />
 
       <SavedSheet visible={savedOpen} onClose={() => setSavedOpen(false)} />
+
+      {report ? (
+        <ReplyReportSheet
+          key={report.id}
+          visible={report.visible}
+          reply={report.reply}
+          onClose={() => setReport((current) => (current ? { ...current, visible: false } : current))}
+          onClosed={() => setReport((current) => (current && !current.visible ? null : current))}
+        />
+      ) : null}
     </View>
   );
 }
@@ -458,25 +486,29 @@ type MessageRowProps = {
   /** For a flow's own bubble only (iOS `isBusy: vm.isTyping`); false for every other row. */
   busy: boolean;
   onBook: (venue: Venue) => void;
+  /** "Report this reply" on a bubble with the model's own words. */
+  onReport: (message: CoachMessage) => void;
   onOffset: (id: string, y: number) => void;
 };
 
-const MessageRow = memo(function MessageRow({ message, busy, onBook, onOffset }: MessageRowProps) {
+const MessageRow = memo(function MessageRow({ message, busy, onBook, onReport, onOffset }: MessageRowProps) {
   return (
     <View onLayout={(event: LayoutChangeEvent) => onOffset(message.id, event.nativeEvent.layout.y)}>
-      <MessageContent message={message} busy={busy} onBook={onBook} />
+      <MessageContent message={message} busy={busy} onBook={onBook} onReport={onReport} />
     </View>
   );
 });
 
-function MessageContent({ message, busy, onBook }: Omit<MessageRowProps, 'onOffset'>) {
+function MessageContent({ message, busy, onBook, onReport }: Omit<MessageRowProps, 'onOffset'>) {
+  // Only the model's own words, never the member's turn or the app's sentences.
+  const report = isReportableReply(message) ? () => onReport(message) : undefined;
   if (isFlowBubble(message)) {
     const Renderer = COACH_FLOWS[message.flow].renderers[message.kind];
     // The message as the store keeps it (no copy), so a renderer can memoise on it.
     if (Renderer) return <Renderer message={message} busy={busy} />;
   }
   if (message.venues && message.venues.length > 0) {
-    return <VenueCarouselMessage intro={message.text} venues={message.venues} onBook={onBook} />;
+    return <VenueCarouselMessage intro={message.text} venues={message.venues} onBook={onBook} onReport={report} />;
   }
   if (message.classCards && message.classCards.length > 0) {
     // The chat's class cards (API 0.36.0): Book opens the same class sheet
@@ -488,6 +520,7 @@ function MessageContent({ message, busy, onBook }: Omit<MessageRowProps, 'onOffs
         hidden={!!message.classCardsHidden}
         onSetHidden={(hidden) => useCoachStore.getState().setClassCardsHidden(hidden, message.id)}
         onBook={bookPlanClass}
+        onReport={report}
       />
     );
   }
@@ -510,7 +543,7 @@ function MessageContent({ message, busy, onBook }: Omit<MessageRowProps, 'onOffs
       />
     );
   }
-  return <MessageBubble role={message.role} text={message.text} />;
+  return <MessageBubble role={message.role} text={message.text} onReport={report} />;
 }
 
 // ---------------------------------------------------------------------------
