@@ -187,6 +187,7 @@ describe('config fragments', () => {
       'buildProperties',
       'speech',
       'healthConnect',
+      'releaseHardening',
     ]);
   });
 
@@ -210,7 +211,7 @@ describe('config fragments', () => {
 
   it('targets an API level Google Play accepts', () => {
     expect(pluginOptions(config, 'expo-build-properties')?.android).toEqual(buildProperties.ANDROID_SDK);
-    expect(buildProperties.ANDROID_SDK.targetSdkVersion).toBeGreaterThanOrEqual(35);
+    expect(buildProperties.ANDROID_SDK.targetSdkVersion).toBeGreaterThanOrEqual(36);
     expect(buildProperties.ANDROID_SDK.compileSdkVersion).toBeGreaterThanOrEqual(buildProperties.ANDROID_SDK.targetSdkVersion);
   });
 
