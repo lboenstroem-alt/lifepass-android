@@ -179,7 +179,7 @@ rules: `store-listing.en.md`, `store-listing.is.md`.
 | Privacy policy | https://www.lifepass.is/privacy |
 | Ads | No ads |
 | Advertising ID (if asked) | Not used (the permission is blocked in the manifest) |
-| Data safety | `data-safety.md`, including the account deletion URL **https://www.lifepass.is/profile** |
+| Data safety | `data-safety.md` (corrected 28 Oct: Mapbox and Google ML Kit send install ids and diagnostics, so Device or other IDs and Diagnostics are ticked). The Delete account URL is the public **https://www.lifepass.is/delete-account** page, once it is live (`data-safety.md` section 5), not `/profile`, which asks a signed-out reviewer to sign in |
 | Government apps | No |
 | Financial features | My app doesn't provide any financial features |
 | News app | No |
