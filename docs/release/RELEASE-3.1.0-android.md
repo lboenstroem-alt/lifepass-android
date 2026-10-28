@@ -57,9 +57,11 @@ my plan, and, new in 3.1.0, **change your plan by telling the Coach**: it
 shows the change, nothing changes until Apply, and Undo stays. "Change with
 Coach" on the Today card and the session preview, and "I don't have this"
 in the workout's swap sheet. Saved chats stay on the phone. Android only,
-also new in 3.1.0: **"Report this reply"** on every Coach reply (the "..."
-beside it, a long-press, or TalkBack's action), for Google Play's
-AI-generated content policy (section 5).
+also new in 3.1.0: **"Report this reply"** on the Coach's chat replies and
+on a Plan my day plan (the "..." beside the reply or the plan's intro, a
+long-press, or TalkBack's action), for Google Play's AI-generated content
+policy. Not on the health lane's replies (Get a 4-week plan, Adjust my
+plan, changing the plan by telling the Coach); section 5 says why.
 
 **Plan tab** (members 18 and over, after the separate health consent).
 Today's card and the session preview, the guided workout with sets, reps,
@@ -89,8 +91,9 @@ LifePass" with only an Update button. No answer means no prompt.
 
 **Android only.** "Report review" on every review card (Google Play's
 policy for user content asks for it; iOS has no report action yet), and
-"Report this reply" on every Coach reply (Play's policy for AI-generated
-content). The hardware Back button closes sheets and steps back everywhere.
+"Report this reply" on the Coach's chat replies and day plans (Play's
+policy for AI-generated content; not on the health lane, section 5). The
+hardware Back button closes sheets and steps back everywhere.
 
 ## 2. Known differences from iOS 3.1.0
 
@@ -106,7 +109,7 @@ content). The hardware Back button closes sheets and steps back everywhere.
 | Update prompt | The server reads the App Store version itself | The server cannot see Google Play: the latest version is `APP_LATEST_VERSION_ANDROID`, set by hand (section 7) | Play has no public lookup |
 | Rest timer | One "Rest is over" notification | The same; Android's battery saving can delay it by a little, as there is no exact-alarm permission | Decisions D9, D10 |
 | Reviews | Read and write | Read, write and **report** | Decision D5, Play UGC policy |
-| Report a Coach reply | Not there | **"Report this reply"** on each Coach reply: a reason (offensive or hateful, harmful or unsafe advice, wrong or misleading, something else) and an optional note; only that reply is sent | Owner decision (28 Oct), Play AI-generated content policy; Android only |
+| Report a Coach reply | Not there | **"Report this reply"** on each Coach chat reply and day plan: a reason (offensive or hateful, harmful or unsafe advice, wrong or misleading, something else) and an optional note; only that reply is sent (for a plan, its intro and its steps' notes). Not on the health lane's replies | Owner decision (28 Oct), Play AI-generated content policy; Android only |
 | Deleting the account | One request key per sheet | A new request key after each answer, so "Keep my account" then Delete again is a fresh request | Engineering note in the parity decisions |
 | A payment still being confirmed | Continue on another plan starts a new checkout | Continue brings back "Confirming your payment…" until that check ends | Android opens one payment at a time |
 | Layout | iPhone and iPad | Phones, portrait only; a tablet shows the phone layout | Not built |
@@ -146,9 +149,12 @@ server sends a number.
 reply" sends `POST /api/v1/coach/reports`. The web release with that
 route, its table, the retention job and `/admin/coach-reports` must be in
 production before this build is submitted (Play's reviewers may try it).
-Check: `curl -i -X POST https://www.lifepass.is/api/v1/coach/reports`
-(no token, so nothing is stored) answers with an `application/problem+json`
-refusal (401, sign-in required), **not 404**. A build that reaches members
+Check: `curl -i -X POST -H 'Authorization: Bearer invalid' https://www.lifepass.is/api/v1/coach/reports`
+(a token that is not a session, so nothing is stored) answers with an
+`application/problem+json` refusal (401, `authentication_required`),
+**not 404**. Leave the dummy token in: without any token the route's
+origin check answers first, with a 403 (`request_origin_not_allowed`),
+which proves nothing about the route. A build that reaches members
 before the route exists tells them "We couldn't complete that. Try again
 or contact support." and stores nothing.
 
@@ -244,17 +250,30 @@ and where it is:
 for a way to report offensive AI output without leaving the app. Where it
 is:
 
-- Report in the app: every Coach reply has a "..." beside it (also a
-  long-press on the reply, and a "Report this reply" action for TalkBack)
-  → **Report this reply** → a reason (offensive or hateful, harmful or
+- Report in the app: every Coach chat reply has a "..." beside it, and so
+  does the intro of a "Plan my day" plan (also a long-press on the reply
+  or the intro, and a "Report this reply" action for TalkBack) →
+  **Report this reply** → a reason (offensive or hateful, harmful or
   unsafe advice, wrong or misleading, something else) and an optional note
   (500 characters) → Send. The toast says "Thanks. We'll look at it."
   Twenty reports per account per 24 hours; after that the sheet says to
   try again later. Never on the member's own messages or on the app's own
-  sentences (errors, limits). Android only for now.
-- What is sent: the reply's words exactly as shown, the reason, the note
-  and the app language. Nothing else of the conversation; the member's own
-  messages stay on the phone.
+  sentences (errors, limits, the venue wizard's lists, a plan's fallback
+  intro). Android only for now. To show a reviewer: ask the Coach
+  anything, or tap "Plan my day" and answer the four questions.
+- Not on the health lane (members 18 and over, after the separate health
+  consent): Get a 4-week plan, Adjust my plan and changing the plan by
+  telling the Coach have no report action. Their replies are health data;
+  a report would copy them into the reports table, which is not kept as
+  health data, so they are left out on purpose (data minimisation, privacy
+  policy 2.A; the saved chats leave the same turns out). If Play's review
+  asks for reporting there too, it needs a report kept with the health
+  data, a separate change.
+- What is sent: the reply's words exactly as shown (for a day plan, its
+  intro and each step's note, as the card draws them), the reason, the
+  note and the app language. Nothing else of the conversation; the
+  member's own messages and their answers to the plan's questions stay on
+  the phone.
 - Moderation: lifepass.is/admin/coach-reports (newest first, unreviewed
   first): read the reply, reason and note, mark it reviewed with an
   optional note; every action goes to the admin audit log. A report is
@@ -364,12 +383,14 @@ On `candidate/next-release` with the version at 3.1.0 (28 Oct 2026):
 - No real partner or union discount code anywhere in the repository
   (`git grep` for the known codes finds nothing).
 
-Again with "Report this reply" added (branch `parity/coach-reply-report`,
-28 Oct 2026): `npx tsc --noEmit` and `npx eslint .` with no errors;
-`npx jest --maxWorkers=4`: 489 of 489 suites, 7,675 tests passed, 1
-skipped; the Coach suites also pass under `TZ=America/New_York` and
-`TZ=Asia/Tokyo`. The branch's only new copy is the report sheet's, with
-no discount code in it.
+Again with "Report this reply" added, and after its review fixes (the
+sheet reopening after a swipe down, a 401 that keeps the session, the day
+plan's report; branch `parity/coach-reply-report`, 28 Oct 2026):
+`npx tsc --noEmit` and `npx eslint .` with no errors; `TZ=UTC npx jest
+--ci --maxWorkers=3`: 489 of 489 suites, 7,684 tests passed, 1 skipped;
+the Coach suites (44 suites, 925 tests) also pass under
+`TZ=America/New_York` and `TZ=Asia/Tokyo`. The branch's only new copy is
+the report sheet's, with no discount code in it.
 
 Not done here, still to do: the EAS production build, an install of that
 build on a phone, App Link verification (waits for section 6, item 1),

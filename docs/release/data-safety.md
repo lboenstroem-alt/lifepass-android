@@ -61,7 +61,7 @@ first (section 5); it is a web change, not an app change.
 | Health and fitness → **Fitness info** | Workout plans, workouts and sets, logged workouts, how a session felt, the monthly feedback switches | Optional | App functionality | Health & Fitness → Fitness |
 | Photos and videos → **Photos** | A meal photo, sent once to make the estimate: LifePass never stores it; Anthropic, our processor, deletes it within 30 days under its standard retention (Privacy 2.G and 4.E). The phone shrinks it and strips its metadata first | Optional | App functionality | User Content → Photos or Videos |
 | Location → **Approximate location** | The Coach's "near me": a position rounded to about a kilometre on the phone, and again on the server. **Processed ephemerally: No** (see note B) | Optional | App functionality | Location → Coarse Location |
-| App activity → **Other user-generated content** | Coach chat messages, foods a member creates, venue reviews (rating, comment, visit date), reports of a review, and reports of a Coach reply (Android only: the reply's own words as shown, a reason and an optional note of up to 500 characters; nothing else of the chat, so the member's own messages never travel with it; deleted 180 days after the report, or at once with the account) | Optional | App functionality | User Content → Other User Content |
+| App activity → **Other user-generated content** | Coach chat messages, foods a member creates, venue reviews (rating, comment, visit date), reports of a review, and reports of a Coach reply (Android only: the reply's own words as shown, for a day plan its intro and its steps' notes, a reason and an optional note of up to 500 characters; nothing else of the chat, so the member's own messages never travel with it; deleted 180 days after the report, or at once with the account) | Optional | App functionality | User Content → Other User Content |
 | App activity → **In-app search history** | Venue and class searches: the typed words go to the LifePass API in the request address, and hosting logs keep those for up to 90 days. Food searches are sent in the request body and not kept. **Processed ephemerally: No** | Optional | App functionality | (not on the iOS label) |
 | App activity → **Other actions** | Saved venues and activities (the heart), kept with the account until unsaved, and whether a monthly feedback report was seen or dismissed | Optional | App functionality | (not on the iOS label) |
 | Messages → **Other in-app messages** | The Coach chat, a conversation with the AI Coach (there is no messaging between members). Anthropic keeps it up to 30 days. Also under user-generated content above; declaring both is the safe side | Optional | App functionality | User Content → Other User Content |
@@ -171,10 +171,12 @@ these places (owner wording, agent can draft the web PR):
   technical diagnostics with a per-installation id, not the code or the
   image. Add Google (ML Kit) to the processor list in section 4.
 - **Reports of a Coach reply** (Android only for now): a member can
-  report a Coach reply; LifePass stores the reply's words, the reason, the
-  optional note, the language, the reporting account and when, for the
-  LifePass team to review, and deletes it 180 days after it was made or
-  at once with the account. None of the member's own messages is sent.
+  report a Coach chat reply or a day plan (never a reply in the health
+  lane); LifePass stores the reply's words (for a day plan, its intro and
+  its steps' notes), the reason, the optional note, the language, the
+  reporting account and when, for the LifePass team to review, and
+  deletes it 180 days after it was made or at once with the account. None
+  of the member's own messages is sent.
 - **The data inventory** (lifepass-monorepo `docs/14_DATA_INVENTORY.md`)
   lists Mapbox only for the website and has no ML Kit row; add both, and
   the Coach reports table.
