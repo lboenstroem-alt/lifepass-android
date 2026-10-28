@@ -25,7 +25,7 @@ import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMo
 import { decodeHealthDay } from '../../../../health/models';
 import { resetHealthStoreForTests, useHealthStore } from '../../../../health/store';
 import { setCurrentLanguage, translate } from '../../../../i18n';
-import { addServerDays, todayServerDay } from '../../../../i18n/format';
+import { addServerDays, localTime, todayServerDay } from '../../../../i18n/format';
 import { resetAppStoreForTests, useAppStore } from '../../../../stores/appStore';
 import { resetIntentStoreForTests, useIntentStore } from '../../../../stores/intentStore';
 import { setMealApi, type MealApi } from '../../api/mealApi';
@@ -270,8 +270,8 @@ it('draws the day: summary against the target, drafts, slots with meals and item
   // Both drafts, once each, under their own names.
   const drafts = within(screen.getByTestId('diary.drafts'));
   expect(drafts.getByText(en('diary.drafts').toUpperCase())).toBeOnTheScreen();
-  expect(drafts.getByText(en('diary.draft_row', { time: '18:10' }))).toBeOnTheScreen();
-  expect(drafts.getByText(en('diary.draft_row_text', { time: '12:40' }))).toBeOnTheScreen();
+  expect(drafts.getByText(en('diary.draft_row', { time: localTime(new Date(`${TODAY}T18:10:00.000Z`)) }))).toBeOnTheScreen();
+  expect(drafts.getByText(en('diary.draft_row_text', { time: localTime(new Date(`${TODAY}T12:40:00.000Z`)) }))).toBeOnTheScreen();
 
   const breakfast = within(screen.getByTestId('diary.slot.breakfast'));
   expect(breakfast.getByText(en('slot.breakfast'))).toBeOnTheScreen();
@@ -281,7 +281,7 @@ it('draws the day: summary against the target, drafts, slots with meals and item
   expect(breakfast.getByText('90 kcal')).toBeOnTheScreen(); // the server's own number for an untouched item, not 120 g recomputed
   expect(breakfast.getByText('120 g')).toBeOnTheScreen();
   expect(screen.getByTestId('diary.meal.breakfast-1').props.accessibilityLabel).toBe(
-    en('a11y.open_meal', { slot: en('slot.breakfast'), time: '08:05' }),
+    en('a11y.open_meal', { slot: en('slot.breakfast'), time: localTime(new Date(`${TODAY}T08:05:00.000Z`)) }),
   );
   expect(within(screen.getByTestId('diary.slot.dinner')).queryByTestId('diary.slot.dinner.kcal')).toBeNull();
   for (const slot of ['breakfast', 'lunch', 'dinner', 'snack', 'drink']) expect(screen.getByTestId(`diary.add.${slot}`)).toBeOnTheScreen();
@@ -651,7 +651,7 @@ it('offline today falls back to the cached Today read with the banner, and offer
   });
   serveDays({ [TODAY]: new TransportError('offline'), [YESTERDAY]: day(dayJSON(YESTERDAY, { meals: [mealJSON('y', YESTERDAY, { slot: 'lunch' })] })) });
   await renderDiary();
-  expect(within(screen.getByTestId('diary.offline')).getByText(en('health.offline.banner', { time: '07:30' }))).toBeOnTheScreen();
+  expect(within(screen.getByTestId('diary.offline')).getByText(en('health.offline.banner', { time: localTime(new Date(`${TODAY}T07:30:00.000Z`)) }))).toBeOnTheScreen();
   expect(screen.getByText('Oats')).toBeOnTheScreen();
   expect(screen.queryByTestId('diary.copy.lunch')).toBeNull();
 });
@@ -700,7 +700,7 @@ it('speaks Icelandic', async () => {
   await renderDiary();
   const is = (key: string, params?: Record<string, string | number>) => translate(key, 'is', params);
   expect(screen.getByText(is('diary.title').toLocaleUpperCase('is'))).toBeOnTheScreen();
-  expect(screen.getByText(is('diary.draft_row_text', { time: '12:40' }))).toBeOnTheScreen();
+  expect(screen.getByText(is('diary.draft_row_text', { time: localTime(new Date(`${TODAY}T12:40:00.000Z`)) }))).toBeOnTheScreen();
   expect(screen.getByTestId('diary.summary.status')).toHaveTextContent(is('diary.left', { kcal: '1.390' }));
 });
 
