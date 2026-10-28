@@ -433,6 +433,32 @@ describe('"Report this reply" (Android COACH-7, Play\'s AI-generated content pol
     expect(api.sentAll('/coach/reports')).toHaveLength(0);
   });
 
+  it('opens again after the member swipes it down or taps the backdrop', async () => {
+    api.on('POST', '/coach', Reply.ok({ reply: REPLY }));
+    await renderCoach();
+    await ask('where can I swim tonight?');
+    await fireEvent.press(reportButtons()[0]!);
+    await settle();
+    expect(sheetIsUp()).toBe(true);
+    // The library reports the sheet gone while it is still meant to be up: a
+    // pan down or a tap on the backdrop (the Sheet's onClosed, then onClose).
+    await act(async () => bottomSheetMock.latest()!.onDismiss!());
+    await settle();
+    expect(sheetIsUp()).toBe(false);
+
+    // The "..." opens a fresh sheet, and so does a long-press after that one goes the same way.
+    await fireEvent.press(reportButtons()[0]!);
+    await settle();
+    expect(sheetIsUp()).toBe(true);
+    await act(async () => bottomSheetMock.latest()!.onDismiss!());
+    await settle();
+    expect(sheetIsUp()).toBe(false);
+    await fireEvent(screen.getByTestId('coach.reply'), 'longPress');
+    await settle();
+    expect(sheetIsUp()).toBe(true);
+    expect(api.sentAll('/coach/reports')).toHaveLength(0);
+  });
+
   it('TalkBack reads the reply and offers "Report this reply" as an action on it', async () => {
     api.on('POST', '/coach', Reply.ok({ reply: REPLY }));
     await renderCoach();

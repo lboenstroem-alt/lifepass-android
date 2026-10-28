@@ -282,6 +282,20 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
     setReport((current) => current ?? { id, reply: message.text, visible: true });
   }, []);
 
+  /** That presentation asked to close (Cancel, Back, Send, a pan down): it slides away. */
+  const closeReport = useCallback((id: number) => {
+    setReport((current) => (current?.id === id ? { ...current, visible: false } : current));
+  }, []);
+
+  /**
+   * That presentation has gone: the next "..." opens a new one. Matched by its
+   * id, never by `visible`: the member's pan down or backdrop tap reports
+   * `onClosed` BEFORE `onClose` (the UI kit Sheet), while it still counts as up.
+   */
+  const clearReport = useCallback((id: number) => {
+    setReport((current) => (current?.id === id ? null : current));
+  }, []);
+
   /** The app's own memberships screen; the public plans page only when the server asks for one this build has no screen for. */
   const openMembership = useCallback(() => {
     if (upgrade?.action && upgrade.action !== 'plans' && upgrade.url) {
@@ -468,8 +482,8 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
           key={report.id}
           visible={report.visible}
           reply={report.reply}
-          onClose={() => setReport((current) => (current ? { ...current, visible: false } : current))}
-          onClosed={() => setReport((current) => (current && !current.visible ? null : current))}
+          onClose={() => closeReport(report.id)}
+          onClosed={() => clearReport(report.id)}
         />
       ) : null}
     </View>
