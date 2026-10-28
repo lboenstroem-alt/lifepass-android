@@ -496,11 +496,15 @@ describe('the call', () => {
     await coach().startPlan('coach.chip.plan_day');
     await answerAll({ goal: 'relax', area: 'capital', when: 'now', duration: 'short' });
     expect(texts().at(-1)).toBe(en('coach.plan.empty'));
+    // The app's own sentence: no "Report this reply" on it (Android COACH-7).
+    expect(messages().at(-1)!.aiReply).toBeUndefined();
 
     api.once('POST', '/coach', Reply.ok({ reply: 'Nothing fits, but Sky Lagoon is lovely tonight.' }));
     restartDayPlan();
     await answerAll({ goal: 'relax', area: 'capital', when: 'now', duration: 'short' });
     expect(messages().at(-1)).toMatchObject({ role: 'assistant', text: 'Nothing fits, but Sky Lagoon is lovely tonight.' });
+    // The model's own words: they can be reported.
+    expect(messages().at(-1)!.aiReply).toBe(true);
     expect(planMessages()).toHaveLength(0);
   });
 

@@ -53,12 +53,12 @@ import { fetchVenueBySlug } from '../../../api/venues';
 import type { SharedRouteNavigation } from '../../../navigation/sharedSheet';
 import type { Venue } from '../../../types/venue';
 import type * as ClassSheet from '../../classes/sheet';
-import { parseVenuePayload, resolveVenueCards, venuesReplyAsText } from '../chat/venueReply';
+import { parseVenuePayload, resolveVenueCards, venuesReplyAsText, venuesReplyHasModelWords } from '../chat/venueReply';
 import { runVenueQuery } from '../flows/venueWizard';
 import { isCoachBusy } from '../freeTier/freeTier';
 import { planIntentAnswers } from '../routing/intents';
 import { coachHost, type CoachBusyToken } from '../store/host';
-import { lastOpenQuestion, type CoachMessage } from '../store/messages';
+import { lastOpenQuestion, modelWords, type CoachMessage } from '../store/messages';
 import { postCoachPlan, type CoachPlanRequest } from './api';
 import { planChangeForChip, planVenueSlugs, type CoachPlan } from './decode';
 import { resolvePlanLocation, warmPlanLocation } from './location';
@@ -358,21 +358,29 @@ async function runPlan(request: CoachPlanRequest, fallbackAnswers: PlanAnswers |
   }
 }
 
-/** A reply without a plan, as the chat shows one (iOS `appendAssistantReply`). */
+/**
+ * A reply without a plan, as the chat shows one (iOS `appendAssistantReply`).
+ * The model's own words are marked `aiReply`, so they offer "Report this
+ * reply" (src/features/coach/report); the app's fallback intro is not.
+ */
 async function appendReply(text: string, busy: CoachBusyToken): Promise<void> {
   const host = coachHost();
   const payload = parseVenuePayload(text);
   if (!payload) {
-    host.append({ role: 'assistant', text });
+    host.append({ role: 'assistant', text, ...modelWords(true) });
     return;
   }
   const cards = await resolveVenueCards(payload);
   if (!busy.isCurrent()) return;
   if (cards.length > 0) {
     const intro = payload.intro?.trim();
-    host.append({ role: 'assistant', text: intro ? intro : host.t('coach.explore_fallback'), venues: cards });
+    host.append({ role: 'assistant', text: intro ? intro : host.t('coach.explore_fallback'), venues: cards, ...modelWords(!!intro) });
   } else {
-    host.append({ role: 'assistant', text: venuesReplyAsText(payload, (key) => host.t(key)) });
+    host.append({
+      role: 'assistant',
+      text: venuesReplyAsText(payload, (key) => host.t(key)),
+      ...modelWords(venuesReplyHasModelWords(payload)),
+    });
   }
 }
 
