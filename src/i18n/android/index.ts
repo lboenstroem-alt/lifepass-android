@@ -9,8 +9,9 @@
 // A package fills ITS OWN file (./<package-id>.ts); only F1 edits this list.
 // F1's own pack holds the few Android-only words two packages share.
 // Health Connect (HC-1, HC-2) is not built (owner decision), so it has no pack.
-// Two came after the parity plan, in this order: COACH-6 (changing the plan
-// in chat with the Coach) and UPDATE-1 (the update prompt).
+// Three came after the parity plan, in this order: COACH-6 (changing the plan
+// in chat with the Coach), UPDATE-1 (the update prompt) and COACH-7 ("Report
+// this reply" on the Coach's replies, Android only).
 import type { AndroidPack } from './pack';
 
 import F1 from './F1';
@@ -71,6 +72,7 @@ import QA_1 from './QA-1';
 import REL_1 from './REL-1';
 import COACH_6 from './COACH-6';
 import UPDATE_1 from './UPDATE-1';
+import COACH_7 from './COACH-7';
 
 export type { AndroidPack, PackTable } from './pack';
 export { definePack } from './pack';
@@ -140,4 +142,5 @@ export const androidPacks: readonly RegisteredPack[] = [
   { id: 'REL-1', pack: REL_1 },
   { id: 'COACH-6', pack: COACH_6 },
   { id: 'UPDATE-1', pack: UPDATE_1 },
+  { id: 'COACH-7', pack: COACH_7 },
 ];
