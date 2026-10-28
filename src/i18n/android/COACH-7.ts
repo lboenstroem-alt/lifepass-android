@@ -38,7 +38,7 @@ export default definePack({
   is: {
     'coach.report.action': 'Tilkynna þetta svar',
     'coach.report.title': 'Tilkynna þetta svar',
-    'coach.report.privacy': 'Aðeins þetta svar og það sem þú bætir við hér fer til LifePass-teymisins. Ekkert annað úr spjallinu er sent.',
+    'coach.report.privacy': 'Aðeins þetta svar og það sem þú bætir við hér fara til LifePass-teymisins. Ekkert annað úr spjallinu er sent.',
     'coach.report.reasons': 'Hvað er að svarinu?',
     'coach.report.reason.offensive': 'Móðgandi eða hatursfullt',
     'coach.report.reason.harmful': 'Skaðleg eða hættuleg ráð',
