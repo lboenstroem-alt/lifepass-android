@@ -43,7 +43,8 @@ export function nationalityFromEmail(email: string): string | null {
   // ("x.is.") yields "" -> null — matching the web semantics exactly.
   const tld = domain.split('.').pop();
   if (!tld) return null;
-  return TLD_TO_NATIONALITY[tld] ?? null;
+  // Own keys only: `x@y.constructor` must not find Object.prototype's.
+  return Object.prototype.hasOwnProperty.call(TLD_TO_NATIONALITY, tld) ? TLD_TO_NATIONALITY[tld] : null;
 }
 
 /**
@@ -51,7 +52,8 @@ export function nationalityFromEmail(email: string): string | null {
  * `COUNTRY_OPTIONS` exactly. `code` is the ISO alpha-2 value; an empty
  * selection means "unset" (nationality omitted at signup).
  */
-export const COUNTRY_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
+/* eslint-disable lifepass/no-literal-copy -- English in both languages on iOS too (Nationality.swift countryOptions) and on the web */
+export const COUNTRY_OPTIONS: readonly { code: string; label: string }[] = [
   { code: 'IS', label: 'Iceland' },
   { code: 'AU', label: 'Australia' },
   { code: 'AT', label: 'Austria' },
@@ -88,6 +90,7 @@ export const COUNTRY_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
   { code: 'GB', label: 'United Kingdom' },
   { code: 'US', label: 'United States' },
 ];
+/* eslint-enable lifepass/no-literal-copy */
 
 /** Display label for a stored code (for the picker's current value). */
 export function nationalityLabel(code: string): string | null {

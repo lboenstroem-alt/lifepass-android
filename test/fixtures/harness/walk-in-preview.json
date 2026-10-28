@@ -1,0 +1,12 @@
+{
+  "venue": { "id": "3f2b8c1e-7d4a-4b6e-9c2f-1a2b3c4d5e6f", "slug": "laugar", "name": "Laugar" },
+  "walkInsAllowed": true,
+  "activities": [],
+  "slotActivities": [],
+  "allowed": true,
+  "blockingReason": null,
+  "charge": null,
+  "attendableBooking": null,
+  "guestBands": [],
+  "coveredBy": null
+}

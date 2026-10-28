@@ -1,38 +1,40 @@
-import { View, Text, StyleSheet } from 'react-native';
+// The venue price tag on cards and rows: iOS `VenuePricePill`
+// (LifePassTheme.swift). In-bundle venues read "Included" (or "Limited visits"
+// for a boutique) in moss; premium venues read "from ISK X" (or "See venue")
+// in the signal accent. The words follow the language on screen.
+//
+// No line limit and no cap on font scaling, as iOS sets neither: at a large
+// text size the price wraps inside the pill rather than being cut short, so
+// the member always reads the whole figure they would pay.
+import { StyleSheet, View } from 'react-native';
+
+import LPText from './ui/LPText';
+import { useT } from '../i18n';
 import { colors } from '../theme';
-import { priceLabel, isPremium } from '../types/venue';
-import type { Venue } from '../types/venue';
+import { isPremium, priceLabel, type VenuePricing } from '../types/venue';
 
 type Props = {
-  venue: Pick<
-    Venue,
-    'inBundle' | 'surchargePrice' | 'resolvedSurchargePrice' | 'topupPrice' | 'daypassPrice' | 'primaryCategory'
-  >;
+  venue: VenuePricing;
   compact?: boolean;
+  testID?: string;
 };
 
-// Venue price tag — "Included" / "from ISK X" / "Limited visits", same
-// rules as the iOS venue cards (VenuePricePill): moss-tinted for in-bundle
-// so "Included" reads as a green marker, sky-blue for premium. Replaces
-// CreditPill on venue UI now that the credit wallet is gone backend-side.
-export default function PricePill({ venue, compact = false }: Props) {
-  const premium = isPremium(venue);
-  // Premium venues → glacier accent; in-bundle "Included" → brand blue.
-  const tint = premium ? colors.skyBlue : colors.blue;
+export default function PricePill({ venue, compact = false, testID }: Props) {
+  const { t } = useT();
+  const tint = isPremium(venue) ? colors.signal : colors.moss;
   return (
     <View
+      testID={testID}
       style={[
         styles.pill,
         compact && styles.pillCompact,
-        { backgroundColor: `${tint}1A`, borderColor: `${tint}33` }, // tint @10% / @20%
+        // The tint at 10 % behind, 20 % around (iOS opacity 0.10 / 0.20).
+        { backgroundColor: `${tint}1A`, borderColor: `${tint}33` },
       ]}
     >
-      <Text
-        style={[styles.label, compact && styles.labelCompact, { color: tint }]}
-        numberOfLines={1}
-      >
-        {priceLabel(venue)}
-      </Text>
+      <LPText size={compact ? 11 : 12} weight="semibold" color={tint}>
+        {priceLabel(venue, t)}
+      </LPText>
     </View>
   );
 }
@@ -47,13 +49,5 @@ const styles = StyleSheet.create({
   pillCompact: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-  },
-  labelCompact: {
-    fontSize: 11,
   },
 });

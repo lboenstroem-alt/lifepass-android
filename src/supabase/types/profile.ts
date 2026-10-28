@@ -1,38 +1,43 @@
-export type Profile = {
-  id: string;
-  user_id: string;
-  full_name: string | null;
-  email: string | null;
-  role: string | null;
-  language: string | null;
-  kennitala: string | null;
-  kennitala_verified_at: string | null;
-};
+/**
+ * The first Android build's profile types, kept for the screens that still
+ * import them. The profile itself is `Profile` in src/api/profile.ts (the
+ * v1 `GET /profile` shape, read once by the app store); the old Supabase
+ * `profiles` table row this file used to describe is not read by the app.
+ */
+import { checkInConfirmationCode as confirmationCode, type RecentCheckIn as ApiRecentCheckIn } from '../../api/profile';
 
-export type ProfileUpdate = {
-  full_name?: string;
-  language?: string;
-};
+export type { Profile } from '../../api/profile';
 
-// ─── Recent check-in (staff proof) ──────────────────────────────────────────────
-//
-// Mirrors lifepass-ios Models/Profile.swift `RecentCheckIn`. A receipt, not a
-// credential: the check-in already happened and is recorded server-side. Drives
-// the "you're checked in" banner a member holds up at reception. The server owns
-// the display window and simply stops sending it once it lapses — so there is no
-// client-side timer. Arrives (fail-soft) on `GET /profile`; see services/profile.
+/**
+ * The recent check-in (staff proof) as the first build's banner
+ * (CheckInProofBanner, CHECKIN-1) reads it. `memberName` now carries the
+ * SHORT name the server sends ("Lucas B.") and never the full name: iOS
+ * stopped putting the full name on this screen, and the server shortens it
+ * once so the app and the web cannot spell one member two ways at the desk.
+ */
 export type RecentCheckIn = {
   checkInId: string;
   checkedInAt: Date;
-  /** Who the check-in belongs to — staff read this first. */
+  /** The short name ("Lucas B."), or null. */
   memberName: string | null;
   venue: { id: string; name: string };
   /** The booked class, when the check-in adopted a booking; null for a walk-in. */
   activity: { id: string; name: string } | null;
 };
 
-/** Last six of the check-in id, upper-cased — the same short code the web proof
- * shows, so staff comparing the two screens see one scheme. */
-export function checkInConfirmationCode(c: RecentCheckIn): string {
-  return c.checkInId.slice(-6).toUpperCase();
+/** The app store's check-in, in the first build's shape. */
+export function toLegacyRecentCheckIn(checkIn: ApiRecentCheckIn | null): RecentCheckIn | null {
+  if (!checkIn) return null;
+  return {
+    checkInId: checkIn.checkInId,
+    checkedInAt: checkIn.checkedInAt,
+    memberName: checkIn.memberShortName,
+    venue: { id: checkIn.venue.id, name: checkIn.venue.name },
+    activity: checkIn.activity ? { id: checkIn.activity.id, name: checkIn.activity.name } : null,
+  };
+}
+
+/** Last six of the check-in id, upper-cased: the same short code the web proof shows. */
+export function checkInConfirmationCode(c: Pick<RecentCheckIn, 'checkInId'>): string {
+  return confirmationCode(c);
 }

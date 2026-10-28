@@ -1,0 +1,571 @@
+/**
+ * The programme overview (iOS ProgramOverviewView) in a real stack against
+ * the stub server: the read in the account language (a late older read
+ * dropped, a cancelled one keeping the skeleton), the error, the header, the
+ * week picker and its notes, the day rows and their preview (the real
+ * SessionPreviewSheet: Start, Do it today and Change with Coach on a live
+ * plan only), and the three modes' actions (live: days, pause, resume,
+ * end; proposal from a card: Start through the card's flow, Discard;
+ * proposal from Plan's review row: both only go back; past: none).
+ */
+import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { notificationsState } from '@test/mocks/expoNotifications';
+import { api, Reply, type StubReply } from '@test/server';
+import { Text } from 'react-native';
+
+import { TransportError } from '../../../../api';
+import { expectSentToMatchContract, stubApiClientPerTest } from '../../../../api/testing';
+import { resetUiKit, UiKitProvider } from '../../../../components/ui';
+import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
+import { decodeHealthDay, fetchProgram, ReminderKeys, useHealthStore } from '../../../../health';
+import { setCurrentLanguage, translate } from '../../../../i18n';
+import { useAppStore } from '../../../../stores/appStore';
+import { useIntentStore } from '../../../../stores/intentStore';
+import { openRunner } from '../../../runner';
+import { ChangeDaysHost } from '../../days';
+import { noteReminderDraft, onProposalOutcome, resetProposalBridges } from '../../proposal/proposalActions';
+import { dayJSON, freshPlan, MEMBER, memberProfile, settle, signIn, TODAY } from '../../__tests__/planFixtures';
+import ProgramOverviewScreen from '../ProgramOverviewScreen';
+
+jest.mock('@gorhom/bottom-sheet', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('../../../../components/ui/testing/bottomSheetMock').bottomSheetModule,
+);
+jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
+// The runner is a root modal this stack does not have: what Start asks of it is enough.
+jest.mock('../../../runner', () => ({ ...jest.requireActual('../../../runner'), openRunner: jest.fn() }));
+// The read itself, so one test can hand it a cancellation.
+jest.mock('../../../../health', () => {
+  const actual = jest.requireActual('../../../../health');
+  return { ...actual, fetchProgram: jest.fn(actual.fetchProgram) };
+});
+
+stubApiClientPerTest();
+
+const PROGRAM = '6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b';
+const en = (key: string, params?: Record<string, string>) => translate(key, 'en', params);
+const button = (key: string, params?: Record<string, string>) => screen.getByRole('button', { name: en(key, params) });
+const programPath = `/health/programs/${PROGRAM}`;
+
+function detailJSON(extra: Record<string, unknown> = {}) {
+  return {
+    id: PROGRAM,
+    status: 'active',
+    summaryTitle: 'Stronger in four weeks',
+    intro: 'Three short sessions a week.',
+    weekNo: 2,
+    weeks: 4,
+    daysPerWeek: 2,
+    trainingDays: [1, 4],
+    startsOn: '2026-10-12',
+    endsOn: '2026-11-08',
+    revisionOf: null,
+    weekPlans: [
+      {
+        weekNo: 1,
+        days: [
+          { id: 'w1-1', weekday: 1, scheduledFor: '2026-10-12', kind: 'strength', title: 'Legs', minutes: 40, status: 'done' },
+          { id: 'w1-2', weekday: 2, scheduledFor: '2026-10-13', kind: 'rest' },
+        ],
+      },
+      {
+        weekNo: 2,
+        note: 'A little more each set.',
+        days: [
+          { id: 'w2-1', weekday: 3, scheduledFor: TODAY, kind: 'strength', title: 'Upper body', minutes: 35, status: 'planned' },
+          { id: 'w2-2', weekday: 4, scheduledFor: '2026-10-22', kind: 'rest' },
+        ],
+      },
+      { weekNo: 3, deload: true, days: [] },
+      { weekNo: 4, deload: true, days: [{ id: 'w4-1', weekday: 1, kind: 'mobility', title: 'Easy stretch', minutes: 20 }] },
+    ],
+    ...extra,
+  };
+}
+
+const Stack = createNativeStackNavigator();
+const navigationRef = createNavigationContainerRef();
+
+function Root() {
+  return <Text>root</Text>;
+}
+
+async function renderOverview(mode: 'live' | 'proposal' | 'past', options: { fromCard?: 'coach' | 'plan' } = {}) {
+  const rootName = 'Root';
+  await render(
+    <NavigationContainer ref={navigationRef}>
+      <UiKitProvider>
+        <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName={rootName}>
+          <Stack.Screen name={rootName} component={Root} />
+          <Stack.Screen name="ProgramOverview" component={ProgramOverviewScreen as never} />
+        </Stack.Navigator>
+        <ChangeDaysHost />
+      </UiKitProvider>
+    </NavigationContainer>,
+  );
+  await act(async () => {
+    (navigationRef.navigate as (name: string, params: object) => void)('ProgramOverview', { programId: PROGRAM, mode, ...options });
+  });
+  await act(async () => settle());
+}
+
+beforeEach(() => {
+  freshPlan();
+  resetProposalBridges();
+  jest.mocked(openRunner).mockClear();
+  notificationsState.reset();
+  bottomSheetMock.reset();
+  resetUiKit();
+  signIn();
+  useHealthStore.setState({
+    today: decodeHealthDay(dayJSON(TODAY, { program: { id: PROGRAM, status: 'active', weekNo: 2, weeks: 4 } })),
+    selectedDate: TODAY,
+  });
+  api.on('GET', '/health', Reply.ok(dayJSON(TODAY)));
+});
+
+afterEach(async () => {
+  setCurrentLanguage('en');
+  await AsyncStorage.clear();
+});
+
+describe('the read', () => {
+  it('reads the programme in the account language and opens on its current week', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    await renderOverview('live');
+    expect(screen.getByRole('header', { name: en('plan.overview.title').toUpperCase() })).toBeOnTheScreen();
+    expect(api.sent(programPath, 'GET').query.locale).toBe('en');
+    expect(screen.getByRole('header', { name: 'Stronger in four weeks' })).toBeOnTheScreen();
+    expect(screen.getByText('12 October to 8 November')).toBeOnTheScreen();
+    expect(screen.getByText('Three short sessions a week.')).toBeOnTheScreen();
+    expect(screen.getByText(en('health.disclaimer'))).toBeOnTheScreen();
+    expect(screen.getByTestId('programOverview.week.2').props.accessibilityState.selected).toBe(true);
+    expect(screen.getByText('A little more each set.')).toBeOnTheScreen();
+    expect(screen.getByLabelText('Wed, Upper body, 35 min, planned')).toBeOnTheScreen();
+  });
+
+  it('a failed read is the error with Try again, which reads again', async () => {
+    api.on('GET', programPath, Reply.problem(500, 'internal_error'));
+    await renderOverview('live');
+    expect(screen.getByTestId('programOverview.error')).toBeOnTheScreen();
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    await fireEvent.press(screen.getByRole('button', { name: en('venue.try_again') }));
+    expect(await screen.findByRole('header', { name: 'Stronger in four weeks' })).toBeOnTheScreen();
+  });
+
+  it('a new language reads again, and the older read answering late is dropped', async () => {
+    let answerEnglish: (reply: StubReply) => void = () => undefined;
+    api.on('GET', programPath, (request) =>
+      request.query.locale === 'is'
+        ? Reply.ok({ program: detailJSON({ summaryTitle: 'Sterkari á fjórum vikum' }) })
+        : new Promise<StubReply>((resolve) => {
+            answerEnglish = resolve;
+          }),
+    );
+    await renderOverview('live');
+    expect(screen.getByTestId('programOverview.loading')).toBeOnTheScreen();
+
+    await act(async () => setCurrentLanguage('is'));
+    expect(await screen.findByRole('header', { name: 'Sterkari á fjórum vikum' })).toBeOnTheScreen();
+    await act(async () => {
+      answerEnglish(Reply.ok({ program: detailJSON() }));
+      await settle();
+    });
+    expect(screen.getByRole('header', { name: 'Sterkari á fjórum vikum' })).toBeOnTheScreen();
+    expect(screen.queryByRole('header', { name: 'Stronger in four weeks' })).toBeNull();
+  });
+
+  it('a cancelled first read keeps the skeleton (never an empty page)', async () => {
+    jest.mocked(fetchProgram).mockImplementationOnce(() => Promise.reject(new TransportError('cancelled')));
+    await renderOverview('live');
+    expect(screen.getByTestId('programOverview.loading')).toBeOnTheScreen();
+    expect(screen.queryByTestId('programOverview.error')).toBeNull();
+  });
+});
+
+describe('the weeks', () => {
+  it('a week shows its rows with their dates; the deload line only on the last week', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    await renderOverview('live');
+    await fireEvent.press(screen.getByTestId('programOverview.week.1'));
+    expect(screen.getByLabelText('Mon, Legs, 40 min, done')).toBeOnTheScreen();
+    expect(screen.getByText('Mon 12 Oct')).toBeOnTheScreen();
+    expect(screen.queryByTestId('programOverview.deload')).toBeNull();
+
+    await fireEvent.press(screen.getByTestId('programOverview.week.3'));
+    expect(screen.queryByTestId('programOverview.deload')).toBeNull();
+    await fireEvent.press(screen.getByTestId('programOverview.week.4'));
+    expect(screen.getByText(en('plan.deload_note'))).toBeOnTheScreen();
+  });
+
+  it("a session row is a button that opens the session preview, with Start for today's planned session of a live plan", async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on(
+      'GET',
+      '/health/sessions/w2-1',
+      Reply.ok({
+        session: {
+          id: 'w2-1',
+          kind: 'strength',
+          scheduledFor: TODAY,
+          status: 'planned',
+          title: 'Upper body',
+          minutes: 35,
+          blocks: [{ exerciseId: 'press', name: 'Overhead press', sets: 3, reps: 8 }],
+        },
+      }),
+    );
+    await renderOverview('live');
+    expect(screen.queryByRole('button', { name: 'Thu, Rest day' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
+    // The real sheet (../preview), the one the Today card opens: what the session asks of you.
+    expect(await screen.findByRole('header', { name: 'Upper body' })).toBeOnTheScreen();
+    expect(screen.getByText('Overhead press')).toBeOnTheScreen();
+    expect(screen.getByTestId('programOverview.preview')).toBeOnTheScreen();
+    expect(api.sent('/health/sessions/w2-1', 'GET').query.locale).toBe('en');
+
+    // Start: the sheet goes first, then the runner opens on today's session.
+    await fireEvent.press(button('plan.start'));
+    await waitFor(() => expect(openRunner).toHaveBeenCalledWith(expect.objectContaining({ id: 'w2-1' }), 'today'));
+    expect(screen.queryByRole('header', { name: 'Upper body' })).toBeNull();
+  });
+
+  it('a session another day offers no Start; each opening is its own sheet', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', '/health/sessions/w1-1', Reply.ok({ session: { id: 'w1-1', kind: 'strength', scheduledFor: '2026-10-12', status: 'done', title: 'Legs' } }));
+    await renderOverview('live');
+    await fireEvent.press(screen.getByTestId('programOverview.week.1'));
+    await fireEvent.press(screen.getByRole('button', { name: 'Mon, Legs, 40 min, done' }));
+    expect(await screen.findByRole('header', { name: 'Legs' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: en('plan.start') })).toBeNull();
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+    // The member pulls it down.
+    await act(async () => {
+      bottomSheetMock.latest()?.onDismiss?.();
+      await settle();
+    });
+    expect(screen.queryByRole('header', { name: 'Legs' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Mon, Legs, 40 min, done' }));
+    expect(await screen.findByRole('header', { name: 'Legs' })).toBeOnTheScreen();
+  });
+
+  it('Do it today on a live plan: Plan takes the answer in and the weeks are read again', async () => {
+    const LATER = '2099-01-07';
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: LATER, status: 'planned', title: 'Upper body', canPull: true } }));
+    api.on(
+      'POST',
+      '/health/sessions/w2-1',
+      Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' }, upcoming: [] }),
+    );
+    await renderOverview('live');
+    expect(api.sentAll(programPath, 'GET')).toHaveLength(1);
+    await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
+    await fireEvent.press(await screen.findByRole('button', { name: en('plan.do_today') }));
+    await waitFor(() => expect(useHealthStore.getState().today?.day?.session?.id).toBe('w2-1'));
+    expect(api.sent('/health/sessions/w2-1', 'POST').body).toEqual({ action: 'pull' });
+    await waitFor(() => expect(api.sentAll(programPath, 'GET')).toHaveLength(2));
+    expect(screen.queryByRole('button', { name: en('plan.do_today') })).toBeNull();
+  });
+
+  it('Change with Coach from a day row goes to the Coach about that day, where the server changes plans by chat', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' } }));
+    await renderOverview('live');
+    await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
+    await fireEvent.press(await screen.findByRole('button', { name: en('coach.planEdit.changeWithCoach') }));
+    await waitFor(() => expect(useIntentStore.getState().pendingCoachPlanEdit).toEqual({ sessionId: 'w2-1', sessionTitle: 'Upper body' }));
+    expect(useIntentStore.getState().pendingTab).toBe('Coach');
+  });
+
+  it('no Change with Coach on a server that does not change plans by chat', async () => {
+    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' } }));
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    await renderOverview('live');
+    await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
+    expect(await screen.findByRole('header', { name: 'Upper body' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+  });
+
+  it('no Change with Coach on a paused plan', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' } }));
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'paused' }) }));
+    await renderOverview('live');
+    await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
+    expect(await screen.findByRole('header', { name: 'Upper body' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+  });
+});
+
+describe('live mode', () => {
+  it('Pause asks, posts the status alone, redraws, and reads Plan again', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('POST', programPath, Reply.ok({ program: detailJSON({ status: 'paused' }) }));
+    await renderOverview('live');
+    await fireEvent.press(button('plan.overview.pause'));
+    expect(await screen.findByText(en('plan.pause.body'))).toBeOnTheScreen();
+    await fireEvent.press(button('plan.pause.confirm'));
+    await waitFor(() => expect(api.sentAll(programPath, 'POST')).toHaveLength(1));
+    expect(expectSentToMatchContract('POST', programPath).body).toEqual({ status: 'paused' });
+    expect(await screen.findByRole('button', { name: en('plan.overview.resume') })).toBeOnTheScreen();
+    await waitFor(() => expect(api.sentAll('/health', 'GET').length).toBeGreaterThan(0));
+  });
+
+  it('Resume posts at once; End asks and is destructive', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'paused' }) }));
+    api.on('POST', programPath, Reply.ok({ program: detailJSON() }));
+    await renderOverview('live');
+    await fireEvent.press(button('plan.overview.resume'));
+    await waitFor(() => expect(api.sent(programPath, 'POST').body).toEqual({ status: 'active' }));
+
+    await fireEvent.press(await screen.findByRole('button', { name: en('plan.overview.end') }));
+    expect(await screen.findByText(en('plan.end.body'))).toBeOnTheScreen();
+    const ends = screen.getAllByRole('button', { name: en('plan.end.confirm') });
+    await fireEvent.press(ends[ends.length - 1]!);
+    await waitFor(() => expect(api.sentAll(programPath, 'POST').map((r) => r.body)).toEqual([{ status: 'active' }, { status: 'abandoned' }]));
+  });
+
+  it('Change training days saves through the days sheet and redraws the weeks', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('POST', programPath, Reply.ok({ program: detailJSON({ summaryTitle: 'Moved to Tuesdays' }) }));
+    await renderOverview('live');
+    await fireEvent.press(button('plan.overview.change_days'));
+    await fireEvent.press(screen.getByTestId('days.chip.1'));
+    await fireEvent.press(screen.getByTestId('days.chip.2'));
+    await fireEvent.press(screen.getByTestId('days.save'));
+    expect(await screen.findByRole('header', { name: 'Moved to Tuesdays' })).toBeOnTheScreen();
+    expect(api.sent(programPath, 'POST').body).toEqual({ trainingDays: [2, 4] });
+  });
+});
+
+describe("proposal mode, from Plan's review row (iOS `.proposalReview`)", () => {
+  const adoptPath = `${programPath}/adopt`;
+
+  it('rows have no dates; Start only goes back: nothing posted, no permission asked', async () => {
+    const outcomes: string[] = [];
+    onProposalOutcome(PROGRAM, (outcome) => outcomes.push(outcome));
+    useHealthStore.setState({
+      today: decodeHealthDay(dayJSON(TODAY, { program: { id: 'live-1', status: 'active', weekNo: 2, weeks: 4 }, proposal: null })),
+    });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed', startsOn: null, endsOn: null }) }));
+    api.on('POST', adoptPath, Reply.problem(409, 'program_already_active'));
+    await renderOverview('proposal');
+    await fireEvent.press(screen.getByTestId('programOverview.week.1'));
+    expect(screen.queryByText('Mon 12 Oct')).toBeNull();
+    expect(screen.queryByRole('button', { name: en('plan.overview.pause') })).toBeNull();
+
+    await fireEvent.press(button('program.proposal.start'));
+    expect(await screen.findByText('root')).toBeOnTheScreen();
+    await act(async () => settle());
+    expect(api.sentAll(adoptPath)).toHaveLength(0);
+    expect(notificationsState.requestCount()).toBe(0);
+    expect(screen.queryByText(en('program.replace.title'))).toBeNull();
+    expect(useIntentStore.getState().pendingPlanAction).toBeNull();
+    expect(outcomes).toEqual([]);
+  });
+
+  it('a revision is labelled Switch, and only goes back too', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed', revisionOf: 'a1b2c3d4-0000-4000-8000-000000000001' }) }));
+    await renderOverview('proposal');
+    await fireEvent.press(button('program.revision.start'));
+    expect(await screen.findByText('root')).toBeOnTheScreen();
+    expect(screen.queryByText(en('program.revision.switch.title'))).toBeNull();
+    expect(api.sentAll(adoptPath)).toHaveLength(0);
+  });
+
+  it('Discard only goes back: no question, nothing posted', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed' }) }));
+    await renderOverview('proposal');
+    await fireEvent.press(button('program.proposal.discard'));
+    expect(await screen.findByText('root')).toBeOnTheScreen();
+    expect(screen.queryByText(en('program.discard.body'))).toBeNull();
+    expect(api.sentAll(`${programPath}/discard`)).toHaveLength(0);
+  });
+});
+
+describe("proposal mode, from a card's See all weeks (the card's flow)", () => {
+  const adoptPath = `${programPath}/adopt`;
+
+  it('rows have no dates; Start adopts, tells the card, and goes back', async () => {
+    const outcomes: string[] = [];
+    onProposalOutcome(PROGRAM, (outcome) => outcomes.push(outcome));
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed', startsOn: null, endsOn: null }) }));
+    api.on('POST', adoptPath, Reply.ok({ program: { id: PROGRAM, status: 'active', startsOn: '2026-10-22', weekPlans: [] }, replaced: null }));
+    await renderOverview('proposal', { fromCard: 'coach' });
+    await fireEvent.press(screen.getByTestId('programOverview.week.1'));
+    expect(screen.queryByText('Mon 12 Oct')).toBeNull();
+    expect(screen.queryByRole('button', { name: en('plan.overview.pause') })).toBeNull();
+
+    await fireEvent.press(button('program.proposal.start'));
+    await waitFor(() => expect(outcomes).toEqual(['started']));
+    expect(api.sent(adoptPath, 'POST').body).toEqual({ replaceActive: false });
+    expect(useIntentStore.getState().pendingPlanAction?.action).toEqual({ kind: 'showAdoptedBanner', startsOn: '2026-10-22' });
+    expect(await screen.findByText('root')).toBeOnTheScreen();
+  });
+
+  it('a running plan the store did not know of: the 409 asks to replace', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed' }) }));
+    api.on('POST', adoptPath, Reply.problem(409, 'program_already_active'));
+    await renderOverview('proposal', { fromCard: 'coach' });
+    await fireEvent.press(button('program.proposal.start'));
+    expect(await screen.findByText(en('program.replace.body'))).toBeOnTheScreen();
+  });
+
+  it('a revision is switched to, and asks first', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed', revisionOf: 'a1b2c3d4-0000-4000-8000-000000000001', startsOnIfAdoptedNow: '2026-10-22' }) }));
+    await renderOverview('proposal', { fromCard: 'plan' });
+    await fireEvent.press(button('program.revision.start'));
+    expect(await screen.findByText(en('program.revision.switch.title'))).toBeOnTheScreen();
+    expect(api.sentAll(adoptPath)).toHaveLength(0);
+  });
+
+  it('Discard asks, discards, tells the card, and goes back', async () => {
+    const outcomes: string[] = [];
+    onProposalOutcome(PROGRAM, (outcome) => outcomes.push(outcome));
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed' }) }));
+    api.on('POST', `${programPath}/discard`, Reply.ok({ ok: true }));
+    await renderOverview('proposal', { fromCard: 'coach' });
+    await fireEvent.press(button('program.proposal.discard'));
+    expect(await screen.findByText(en('program.discard.body'))).toBeOnTheScreen();
+    const discards = screen.getAllByRole('button', { name: en('program.discard.confirm') });
+    await fireEvent.press(discards[discards.length - 1]!);
+    await waitFor(() => expect(outcomes).toEqual(['discarded']));
+    expect(await screen.findByText('root')).toBeOnTheScreen();
+  });
+
+  it("Start sends the opening card's reminder choice: switched off, no permission is asked", async () => {
+    noteReminderDraft(PROGRAM, { remindersOn: false, minutes: 480 }, {});
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'proposed' }) }));
+    api.on('POST', adoptPath, Reply.ok({ program: { id: PROGRAM, status: 'active', startsOn: '2026-10-22', weekPlans: [] }, replaced: null }));
+    await renderOverview('proposal', { fromCard: 'plan' });
+    await fireEvent.press(button('program.proposal.start'));
+    await waitFor(async () => expect(await AsyncStorage.getItem(ReminderKeys.workoutDay(MEMBER))).toBe('false'));
+    expect(await AsyncStorage.getItem(ReminderKeys.time(MEMBER))).toBe('480');
+    expect(notificationsState.requestCount()).toBe(0);
+  });
+});
+
+describe('past mode', () => {
+  it('a past plan: its kicker and title, no actions, no Start nor Change with Coach in a preview', async () => {
+    signIn(memberProfile());
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ status: 'completed' }) }));
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', '/health/sessions/w2-1', Reply.ok({ session: { id: 'w2-1', kind: 'strength', scheduledFor: TODAY, status: 'planned', title: 'Upper body' } }));
+    await renderOverview('past');
+    expect(screen.getByRole('header', { name: en('plan.past_plan').toUpperCase() })).toBeOnTheScreen();
+    expect(screen.getAllByText(en('plan.past_plan').toUpperCase())).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: en('plan.overview.end') })).toBeNull();
+    expect(screen.queryByRole('button', { name: en('program.proposal.start') })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Wed, Upper body, 35 min, planned' }));
+    expect(await screen.findByRole('header', { name: 'Upper body' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: en('plan.start') })).toBeNull();
+    expect(screen.queryByRole('button', { name: en('coach.planEdit.changeWithCoach') })).toBeNull();
+  });
+});
+
+describe('changes made in chat (COACH-6)', () => {
+  const editsPath = `${programPath}/edits`;
+  const EDIT = '5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f';
+  const OLDER = '6a1d2e3f-4b5c-4d6e-9f70-8b9c0d1e2f30';
+  const edit = (extra: Record<string, unknown> = {}) => ({
+    id: EDIT,
+    programId: PROGRAM,
+    status: 'applied',
+    appliedAt: '2026-10-21T10:00:00.000Z',
+    undoneAt: null,
+    undoUntil: '2099-10-28T10:00:00.000Z',
+    undoable: true,
+    summary: 'Push-ups instead of bench press on Push days.',
+    changes: [],
+    ...extra,
+  });
+
+  it('a custom plan offers no Change training days', async () => {
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ custom: true, cycleDays: 4 }) }));
+    await renderOverview('live');
+    expect(screen.queryByRole('button', { name: en('plan.overview.change_days') })).toBeNull();
+    expect(button('plan.overview.pause')).toBeOnTheScreen();
+  });
+
+  it('lists them newest first, with Undo while the server can, and Undone on one taken back', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    // The Today read Undo asks for again still says what the server supports.
+    api.on('GET', '/health', Reply.ok({ ...dayJSON(TODAY), features: ['plan_edit'] }));
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit(), edit({ id: OLDER, status: 'undone', undoable: false, summary: 'No cable machine.' })] }));
+    await renderOverview('live');
+    expect(await screen.findByText(en('coach.planEdit.changesList').toUpperCase())).toBeOnTheScreen();
+    expect(screen.getByText('Push-ups instead of bench press on Push days.')).toBeOnTheScreen();
+    expect(screen.getByTestId(`programOverview.change.${OLDER}.undone`)).toBeOnTheScreen();
+    expect(api.sent(editsPath, 'GET').query).toEqual({ locale: 'en' });
+
+    api.on('POST', `${editsPath}/${EDIT}/undo`, Reply.ok({ edit: edit({ status: 'undone', undoable: false }), program: { id: PROGRAM }, changed: [], keptRows: 0, replayed: false }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit({ status: 'undone', undoable: false }), edit({ id: OLDER, status: 'undone', undoable: false })] }));
+    await fireEvent.press(screen.getByTestId(`programOverview.change.${EDIT}.undo`));
+    await waitFor(() => expect(screen.getByTestId(`programOverview.change.${EDIT}.undone`)).toBeOnTheScreen());
+    expect(api.sentAll(`${editsPath}/${EDIT}/undo`, 'POST')).toHaveLength(1);
+    expect(api.sent(`${editsPath}/${EDIT}/undo`).headers['idempotency-key']).toBeTruthy();
+  });
+
+  it('an Undo the server refuses says why on its row', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit()] }));
+    api.on('POST', `${editsPath}/${EDIT}/undo`, Reply.problem(409, 'plan_edit_undo_unavailable', { reason: 'window_closed' }));
+    await renderOverview('live');
+    await fireEvent.press(await screen.findByTestId(`programOverview.change.${EDIT}.undo`));
+    expect(await screen.findByText(en('coach.planEdit.error.undoWindow'))).toBeOnTheScreen();
+  });
+
+  it('a failed read says so; a server without the list (404) draws nothing', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', editsPath, Reply.problem(500, 'internal_error'));
+    await renderOverview('live');
+    expect(await screen.findByText(en('coach.planEdit.changes.loadFailed'))).toBeOnTheScreen();
+  });
+
+  it('nothing is read or drawn on a server that does not change plans by chat and a plan with no change', async () => {
+    useAppStore.setState({ serverFeatures: [] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    await renderOverview('live');
+    expect(api.sentAll(editsPath)).toHaveLength(0);
+    expect(screen.queryByText(en('coach.planEdit.changesList').toUpperCase())).toBeNull();
+  });
+
+  it('a change applied in the Coach while the weeks are open: the rows and the Changes list read again at once', async () => {
+    useAppStore.setState({ serverFeatures: ['plan_edit'] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON() }));
+    api.on('GET', editsPath, Reply.ok({ edits: [] }));
+    await renderOverview('live');
+    expect(screen.getByLabelText('Wed, Upper body, 35 min, planned')).toBeOnTheScreen();
+    expect(screen.queryByText(en('coach.planEdit.changesList').toUpperCase())).toBeNull();
+
+    // The Coach applies "lunges instead of squats", reads the plan again and
+    // says so (coach/planEdit refreshPlan; its own test pins that it does).
+    const changed = JSON.parse(JSON.stringify(detailJSON()).replace('"Upper body"', '"Lunges and press"')) as Record<string, unknown>;
+    api.on('GET', programPath, Reply.ok({ program: { ...changed, lastEdit: { editId: EDIT, undoUntil: '2099-10-28T10:00:00.000Z', undoable: true } } }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit()] }));
+    await act(async () => {
+      useHealthStore.getState().notePlanChanged();
+      await settle();
+    });
+
+    expect(await screen.findByLabelText('Wed, Lunges and press, 35 min, planned')).toBeOnTheScreen();
+    expect(screen.getByTestId('programOverview.week.2').props.accessibilityState.selected).toBe(true);
+    expect(await screen.findByTestId(`programOverview.change.${EDIT}.undo`)).toBeOnTheScreen();
+  });
+
+  it('a plan that carries a change is read even after the feature was turned off, so it can still be undone', async () => {
+    useAppStore.setState({ serverFeatures: [] });
+    api.on('GET', programPath, Reply.ok({ program: detailJSON({ lastEdit: { editId: EDIT, undoUntil: '2099-10-28T10:00:00.000Z', undoable: true } }) }));
+    api.on('GET', editsPath, Reply.ok({ edits: [edit()] }));
+    await renderOverview('live');
+    expect(await screen.findByTestId(`programOverview.change.${EDIT}.undo`)).toBeOnTheScreen();
+  });
+});
