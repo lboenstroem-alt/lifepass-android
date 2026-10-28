@@ -68,7 +68,8 @@ export interface CoachMessage {
 
   /**
    * The bubble shows the MODEL'S OWN WORDS: a chat answer from `/coach` (its
-   * prose, a class answer's reply, a venue answer's intro). Only such a
+   * prose, a class answer's reply, a venue answer's intro, a day plan's
+   * intro; the plan's card then reports its steps' notes too). Only such a
    * bubble offers "Report this reply" (Android, Play's AI-generated content
    * policy). Never set on the member's turns, the greeting, a flow's
    * questions or cards, or the app's own sentences (an apology, a limit, a

@@ -17,6 +17,11 @@
  *
  * The message's `text` is the intro: what the saved chat keeps once the
  * cards are gone, and what the model reads of it on a later free chat.
+ *
+ * "Report this reply" (Android only, COACH-7): when the intro is the
+ * model's own (`onReport` is set), the intro bubble has the chat's "...",
+ * long-press and TalkBack action, and the report carries the plan's words
+ * as drawn: the intro and the steps' notes (`planReportWords`).
  */
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
@@ -24,34 +29,47 @@ import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Kicker, LPText } from '../../../components/ui';
 import { hiddenFromAccessibility } from '../../../components/ui/a11y';
 import { useT } from '../../../i18n';
-import { assistantBubbleStyle, CoachAssistantAvatar, MessageBubble } from '../../../screens/coach/MessageBubble';
+import { AssistantText, assistantBubbleStyle, CoachAssistantAvatar, MessageBubble } from '../../../screens/coach/MessageBubble';
 import { VenueMiniCard } from '../../../screens/coach/VenueCarouselMessage';
 import type { Venue } from '../../../types/venue';
 import { planDistanceLabel, type CoachPlanStep } from '../dayPlan/decode';
 import { refineChipLabel } from '../dayPlan/model';
-import { bookPlanClass, openPlanSight, openPlanVenue, planPayloadOf, refineDayPlan, restartDayPlan } from '../dayPlan/wizard';
+import {
+  bookPlanClass,
+  openPlanSight,
+  openPlanVenue,
+  planPayloadOf,
+  planReportWords,
+  refineDayPlan,
+  restartDayPlan,
+} from '../dayPlan/wizard';
 import type { CoachMessageRendererProps } from '../flows/types';
 import { coachPalette } from '../theme/palette';
 import { PLAN_INDENT, PLAN_STEP_INSET, planCardWidth, PlanClassCard, PlanSightCard, PlanVenueCard } from './PlanCards';
 
-export default function PlanMessage({ message, busy }: CoachMessageRendererProps) {
+export default function PlanMessage({ message, busy, onReport }: CoachMessageRendererProps) {
   const { t } = useT();
   // iOS's 250, narrowed on a window too small for it (./PlanCards.tsx `planCardWidth`).
   const cardWidth = planCardWidth(useWindowDimensions().width);
   const payload = planPayloadOf(message);
-  if (!payload) return <MessageBubble role="assistant" text={message.text} />;
+  const report = onReport ? () => onReport(planReportWords(message)) : undefined;
+  if (!payload) return <MessageBubble role="assistant" text={message.text} onReport={report} />;
   const { plan, venues } = payload;
 
   return (
     <View style={styles.root} testID={`coach.plan.${message.id}`}>
-      <View style={styles.introRow}>
-        <CoachAssistantAvatar />
-        <View style={[styles.intro, assistantBubbleStyle]}>
-          <LPText size={14} color={coachPalette.textPrimary} style={styles.introText}>
-            {message.text}
-          </LPText>
+      {report ? (
+        <AssistantText text={message.text} onReport={report} />
+      ) : (
+        <View style={styles.introRow}>
+          <CoachAssistantAvatar />
+          <View style={[styles.intro, assistantBubbleStyle]}>
+            <LPText size={14} color={coachPalette.textPrimary} style={styles.introText}>
+              {message.text}
+            </LPText>
+          </View>
         </View>
-      </View>
+      )}
 
       <View style={styles.indent}>
         {plan.steps.map((step, index) => (

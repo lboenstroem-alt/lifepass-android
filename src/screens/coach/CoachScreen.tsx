@@ -29,7 +29,8 @@
 // on a sign-in of its own, since the tabs can stay mounted through one.
 //
 // "Report this reply" (Android only, COACH-7): every bubble the store marks
-// as the model's own words (`isReportableReply`) offers it, and this screen
+// as the model's own words (`isReportableReply`) offers it, a day plan's
+// card included (its renderer passes the words it draws), and this screen
 // presents the report sheet (src/features/coach/report), one instance per
 // opening so each has its own choices and Idempotency-Key.
 import { useFocusEffect } from '@react-navigation/native';
@@ -274,12 +275,12 @@ export default function CoachScreen({ navigation, route }: Partial<TabRootProps<
 
   const openVenue = useCallback((venue: Venue) => perform({ kind: 'venue', slug: venue.slug }), [perform]);
 
-  /** A reply's "...", long-press or TalkBack action: the report sheet for its words (one at a time). */
-  const openReport = useCallback((message: CoachMessage) => {
+  /** A reply's "...", long-press or TalkBack action: the report sheet for the words it shows (one at a time). */
+  const openReport = useCallback((words: string) => {
     Keyboard.dismiss();
     reportCount.current += 1;
     const id = reportCount.current;
-    setReport((current) => current ?? { id, reply: message.text, visible: true });
+    setReport((current) => current ?? { id, reply: words, visible: true });
   }, []);
 
   /** That presentation asked to close (Cancel, Back, Send, a pan down): it slides away. */
@@ -500,8 +501,8 @@ type MessageRowProps = {
   /** For a flow's own bubble only (iOS `isBusy: vm.isTyping`); false for every other row. */
   busy: boolean;
   onBook: (venue: Venue) => void;
-  /** "Report this reply" on a bubble with the model's own words. */
-  onReport: (message: CoachMessage) => void;
+  /** "Report this reply" on a bubble with the model's own words: the words it shows. */
+  onReport: (words: string) => void;
   onOffset: (id: string, y: number) => void;
 };
 
@@ -515,11 +516,13 @@ const MessageRow = memo(function MessageRow({ message, busy, onBook, onReport, o
 
 function MessageContent({ message, busy, onBook, onReport }: Omit<MessageRowProps, 'onOffset'>) {
   // Only the model's own words, never the member's turn or the app's sentences.
-  const report = isReportableReply(message) ? () => onReport(message) : undefined;
+  const reportable = isReportableReply(message);
+  const report = reportable ? () => onReport(message.text) : undefined;
   if (isFlowBubble(message)) {
     const Renderer = COACH_FLOWS[message.flow].renderers[message.kind];
-    // The message as the store keeps it (no copy), so a renderer can memoise on it.
-    if (Renderer) return <Renderer message={message} busy={busy} />;
+    // The message as the store keeps it (no copy), so a renderer can memoise on
+    // it; a reportable one (a day plan) says which of its words are reported.
+    if (Renderer) return <Renderer message={message} busy={busy} onReport={reportable ? onReport : undefined} />;
   }
   if (message.venues && message.venues.length > 0) {
     return <VenueCarouselMessage intro={message.text} venues={message.venues} onBook={onBook} onReport={report} />;

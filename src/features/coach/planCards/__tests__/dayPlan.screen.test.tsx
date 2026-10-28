@@ -3,7 +3,9 @@
  * CoachView's plan wizard and CoachPlanView): "Plan my day" opens the
  * wizard, the chips walk it, ONE call brings the plan, its cards open the
  * venue and the sight by slug, and a refinement chip asks again with the
- * plan's id. Typed words mid-wizard are dropped with the hint.
+ * plan's id. Typed words mid-wizard are dropped with the hint. A plan in the
+ * model's words offers "Report this reply" (Android COACH-7), which sends the
+ * plan's words as drawn.
  */
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -15,6 +17,7 @@ import { decodeProfile } from '../../../../api/profile';
 import { stubApiClientPerTest } from '../../../../api/testing';
 import { decodeVenue, venueToApi } from '../../../../api/venues';
 import { UiKitProvider, dismissAllDialogs } from '../../../../components/ui';
+import { bottomSheetMock } from '../../../../components/ui/testing/bottomSheetMock';
 import CoachScreen from '../../../../screens/coach/CoachScreen';
 import { resetSpeechModuleForTests } from '../../../../screens/coach/useDictation';
 import { lookup, translate, type Params } from '../../../../i18n';
@@ -26,6 +29,8 @@ import { claimCoachForMember } from '../../register';
 import { pendingCoachSaves, resetCoachStoreForTests } from '../../store/coachStore';
 
 /* eslint-disable @typescript-eslint/no-require-imports */
+// The report sheet is the UI kit's Sheet: on the kit's stand-in for the library.
+jest.mock('@gorhom/bottom-sheet', () => require('../../../../components/ui/testing/bottomSheetMock').bottomSheetModule);
 jest.mock('expo-asset', () => jest.requireActual('expo/node_modules/expo-asset'), { virtual: true });
 jest.mock('expo-speech-recognition', () => ({
   ExpoSpeechRecognitionModule: require('../../../../screens/coach/__tests__/fakeSpeech').fakeSpeech,
@@ -124,6 +129,7 @@ async function type(text: string) {
 const initialLocation = locationStore.getState();
 
 beforeEach(async () => {
+  bottomSheetMock.reset();
   resetAppStoreForTests();
   resetIntentStoreForTests();
   resetCoachStoreForTests();
@@ -205,4 +211,32 @@ it('a refinement chip posts its words and asks again with the plan’s id; Plan 
 
   await press(en('coach.plan.new'));
   expect(screen.getAllByText(en('coach.plan.q.goal')).length).toBeGreaterThanOrEqual(2);
+});
+
+it('"Report this reply" on the plan sends its intro and its steps’ notes, and nothing the member answered', async () => {
+  api.on('POST', '/coach', Reply.ok({ reply: PLAN.intro, plan: PLAN }));
+  api.on('POST', '/coach/reports', Reply.ok({ id: 'f1e2d3c4-b5a6-4789-8abc-def012345678', createdAt: '2026-10-28T12:00:00Z' }, 201));
+  await renderCoach();
+  await press(en('coach.chip.plan_day'));
+  await press(en('coach.plan.goal.relax'));
+  await press(lookup('attraction.region.capital', 'en'));
+  await press(en('coach.plan.when.now'));
+  await press(en('coach.plan.duration.short'));
+
+  // One report button: the plan's intro (the wizard's questions are the app's own).
+  expect(screen.getAllByRole('button', { name: lookup('coach.report.action', 'en') })).toHaveLength(1);
+  await press(lookup('coach.report.action', 'en'));
+  expect(screen.getByRole('header', { name: lookup('coach.report.title', 'en') })).toBeOnTheScreen();
+  await fireEvent.press(screen.getByRole('radio', { name: lookup('coach.report.reason.inaccurate', 'en') }));
+  await fireEvent.press(screen.getByRole('button', { name: lookup('coach.report.send', 'en') }));
+  await settle();
+
+  expect(api.sent('/coach/reports', 'POST').body).toEqual({
+    reply: 'A calm evening by the water.\n\nSoak for an hour.\n\nThe falls at dusk.',
+    reason: 'inaccurate',
+    locale: 'en',
+  });
+  expect(screen.queryByRole('header', { name: lookup('coach.report.title', 'en') })).toBeNull();
+  // The plan is as it was.
+  expect(screen.getByText('Soak for an hour.')).toBeOnTheScreen();
 });

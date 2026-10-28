@@ -44,6 +44,12 @@
  * At a lock the input's locked sentence answers; an error says the API's
  * sentence or `coach.plan.refine_error`. Never a fallback list.
  *
+ * "REPORT THIS REPLY" (Android only, COACH-7). A plan's intro in the model's
+ * words (the plan's own intro, else the reply) marks the message `aiReply`,
+ * so the card offers the report, and what is sent is the model's words as
+ * the card draws them: the intro, then each step's note (`planReportWords`).
+ * The app's fallback intro is never marked.
+ *
  * Every answer checks the chat it started in (the busy token): a New chat, a
  * restore or a sign-out meanwhile drops it. Nothing here is stored on the
  * phone, so a sign-out has nothing to wipe beyond `resetDayPlan`.
@@ -93,6 +99,21 @@ export function planPayloadOf(message: Pick<CoachMessage, 'kind' | 'payload'> | 
   const payload = message.payload as Partial<PlanMessagePayload> | undefined;
   if (!payload || typeof payload !== 'object' || !payload.plan) return null;
   return { plan: payload.plan, venues: payload.venues ?? {} };
+}
+
+/**
+ * What "Report this reply" sends for a plan: the model's own words as the
+ * card draws them, the intro and then each step's note, a blank line apart.
+ * A plan message with no plan left (a saved chat keeps only the intro) is
+ * its text. Only asked of a message marked `aiReply`, whose intro is the
+ * model's.
+ */
+export function planReportWords(message: Pick<CoachMessage, 'kind' | 'payload' | 'text'>): string {
+  const notes = planPayloadOf(message)?.plan.steps.map((step) => step.note) ?? [];
+  return [message.text, ...notes]
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+    .join('\n\n');
 }
 
 // MARK: - State
@@ -321,6 +342,8 @@ async function runPlan(request: CoachPlanRequest, fallbackAnswers: PlanAnswers |
         payload,
         // Taller than the screen: the chat lands on its top, and the member reads down.
         anchorTop: true,
+        // The model's intro offers "Report this reply"; the app's fallback does not.
+        ...modelWords(intro !== ''),
       });
       void hydratePlanVenues(messageId!, plan, busy);
     } else if (reply === '') {
