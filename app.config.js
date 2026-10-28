@@ -10,6 +10,7 @@
 //   imagePicker                                           MEAL-3
 //   speech                                                COACH-1
 //   healthConnect                                         HC-1 (owner decision: none for now)
+//   releaseHardening                                      REL-1
 //
 // Secrets never live here: the Mapbox download token is read from the
 // environment by the mapbox fragment (an EAS environment variable on EAS,
@@ -24,6 +25,7 @@ const FRAGMENTS = [
   'buildProperties',
   'speech',
   'healthConnect',
+  'releaseHardening',
 ];
 
 /** A plugin's name, whether listed as 'name' or ['name', options]. */
