@@ -76,11 +76,18 @@ it('draws nothing while the server does not advertise the feedback', async () =>
 
 it('waits for the read, then shows the switches as the server holds them', async () => {
   signIn();
-  api.on('GET', '/health/feedback', Reply.delayed(30, Reply.ok(summary({}))));
+  // Held until the waiting state is checked: a timed delay raced a slow CI runner.
+  let answer!: () => void;
+  const answered = new Promise<void>((resolve) => (answer = resolve));
+  api.on('GET', '/health/feedback', async () => {
+    await answered;
+    return Reply.ok(summary({}));
+  });
   await render(<FeedbackSwitches />);
   expect(screen.getByText(en('bodygoals.sec.feedback').toUpperCase())).toBeOnTheScreen();
   expect(screen.getByRole('switch', { name: en('bodygoals.fb_monthly') })).toBeDisabled();
-  await settle(60);
+  answer();
+  await settle();
   const monthly = screen.getByRole('switch', { name: en('bodygoals.fb_monthly') });
   expect(monthly).toBeEnabled();
   expect(monthly).toBeChecked();
