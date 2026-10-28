@@ -24,9 +24,11 @@
  * next Send is a new attempt with a new key (./outcome.ts).
  *
  * Success closes the sheet and the app's toast thanks the member. A failure
- * stays on the sheet, in words, with the choices kept. A 401 is the app's
- * session-expired handling: the client has ended the session and the app
- * goes to sign-in, so the sheet only closes. While the report is on its way
+ * stays on the sheet, in words, with the choices kept. A session the client
+ * has ended (`NotAuthenticatedError`) is the app's session-expired handling:
+ * the app goes to sign-in, so the sheet only closes. A 401 whose refresh
+ * only failed for a while keeps the session, so it is a failure in words
+ * like any other (./outcome.ts). While the report is on its way
  * the sheet cannot be closed (pan, backdrop, hardware back); otherwise
  * hardware back closes it (the UI kit Sheet).
  */

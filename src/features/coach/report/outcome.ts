@@ -3,10 +3,18 @@
  * the client's typed error (src/api/errors.ts):
  *
  *   cancelled         the sheet went away mid-call: nothing is shown
- *   signed out (401)  the client has already ended the session and the auth
- *                     listener takes the app to sign-in (the app's
- *                     session-expired handling): the sheet just closes,
- *                     with no alert of its own
+ *   signed out        `NotAuthenticatedError` ONLY: the client has ended the
+ *                     session (the refresh was refused, or the resend was
+ *                     refused again) and the auth listener takes the app to
+ *                     sign-in (the app's session-expired handling): the
+ *                     sheet just closes, with no alert of its own
+ *   any other 401     the refresh after the 401 failed for a while (the
+ *                     auth server unreachable, a 5xx, a 429): the client
+ *                     KEEPS the session and throws the 401 as it came, so
+ *                     the app stays where it is. The sheet stays up with
+ *                     the app's sign-in sentence (what every screen says on
+ *                     this path, and never the server's words); the key is
+ *                     kept, as nothing was stored
  *   429               this account has sent 20 reports in 24 hours: its own
  *                     sentence, and the key is spent (the server answered)
  *   offline, timeout,
@@ -35,7 +43,8 @@ function statusOf(error: unknown): number {
 export function replyReportFailure(error: unknown): ReplyReportFailure {
   if (isCancellation(error)) return { kind: 'cancelled' };
   const status = statusOf(error);
-  if (error instanceof NotAuthenticatedError || status === 401) return { kind: 'signedOut' };
+  if (error instanceof NotAuthenticatedError) return { kind: 'signedOut' };
+  if (status === 401) return { kind: 'message', message: t('error.sign_in'), keepKey: true };
   if (status === 429) return { kind: 'message', message: t('coach.report.rate_limited'), keepKey: false };
   if (status >= 500) return { kind: 'message', message: t('error.server'), keepKey: true };
   if (isApiError(error) && (error.kind === 'transport' || error.kind === 'decoding')) {

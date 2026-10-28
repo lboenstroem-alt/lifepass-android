@@ -130,6 +130,16 @@ describe('the answers that are not a report', () => {
     expect(replyReportFailure(error)).toEqual({ kind: 'signedOut' });
   });
 
+  it('a 401 whose refresh only failed for a while is not a sign-out (see the describe below)', () => {
+    // Only the client's own NotAuthenticatedError ends the session; a 401 it threw as it came did not.
+    const kept = new ProblemError(
+      { type: 'https://lifepass.is/problems/unauthorized', title: 'unauthorized', status: 401, detail: 'Server detail.' },
+      401,
+    );
+    expect(replyReportFailure(kept)).toEqual({ kind: 'message', message: en('error.sign_in'), keepKey: true });
+    expect(replyReportFailure(new NotAuthenticatedError())).toEqual({ kind: 'signedOut' });
+  });
+
   it('422 with field errors: the refusal fallback, never the server\'s words, and a new key next time', async () => {
     api.on(
       'POST',
@@ -178,5 +188,28 @@ describe('the answers that are not a report', () => {
     const error = await failureOf();
     expect(error).toBeInstanceOf(DecodingError);
     expect(replyReportFailure(error)).toMatchObject({ kind: 'message', keepKey: true });
+  });
+});
+
+describe('a 401 whose refresh only failed for a while (the auth server unreachable, a 5xx, a 429)', () => {
+  const flaky = stubApiClientPerTest({
+    refreshedToken: async () => {
+      throw new Error('auth server unreachable');
+    },
+  });
+
+  it('keeps the session, and the sheet says so in the app\'s words with the key kept (nothing was stored)', async () => {
+    for (const slug of ['authentication_required', 'unauthorized']) {
+      api.on('POST', COACH_REPORTS_PATH, Reply.problem(401, slug));
+      const body = replyReportBody({ reply: 'A reply.', reason: 'offensive', language: 'en' })!;
+      const error = await postReplyReport(body, { idempotencyKey: KEY }).then(
+        () => new Error('the report went through'),
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(ProblemError);
+      expect(error).not.toBeInstanceOf(NotAuthenticatedError);
+      expect(replyReportFailure(error)).toEqual({ kind: 'message', message: en('error.sign_in'), keepKey: true });
+    }
+    expect(flaky.revoked).toBe(0);
   });
 });
