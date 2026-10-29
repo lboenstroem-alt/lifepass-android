@@ -32,7 +32,7 @@
  * type check.
  */
 
-/** Every iOS debug argument (LifePass 2.5.6), by its Android key. */
+/** Every iOS debug argument (LifePass 2.5.6, and the later ones Android has too), by its Android key. */
 export const FIXTURE_KEYS = [
   // App state and navigation (iOS ScreenshotFixtures).
   'state',
@@ -44,6 +44,8 @@ export const FIXTURE_KEYS = [
   'profileHint',
   'planDot',
   'exploreHint',
+  // Home's "Get offers by email" card (iOS -LPScreenshotOffersCard, after 2.5.6).
+  'offersCard',
   // Plan, health, Coach, meals, runner.
   'plan',
   'health',

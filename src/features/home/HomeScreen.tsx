@@ -8,7 +8,9 @@
 //   - today's plan row (PLAN-2's slot);
 //   - "Want to try something new?", which needs no venue data and renders
 //     while the shelves load;
-//   - the referral card, "A short walk from here", the Outside card (ATTR-1's
+//   - "Get offers by email" until the member answers it (./offersCard: the
+//     website dashboard's card, owner 29 Oct 2026, "Card in the apps"), the
+//     referral card, "A short walk from here", the Outside card (ATTR-1's
 //     slot), "Most Popular Now", and the spinner or the error state while
 //     there are no venues.
 //
@@ -61,6 +63,7 @@ import { HomeHeaderOnly, HomeHero } from './HomeHeader';
 import { signalHomeReads } from './homeReads';
 import HomeProofBanner from './HomeProofBanner';
 import { HomeVenuesStatus, NearbyShelf, PopularShelf, ReferralCard } from './HomeShelves';
+import HomeOffersCard from './offersCard/HomeOffersCard';
 import { soonestPass } from './passChip';
 import { pickHero, resolveHero } from './pickHero';
 import { nearbyShelf, popularExclusions, popularShelf } from './shelves';
@@ -295,6 +298,10 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.list}>
+          {/* First among the cards, as on iOS: the referral card is always
+              there, this one only until it is answered (it draws nothing
+              while it is not offered, so it leaves no gap). */}
+          <HomeOffersCard visit={visit} />
           <ReferralCard onPress={() => navigation.navigate('Account')} />
           {nearby.length > 0 ? <NearbyShelf venues={nearby} onOpenVenue={openVenue} onSeeAll={openExplore} /> : null}
           {/* After the venues near you: Home is about what the pass opens, and

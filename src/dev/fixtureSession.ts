@@ -9,7 +9,9 @@
  * `state`: `active-plan`, `entitled-no-plan`, `not-member`, `minor` or
  * `pass-holder`. `language`: the ACCOUNT language (`en` default, or `is`).
  * `unverified`: the member has not verified with Kenni. `recentCheckIn`: a
- * check-in proof from the profile.
+ * check-in proof from the profile. `offersCard`: Home's "Get offers by email"
+ * card, as the server would offer it (`open`, `fails-once`, `opted-in`,
+ * `dismissed`; src/features/home/offersCard/fixtures.ts).
  *
  * The screens under it are the real ones, rendering the real models through
  * the real decoder. What is faked is the session, and only the session.
@@ -80,6 +82,24 @@ function healthJSON(state: FixtureState, language: string): unknown {
   }
 }
 
+/**
+ * The profile's `offersCard` (API 0.51.0) for an `offersCard` variant, or
+ * null for none, which the decoder reads as an older server's profile: no card.
+ */
+function offersCardJSON(variant: string | undefined): { show: boolean; dismissed: boolean } | null {
+  switch (variant) {
+    case 'open':
+    case 'fails-once':
+      return { show: true, dismissed: false };
+    case 'opted-in':
+      return { show: false, dismissed: false };
+    case 'dismissed':
+      return { show: false, dismissed: true };
+    default:
+      return null;
+  }
+}
+
 function usageJSON(state: FixtureState): unknown {
   const common = {
     topup: { available: false, prices: { gym: null, studio: null, pool: null } },
@@ -143,11 +163,12 @@ export function fixtureProfile(state: FixtureState): Profile {
     nationality: 'IS',
     locale: language,
     kennitalaVerified: args.unverified === undefined,
-    marketingConsent: false,
+    marketingConsent: args.offersCard === 'opted-in',
     createdAt: '2026-01-10T12:00:00Z',
     usage: usageJSON(state),
     recentCheckIn,
     health: healthJSON(state, language),
     coach,
+    offersCard: offersCardJSON(args.offersCard),
   });
 }

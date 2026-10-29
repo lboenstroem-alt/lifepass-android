@@ -11,8 +11,13 @@ import {
   parseFixtureArgs,
 } from '../fixtures';
 
-/** Every debug launch argument the iOS 2.5.6 sources and UI tests read. */
+/**
+ * Every debug launch argument the iOS 2.5.6 sources and UI tests read, and
+ * the later ones Android has too: -LPScreenshotOffersCard (Home's "Get offers
+ * by email" card, lifepass-ios feat/offers-opt-in-card).
+ */
 const IOS_ARGUMENTS = [
+  '-LPScreenshotOffersCard',
   '-LPScreenshotPlan', '-LPScreenshotTab', '-LPScreenshotState', '-LPScreenshotLanguage',
   '-LPScreenshotHealth', '-LPScreenshotScroll', '-LPScreenshotAH', '-LPScreenshotClassSheet',
   '-LPScreenshotClassPayURL', '-LPScreenshotClassPay', '-LPScreenshotNotification',
@@ -39,7 +44,7 @@ describe('fixture keys', () => {
     expect(fixtureKeyForIOSArgument('--state')).toBeNull();
   });
 
-  it('knows every iOS 2.5.6 argument, once', () => {
+  it('knows every iOS argument it ports, once', () => {
     const keys = IOS_ARGUMENTS.map(fixtureKeyForIOSArgument);
     for (const key of keys) expect(isKnownFixtureKey(key ?? '')).toBe(true);
     expect(new Set(keys).size).toBe(IOS_ARGUMENTS.length);

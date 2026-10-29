@@ -80,6 +80,27 @@ describe('the support block (API 0.39.0, iOS WhatsAppSupportDecodeTests)', () =>
   });
 });
 
+describe('the offers card block (API 0.51.0)', () => {
+  it('no block (a server older than 0.51.0) or null (not read this time) means no card', () => {
+    expect(decode().offersCard).toBeNull();
+    expect(decode({ offersCard: null }).offersCard).toBeNull();
+  });
+
+  it('reads whether to show the card and whether No thanks was said on any device', () => {
+    expect(decode({ offersCard: { show: true, dismissed: false } }).offersCard).toEqual({ show: true, dismissed: false });
+    expect(decode({ offersCard: { show: false, dismissed: true } }).offersCard).toEqual({ show: false, dismissed: true });
+  });
+
+  it('both answers or nothing, and a garbage block never costs the profile', () => {
+    for (const offersCard of [{ show: true }, { show: 'yes', dismissed: false }, { dismissed: true }, 'show', [true]]) {
+      const profile = decode({ offersCard });
+      expect(profile.offersCard).toBeNull();
+      expect(profile.fullName).toBe('Anna Jonsdottir');
+      expect(profile.marketingConsent).toBe(false);
+    }
+  });
+});
+
 describe('the health block (iOS ProfileHealthBlockDecodeTests)', () => {
   it('a garbage health block leaves the profile intact', () => {
     const profile = decode({ health: { access: 42, consent: 'yesterday' } });

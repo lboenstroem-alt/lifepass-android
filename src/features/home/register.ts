@@ -9,9 +9,13 @@
 //     profile's name, pass and proof) lives in the screen or in stores that
 //     clean up after themselves (the app store, the shared venue list), and
 //     the signed-in tabs, Home with them, unmount at sign-out;
-//   - Home writes nothing to the phone of its own. The one-time Profile
-//     pointer's keys (`nav.profileHint.<profileId>.profileOpened`, written
-//     through src/navigation/profile.ts) say only that a member has found
-//     Profile, are keyed per member, and stay at sign-out as iOS keeps them;
+//   - Home writes two things to the phone, both keyed per member, saying only
+//     what the member did, and both stay at sign-out as iOS keeps them: the
+//     one-time Profile pointer's keys (`nav.profileHint.<profileId>.
+//     profileOpened`, written through src/navigation/profile.ts: the member
+//     has found Profile), and the offers card's No thanks
+//     (`offers.card.<profileId>.dismissed`, ./offersCard/storage.ts: the
+//     member does not want to be asked; the account keeps it too). What the
+//     card answered this session lives in Home, which unmounts at sign-out;
 //   - the weather is Reykjavík's, not the member's.
 export {};

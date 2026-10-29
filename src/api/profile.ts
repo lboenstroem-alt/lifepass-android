@@ -12,8 +12,9 @@
  *   `usage` block are read strictly: a wrong type there fails the whole read,
  *   and `loadProfile` keeps the profile it had (iOS `AppState.loadProfile`).
  *   A missing or null optional member is simply absent.
- * - `recentCheckIn`, `health`, `coach` and `support` are FAIL-SOFT. The app carries scar
- *   tissue here: one required key that changed shape once failed the whole
+ * - `recentCheckIn`, `health`, `coach`, `support` and `offersCard` are
+ *   FAIL-SOFT. The app carries scar tissue here: one required key that
+ *   changed shape once failed the whole
  *   profile decode and blanked the member's name, language and caps
  *   app-wide. These three are the newest and least important blocks on the
  *   response (the health block is assembled from seven serial reads on the
@@ -262,6 +263,13 @@ export interface Profile {
   readonly locale: string | null;
   readonly kennitalaVerified: boolean;
   readonly marketingConsent: boolean;
+  /**
+   * `offersCard` (API 0.51.0): the "Get offers by email" card's state, or
+   * null on an older server, when the server could not read it this time, or
+   * when it cannot be read here. Fail-soft: it never costs the profile. Home
+   * offers the card only on `show: true` (src/features/home/offersCard).
+   */
+  readonly offersCard: OffersCardState | null;
   /** Scopes the sign-up nudges to fresh accounts. */
   readonly createdAt: Date | null;
   /** Null when the server omits it; the caps UI degrades, the member does not. */
@@ -284,6 +292,23 @@ export interface WhatsAppSupport {
   readonly number: string;
   /** `https://wa.me/<number>`, with no message. */
   readonly url: string;
+}
+
+/**
+ * The apps' "Get offers by email" card, as the server decides it (API
+ * 0.51.0), by the website dashboard's own rule, so the app never works it
+ * out itself.
+ */
+export interface OffersCardState {
+  /**
+   * Offer the card now: the member is not opted in, the account is active
+   * with no deletion asked for (pending or scheduled), the member has not
+   * said no to marketing email themselves, and has not pressed "No thanks"
+   * on the card on any device.
+   */
+  readonly show: boolean;
+  /** "No thanks" was pressed on the card, on the website or in an app. */
+  readonly dismissed: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -560,6 +585,19 @@ export function decodeProfileSupport(value: unknown): WhatsAppSupport | null {
 }
 
 /**
+ * The `offersCard` block (API 0.51.0), read strictly inside: both answers or
+ * nothing. The profile reads the block fail-soft, so anything unreadable is
+ * "no card" and never costs the member their profile.
+ */
+export function decodeOffersCardState(value: unknown): OffersCardState {
+  const block = object(value, 'offersCard');
+  return {
+    show: boolean(block.show, 'offersCard.show'),
+    dismissed: boolean(block.dismissed, 'offersCard.dismissed'),
+  };
+}
+
+/**
  * `GET /profile`'s `data`. Throws `ProfileShapeError` when the identity or the
  * usage block cannot be read; the newer blocks never fail it.
  */
@@ -573,6 +611,7 @@ export function decodeProfile(data: unknown): Profile {
     locale: optional(profile.locale, 'locale', string),
     kennitalaVerified: boolean(profile.kennitalaVerified, 'kennitalaVerified'),
     marketingConsent: boolean(profile.marketingConsent, 'marketingConsent'),
+    offersCard: failSoft(profile.offersCard, decodeOffersCardState),
     createdAt: optional(profile.createdAt, 'createdAt', date),
     usage: optional(profile.usage, 'usage', decodeUsage),
     recentCheckIn: failSoft(profile.recentCheckIn, decodeRecentCheckIn),

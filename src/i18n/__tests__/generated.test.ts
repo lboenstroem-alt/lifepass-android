@@ -23,6 +23,27 @@ import { baseDictionary, healthPacks, LANGS, placeholders } from './dictionaries
 const ROOT = path.join(__dirname, '..', '..', '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'import-ios-strings.py');
 
+type AheadSide = Partial<Record<'en' | 'is', Readonly<Record<string, string>>>>;
+type AheadChange = { change: string; dictionary: string; ios: AheadSide; android: AheadSide };
+
+/** The ahead-of-iOS changes, read as the file's format, whatever and however many there are. */
+const aheadChanges = ahead.changes as unknown as readonly AheadChange[];
+
+/**
+ * How many keys the ahead-of-iOS changes add to the base dictionary: a new
+ * key adds one, a renamed key none (its old name goes), a changed text none.
+ * The counts below are the Swift dictionaries' plus exactly these.
+ */
+const aheadBaseKeys = aheadChanges
+  .filter((change) => change.dictionary === 'base')
+  .reduce((sum, change) => {
+    const before = new Set(Object.keys(change.ios.en ?? {}));
+    const after = new Set(Object.keys(change.android.en ?? {}));
+    const added = [...after].filter((key) => !before.has(key)).length;
+    const removed = [...before].filter((key) => !after.has(key)).length;
+    return sum + added - removed;
+  }, 0);
+
 describe('the committed tables', () => {
   it('have every key in both languages', () => {
     expect(Object.keys(generatedTables.is).sort()).toEqual(Object.keys(generatedTables.en).sort());
@@ -41,9 +62,10 @@ describe('the committed tables', () => {
       'planEdit',
     ]);
     // iOS release/3.1.0-candidate (7a020ee): Localization.swift and the seven
-    // LocalizationHealth packs (planEdit merged last, as packsEN/packsIS list it).
+    // LocalizationHealth packs (planEdit merged last, as packsEN/packsIS list it),
+    // plus the keys Android ships ahead of iOS (../ahead-of-ios.json).
     expect(Object.fromEntries(manifest.dictionaries.map((d) => [d.name, d.keys.length]))).toEqual({
-      base: 1106,
+      base: 1106 + aheadBaseKeys,
       core: 50,
       plan: 654,
       meals: 245,
@@ -58,9 +80,10 @@ describe('the committed tables', () => {
 
     const union = new Set(manifest.dictionaries.flatMap((d) => [...d.keys, ...d.enOnly]));
     expect(new Set(Object.keys(generatedTables.en))).toEqual(union);
-    // 1,106 base keys + 1,327 pack keys, the override counted once.
-    expect(Object.keys(generatedTables.en)).toHaveLength(2432);
-    expect(manifest.counts).toEqual({ en: 2432, is: 2432 });
+    // 1,106 base keys + 1,327 pack keys, the override counted once, plus the
+    // keys Android ships ahead of iOS.
+    expect(Object.keys(generatedTables.en)).toHaveLength(2432 + aheadBaseKeys);
+    expect(manifest.counts).toEqual({ en: 2432 + aheadBaseKeys, is: 2432 + aheadBaseKeys });
   });
 
   it('give each key to one dictionary only, apart from the override', () => {
@@ -77,10 +100,9 @@ describe('the committed tables', () => {
   });
 
   it('carry every ahead-of-iOS change, and the manifest lists exactly those', () => {
-    type Side = Partial<Record<'en' | 'is', Readonly<Record<string, string>>>>;
     // The JSON import types each entry by its own literal keys; read the
     // entries as the file's format, whatever and however many there are.
-    const changes = ahead.changes as unknown as readonly { change: string; ios: Side; android: Side }[];
+    const changes = aheadChanges;
     for (const change of changes) {
       for (const lang of LANGS) {
         const android = change.android[lang] ?? {};
@@ -105,7 +127,7 @@ describe('the committed tables', () => {
   });
 
   it('rebuild the base and every health pack with values in both languages', () => {
-    expect(Object.keys(baseDictionary.en)).toHaveLength(1105);
+    expect(Object.keys(baseDictionary.en)).toHaveLength(1105 + aheadBaseKeys);
     expect(healthPacks.map((p) => p.name)).toEqual([
       'core',
       'plan',

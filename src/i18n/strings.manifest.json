@@ -3,7 +3,9 @@
  "intentionalOverrides": [
   "coach.greeting"
  ],
- "aheadOfIos": [],
+ "aheadOfIos": [
+  "Home card Get offers by email / Fáðu tilboð í tölvupósti (offers.card.*, the keys lifepass-ios feat/offers-opt-in-card gives the same card): the title, body and button are the website dashboard card's words exactly (offers-opt-in-copy.ts, consent text offers-card-2026-10-28), as are No thanks, the done title and the failure line; the done body adds \"on lifepass.is\", where the switch is, as the apps have none (owner, 29 Oct 2026: Card in the apps)"
+ ],
  "dictionaries": [
   {
    "name": "base",
@@ -801,6 +803,13 @@
     "notif.stayactive.title",
     "notif.visitsreset.body",
     "notif.visitsreset.title",
+    "offers.card.body",
+    "offers.card.dismiss",
+    "offers.card.done_body",
+    "offers.card.done_title",
+    "offers.card.failed",
+    "offers.card.opt_in",
+    "offers.card.title",
     "onboard.choose_plan",
     "onboard.decide_later",
     "onboard.get_started",
@@ -2496,7 +2505,7 @@
   }
  ],
  "counts": {
-  "en": 2432,
-  "is": 2432
+  "en": 2439,
+  "is": 2439
  }
 }
