@@ -1,45 +1,83 @@
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme';
+// A row of Home's "Most Popular Now" list (iOS HomeView's private
+// `CuratedVenueRow`): a 72 dp photo, the name, the city line, up to two
+// category chips, and on the trailing side the compact price pill above a
+// "Book it" pill.
+//
+// NO FAVOURITE HEART (owner decision D4): iOS Home has none. Favourites live
+// on the venue page and Profile's Saved tab, and this slot carries the price,
+// which the first Android build hid behind the heart. The whole row opens the
+// venue; the pills are labels.
+import { StyleSheet, View } from 'react-native';
+
 import BookItPill from './BookItPill';
+import PricePill from './PricePill';
+import { LPText, VenueImage } from './ui';
+import { useT } from '../i18n';
+import { colors, hairline } from '../theme';
 import type { Venue } from '../types/venue';
 
-type Props = {
-  venue: Venue;
-  isFavourited: boolean;
-  onToggleFavourite: () => void;
-};
+export type CuratedRowVenue = Pick<
+  Venue,
+  | 'id'
+  | 'name'
+  | 'city'
+  | 'address'
+  | 'imageUrl'
+  | 'categories'
+  | 'inBundle'
+  | 'surchargePrice'
+  | 'resolvedSurchargePrice'
+  | 'primaryCategory'
+>;
 
-export default function CuratedVenueRow({ venue, isFavourited, onToggleFavourite }: Props) {
+/** The row's second line: city, else address, else Iceland (iOS `city ?? address ?? "Iceland"`). */
+export function curatedCityLine(venue: Pick<Venue, 'city' | 'address'>, fallback: string): string {
+  return venue.city ?? venue.address ?? fallback;
+}
+
+/**
+ * Swift's `String.capitalized`: every word's first letter upper case and the
+ * rest lower case ("hot YOGA" is "Hot Yoga"). Words are split at spaces,
+ * hyphens and other non-letters, as Foundation splits them.
+ */
+export function capitalized(text: string): string {
+  return text.toLowerCase().replace(/(^|[^\p{L}\p{N}'’])(\p{L})/gu, (_match, before: string, letter: string) => before + letter.toUpperCase());
+}
+
+/** Up to two category chips (iOS `venue.category?.prefix(2)`). */
+export function rowCategories(venue: Pick<Venue, 'categories'>): string[] {
+  return (venue.categories ?? []).slice(0, 2).map(capitalized);
+}
+
+export default function CuratedVenueRow({ venue }: { venue: CuratedRowVenue }) {
+  const { t } = useT();
+  const chips = rowCategories(venue);
   return (
     <View style={styles.row}>
-      <Image source={{ uri: venue.imageUrl }} style={styles.image} />
+      <VenueImage uri={venue.imageUrl} recyclingKey={venue.id} style={styles.image} />
+
       <View style={styles.info}>
-        <Text style={styles.name}>{venue.name}</Text>
-        <Text style={styles.city}>{venue.city}</Text>
-        {venue.category.length > 0 && (
+        <LPText size={15} weight="semibold" color={colors.paper}>
+          {venue.name}
+        </LPText>
+        <LPText size={12} color={colors.paper3}>
+          {curatedCityLine(venue, t('home.android.city_fallback_popular'))}
+        </LPText>
+        {chips.length > 0 ? (
           <View style={styles.chips}>
-            {venue.category.slice(0, 2).map((cat) => (
-              <View key={cat} style={styles.chip}>
-                <Text style={styles.chipText}>{cat}</Text>
+            {chips.map((chip, index) => (
+              <View key={`${chip}-${index}`} style={styles.chip}>
+                <LPText size={10} weight="medium" tracking={0.4} color={colors.paper2}>
+                  {chip}
+                </LPText>
               </View>
             ))}
           </View>
-        )}
+        ) : null}
       </View>
-      {/* Favourite heart + Book it CTA, trailing-aligned */}
-      <View style={styles.right}>
-        <TouchableOpacity
-          onPress={onToggleFavourite}
-          activeOpacity={0.7}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons
-            name={isFavourited ? 'heart' : 'heart-outline'}
-            size={20}
-            color={isFavourited ? colors.blue : colors.paper3}
-          />
-        </TouchableOpacity>
+
+      <View style={styles.trailing}>
+        <PricePill venue={venue} compact />
         <BookItPill />
       </View>
     </View>
@@ -54,46 +92,12 @@ const styles = StyleSheet.create({
     padding: 10,
     backgroundColor: colors.ink2,
     borderRadius: 14,
-    borderWidth: 0.5,
+    borderWidth: hairline,
     borderColor: colors.line,
   },
-  image: {
-    width: 72,
-    height: 72,
-    borderRadius: 10,
-  },
-  info: {
-    flex: 1,
-    gap: 4,
-  },
-  name: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.paper,
-  },
-  city: {
-    fontSize: 12,
-    color: colors.paper3,
-  },
-  chips: {
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 2,
-  },
-  chip: {
-    backgroundColor: colors.ink4,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  chipText: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: colors.paper2,
-    letterSpacing: 0.4,
-  },
-  right: {
-    alignItems: 'flex-end',
-    gap: 8,
-  },
+  image: { width: 72, height: 72, borderRadius: 10 },
+  info: { flex: 1, gap: 4 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip: { backgroundColor: colors.ink3, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
+  trailing: { alignItems: 'flex-end', gap: 8 },
 });

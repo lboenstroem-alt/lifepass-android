@@ -1,87 +1,162 @@
-// Lightweight current-weather fetch for Reykjavík via Open-Meteo.
-// Open-Meteo is free, no API key required — great fit for an MVP. If we
-// ever need forecasts, alerts, or pinpoint precision we can swap to a
-// paid provider behind the same `fetchWeather` signature.
+// Real Reykjavík weather for the Home hero: the Android port of iOS
+// `HomeWeather` and `HomeWeatherService` (Views/Home/HomeView.swift).
+//
+// Open-Meteo's current conditions for Reykjavík centre: free, no key, and
+// nothing about the member is sent (the coordinates are the city's, never the
+// phone's). Any failure, a non-200 answer or a body that does not read hides
+// the line: `fetchWeather` answers null, never a made-up 0°.
+//
+// ENGLISH FOR EVERY ACCOUNT (owner decision D7): iOS hard-codes this line in
+// English, Icelandic accounts included, so the words below are not copy keys.
+import { wholeNumberOf } from '../i18n/format';
 
-const REYKJAVIK = { lat: 64.1466, lon: -21.9426 };
+/** Reykjavík centre (iOS `HomeWeatherService.lat/lon`). */
+export const WEATHER_LATITUDE = 64.1466;
+export const WEATHER_LONGITUDE = -21.9426;
 
+export const WEATHER_URL =
+  `https://api.open-meteo.com/v1/forecast?latitude=${WEATHER_LATITUDE}&longitude=${WEATHER_LONGITUDE}` +
+  '&current=temperature_2m,weather_code&temperature_unit=celsius';
+
+/** iOS `Sky`: the seven kinds of sky the line tells apart. */
+export type Sky = 'sunny' | 'partlySunny' | 'cloudy' | 'foggy' | 'rainy' | 'snow' | 'storm';
+
+/**
+ * The glyph for each sky, from MaterialCommunityIcons (the SF Symbols iOS
+ * draws: sun.max.fill, cloud.sun.fill, cloud.fill, cloud.fog.fill,
+ * cloud.rain.fill, snowflake, cloud.bolt.fill).
+ */
 export type WeatherIconName =
-  | 'sunny'
-  | 'partly-sunny'
-  | 'cloudy'
-  | 'rainy'
-  | 'snow'
-  | 'thunderstorm';
+  | 'weather-sunny'
+  | 'weather-partly-cloudy'
+  | 'weather-cloudy'
+  | 'weather-fog'
+  | 'weather-rainy'
+  | 'snowflake'
+  | 'weather-lightning';
 
-export type WeatherSnapshot = {
-  /** Temperature in °C, rounded to nearest integer. */
-  temperature: number;
-  /** Short uppercase label like "SUNNY", "CLOUDY", "RAINY". */
-  condition: string;
-  /** Ionicons name we render next to the kicker. */
-  icon: WeatherIconName;
-};
-
-// WMO weather codes — what Open-Meteo returns in `current.weather_code`.
-// Reference: https://open-meteo.com/en/docs (WMO weather interpretation codes).
-function describeCode(code: number): { condition: string; icon: WeatherIconName } {
-  if (code === 0) return { condition: 'SUNNY', icon: 'sunny' };
-  if (code <= 3) return { condition: 'CLOUDY', icon: 'partly-sunny' };
-  if (code === 45 || code === 48) return { condition: 'FOGGY', icon: 'cloudy' };
-  if (code >= 51 && code <= 67) return { condition: 'RAINY', icon: 'rainy' };
-  if (code >= 71 && code <= 86) return { condition: 'SNOWING', icon: 'snow' };
-  if (code >= 95) return { condition: 'STORMY', icon: 'thunderstorm' };
-  return { condition: 'CLOUDY', icon: 'cloudy' };
+export interface WeatherSnapshot {
+  /** °C, rounded half away from zero, as Swift's `Int(x.rounded())` (never -0). */
+  readonly temperature: number;
+  /** "SUNNY", "CLOUDY", ... */
+  readonly condition: string;
+  readonly icon: WeatherIconName;
+  /** "OUTDOOR POOL WEATHER", ... */
+  readonly recommendation: string;
 }
 
-export async function fetchWeather(): Promise<WeatherSnapshot> {
-  const url =
-    `https://api.open-meteo.com/v1/forecast?` +
-    `latitude=${REYKJAVIK.lat}&longitude=${REYKJAVIK.lon}` +
-    `&current=temperature_2m,weather_code&temperature_unit=celsius`;
+/** WMO weather interpretation codes, as Open-Meteo sends them (iOS `classify`). */
+export function classifySky(code: number): Sky {
+  if (code === 0) return 'sunny';
+  if (code === 1 || code === 2 || code === 3) return 'partlySunny';
+  if (code === 45 || code === 48) return 'foggy';
+  if (code >= 51 && code <= 67) return 'rainy';
+  if (code >= 71 && code <= 86) return 'snow';
+  if (code >= 95) return 'storm';
+  return 'cloudy';
+}
 
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Weather API ${res.status}`);
-  const data = await res.json();
+export function skyCondition(sky: Sky): string {
+  switch (sky) {
+    case 'sunny':
+      return 'SUNNY';
+    case 'partlySunny':
+    case 'cloudy':
+      return 'CLOUDY';
+    case 'foggy':
+      return 'FOGGY';
+    case 'rainy':
+      return 'RAINY';
+    case 'snow':
+      return 'SNOWING';
+    case 'storm':
+      return 'STORMY';
+  }
+}
 
-  const code: number = data?.current?.weather_code ?? 0;
-  const tempC: number = data?.current?.temperature_2m ?? 0;
-  const { condition, icon } = describeCode(code);
+export function skyIcon(sky: Sky): WeatherIconName {
+  switch (sky) {
+    case 'sunny':
+      return 'weather-sunny';
+    case 'partlySunny':
+      return 'weather-partly-cloudy';
+    case 'cloudy':
+      return 'weather-cloudy';
+    case 'foggy':
+      return 'weather-fog';
+    case 'rainy':
+      return 'weather-rainy';
+    case 'snow':
+      return 'snowflake';
+    case 'storm':
+      return 'weather-lightning';
+  }
+}
 
+/** What to do with the day (iOS `recommendation`); `temperature` is the rounded °C. */
+export function weatherRecommendation(sky: Sky, temperature: number): string {
+  switch (sky) {
+    case 'storm':
+      return 'STAY IN — SAUNA DAY';
+    case 'snow':
+      return 'HOT SPRING WEATHER';
+    case 'rainy':
+      return 'LAGOON WEATHER';
+    case 'sunny':
+      if (temperature >= 15) return 'PERFECT FOR OUTDOORS';
+      if (temperature >= 5) return 'OUTDOOR POOL WEATHER';
+      return 'HOT SPRING WEATHER';
+    case 'partlySunny':
+      if (temperature >= 10) return 'OUTDOOR POOL WEATHER';
+      if (temperature >= 5) return 'SPA & HOT SPRING DAY';
+      return 'HOT SPRING WEATHER';
+    case 'cloudy':
+    case 'foggy':
+      if (temperature >= 10) return 'INDOOR POOL WEATHER';
+      if (temperature >= 5) return 'SPA & SAUNA WEATHER';
+      if (temperature < 0) return 'HOT SPRING WEATHER';
+      return 'INDOOR & SAUNA DAY';
+  }
+}
+
+/** The snapshot for a WMO code and a temperature in °C. */
+export function weatherFrom(code: number, temperatureC: number): WeatherSnapshot {
+  const sky = classifySky(code);
+  const temperature = wholeNumberOf(temperatureC);
   return {
-    temperature: Math.round(tempC),
-    condition,
-    icon,
+    temperature,
+    condition: skyCondition(sky),
+    icon: skyIcon(sky),
+    recommendation: weatherRecommendation(sky, temperature),
   };
 }
 
 /**
- * Activity-aware tagline based on the current weather — e.g. "OUTDOOR POOL
- * WEATHER" on a sunny cool day, "LAGOON WEATHER" on a rainy day.  Lets us
- * make the hero feel responsive to today's conditions.
+ * Reads Open-Meteo's answer as iOS's `Decodable` does: `current.temperature_2m`
+ * a number and `current.weather_code` a whole number, or null.
  */
-export function weatherRecommendation(weather: WeatherSnapshot): string {
-  const { temperature, icon } = weather;
+export function decodeWeather(body: unknown): WeatherSnapshot | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const current = (body as { current?: unknown }).current;
+  if (typeof current !== 'object' || current === null) return null;
+  const { temperature_2m: temperature, weather_code: code } = current as Record<string, unknown>;
+  if (typeof temperature !== 'number' || !Number.isFinite(temperature)) return null;
+  if (typeof code !== 'number' || !Number.isInteger(code)) return null;
+  return weatherFrom(code, temperature);
+}
 
-  if (icon === 'thunderstorm') return 'STAY IN · SAUNA DAY';
-  if (icon === 'snow') return 'HOT SPRING WEATHER';
-  if (icon === 'rainy') return 'LAGOON WEATHER';
+/** The line's text: "CLOUDY · 7° · SPA & SAUNA WEATHER". */
+export function weatherLine(weather: WeatherSnapshot): string {
+  return `${weather.condition} · ${weather.temperature}° · ${weather.recommendation}`;
+}
 
-  if (icon === 'sunny') {
-    if (temperature >= 15) return 'PERFECT FOR OUTDOORS';
-    if (temperature >= 5)  return 'OUTDOOR POOL WEATHER';
-    return 'HOT SPRING WEATHER';
+/** Current Reykjavík weather, or null on any failure (the line is then hidden). Never throws. */
+export async function fetchWeather(options: { signal?: AbortSignal } = {}): Promise<WeatherSnapshot | null> {
+  try {
+    const response = await fetch(WEATHER_URL, { signal: options.signal });
+    if (response.status !== 200) return null;
+    return decodeWeather(await response.json());
+  } catch {
+    return null;
   }
-
-  if (icon === 'partly-sunny') {
-    if (temperature >= 10) return 'OUTDOOR POOL WEATHER';
-    if (temperature >= 5)  return 'SPA & HOT SPRING DAY';
-    return 'HOT SPRING WEATHER';
-  }
-
-  // cloudy / foggy — the most common Reykjavík conditions
-  if (temperature >= 10) return 'INDOOR POOL WEATHER';
-  if (temperature >= 5)  return 'SPA & SAUNA WEATHER';
-  if (temperature < 0)   return 'HOT SPRING WEATHER';
-  return 'INDOOR & SAUNA DAY';
 }

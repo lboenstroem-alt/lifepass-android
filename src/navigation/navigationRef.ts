@@ -1,27 +1,133 @@
-import { createNavigationContainerRef } from '@react-navigation/native';
-import type { RootStackParamList } from './types';
+/**
+ * The app's one navigation handle, for code that runs outside any screen: the
+ * deep-link and notification routers, the legacy route translator, a slot's
+ * imperative opener (`openRunner`). Screens navigate with their own
+ * `navigation` prop (`useAppNavigation()`), which keeps the tab's stack.
+ *
+ * Every helper here answers false when the navigator is not mounted yet (a
+ * cold start before the container is ready, or the member is signed out and
+ * the tabs do not exist): the caller parks its intent instead (the intent
+ * store), and the tabs shell performs it once it is on screen.
+ */
+import { CommonActions, createNavigationContainerRef, StackActions } from '@react-navigation/native';
 
-// App-level navigation handle so the deep-link listener in App.tsx can route
-// an incoming venue-QR App Link (`https://lifepass.is/scan?v=<uuid>`) into the
-// Check-in tab from outside any screen (mirrors iOS parking
-// `pendingScanVenueId` and routing via MainTabView).
+import {
+  MAIN_TABS,
+  TAB_ROOT_SCREEN,
+  type MainTab,
+  type RootModalName,
+  type RootModalRoutes,
+  type RootStackParamList,
+  type SharedRouteName,
+  type SharedRoutes,
+} from './types';
+
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
-/**
- * Route into the Check-in tab and auto-run the walk-in for `venueId`.
- * Returns false when the navigator isn't mounted yet (e.g. a cold-start deep
- * link before NavigationContainer is ready, or the user is signed out) so the
- * caller can park the id and flush it on `onReady`.
- */
-export function routeToCheckIn(venueId: string): boolean {
-  if (!navigationRef.isReady()) return false;
-  // Nested target: Main (root) → CheckIn (tab) → CheckInMain (screen). The
-  // param tree is awkward to type through the ref, so cast the call signature
-  // at the boundary.
-  const navigate = navigationRef.navigate as (name: string, params?: object) => void;
-  navigate('Main', {
-    screen: 'CheckIn',
-    params: { screen: 'CheckInMain', params: { autoCheckInVenueId: venueId } },
-  });
+type AnyNavigate = (name: string, params?: object) => void;
+
+/** `navigate` without the nested param-tree typing (checked at each helper's signature instead). */
+function navigateLoosely(name: string, params?: object): void {
+  (navigationRef.navigate as unknown as AnyNavigate)(name, params);
+}
+
+interface LooseState {
+  readonly index?: number;
+  readonly key?: string;
+  readonly routes: readonly { readonly name: string; readonly key?: string; readonly state?: LooseState }[];
+}
+
+/** The tabs navigator's state, when the signed-in app is mounted. */
+function tabsState(): LooseState | null {
+  if (!navigationRef.isReady()) return null;
+  const root = navigationRef.getRootState() as unknown as LooseState | undefined;
+  const main = root?.routes.find((route) => route.name === 'Main');
+  return main?.state ?? null;
+}
+
+/** The tab on screen, or null while signed out or before the navigator is ready. */
+export function currentTab(): MainTab | null {
+  const tabs = tabsState();
+  if (!tabs || typeof tabs.index !== 'number') return null;
+  const name = tabs.routes[tabs.index]?.name;
+  return (MAIN_TABS as readonly string[]).includes(name ?? '') ? (name as MainTab) : null;
+}
+
+/** The root route on screen: `Main` (the tabs), a root modal, the shared sheet or `Auth`. */
+export function rootRouteName(): string | null {
+  if (!navigationRef.isReady()) return null;
+  const root = navigationRef.getRootState() as unknown as LooseState | undefined;
+  if (!root || typeof root.index !== 'number') return null;
+  return root.routes[root.index]?.name ?? null;
+}
+
+/** True once the signed-in tabs are mounted (a route can be performed now). */
+export function tabsReady(): boolean {
+  return tabsState() !== null;
+}
+
+/** Opens a root modal (Plans, the runner, the meal page...). False when the app is not ready. */
+export function openRootModal<Name extends RootModalName>(
+  name: Name,
+  ...params: undefined extends RootModalRoutes[Name]
+    ? [params?: RootModalRoutes[Name]]
+    : [params: RootModalRoutes[Name]]
+): boolean {
+  if (!tabsReady()) return false;
+  navigateLoosely(name, params[0] as object | undefined);
   return true;
+}
+
+/**
+ * Pushes a shared route onto the CURRENT tab's stack, so the tab bar stays
+ * (what a screen's own `navigation.navigate` does, for code with no screen).
+ *
+ * While a root modal is on top (Plans, the runner, the meal page...) the page
+ * slides up in the shared sheet over it instead: pushed onto the tab under
+ * the modal it would open out of sight, and navigating to `Main` from there
+ * would stack a second copy of the tabs. The modal stays as it was (a runner
+ * or a meal in progress is never closed for it), and closing the sheet lands
+ * back on it, as on iOS where the page is a sheet over the sheet.
+ */
+export function navigateInCurrentTab<Name extends SharedRouteName>(
+  name: Name,
+  ...params: undefined extends SharedRoutes[Name] ? [params?: SharedRoutes[Name]] : [params: SharedRoutes[Name]]
+): boolean {
+  const tab = currentTab();
+  if (!tab) return false;
+  if (rootRouteName() !== 'Main') {
+    navigateLoosely('SharedSheet', { screen: name, params: params[0] });
+    return true;
+  }
+  navigateLoosely('Main', { screen: tab, params: { screen: name, params: params[0], initial: false } });
+  return true;
+}
+
+/**
+ * Switches to `tab` straight away. Code outside the shell asks with the intent
+ * store's `requestTab` instead, which also keeps the launch and Plan rules
+ * and leaves a root modal through the back guards (a busy one holds the
+ * switch); this removes a modal on top without asking it.
+ */
+export function jumpToTab(tab: MainTab): boolean {
+  const tabs = tabsState();
+  if (!tabs) return false;
+  navigationRef.dispatch({ ...CommonActions.navigate({ name: tab }), target: tabs.key });
+  return true;
+}
+
+/** Pops `tab`'s stack back to its first screen (iOS `planPath = NavigationPath()`). */
+export function popTabToRoot(tab: MainTab): boolean {
+  const tabs = tabsState();
+  const stack = tabs?.routes.find((route) => route.name === tab)?.state;
+  if (!stack) return false;
+  if (typeof stack.index === 'number' && stack.index > 0 && stack.key) {
+    navigationRef.dispatch({ ...StackActions.popToTop(), target: stack.key });
+  }
+  return true;
+}
+
+/** The name of `tab`'s first screen (`HomeMain`, ...). */
+export function tabRootScreen(tab: MainTab): string {
+  return TAB_ROOT_SCREEN[tab];
 }

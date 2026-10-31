@@ -1,0 +1,24 @@
+// The meal photo's native helpers (owner: MEAL-3). A local Expo module:
+// autolinked from ./modules at prebuild, so no package.json entry. See
+// src/main/java/lifepass/mealimage/MealImageModule.kt for why it exists.
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'is.lifepass.android'
+version = '1.0.0'
+
+android {
+  namespace "lifepass.mealimage"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
+}
+
+dependencies {
+  // The same Photo Picker contract expo-image-picker uses (and the same
+  // version, so the app resolves one copy).
+  implementation "androidx.activity:activity-ktx:1.10.0"
+}

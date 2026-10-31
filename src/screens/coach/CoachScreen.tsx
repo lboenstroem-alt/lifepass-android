@@ -1,985 +1,670 @@
-import { useState, useRef, useMemo, useEffect, type ComponentType } from 'react';
+/* eslint lifepass/no-literal-copy: "error" */
+// The Coach tab (iOS CoachView.swift), over the chat store
+// (src/features/coach/store/coachStore.ts, the port of CoachViewModel).
+//
+//   the photo, under the 2.5.4 ink scrim
+//   the wordmark ABOVE the burger (the drawer: new chat, saved, recents);
+//   the drawer's Saved presents the Saved sheet (iOS `FavouritesView` in a
+//   `.sheet`), kept mounted with this screen so it can open its page after it
+//   has gone and come back after a venue
+//   before the member says anything: the heading and the chips;
+//   after: the chat (bubbles, question chips, venue cards, class cards, the
+//   flows' cards)
+//   the free tier's count line or membership card
+//   the input: 1 to 5 lines, Send on the keyboard, the mic while empty, the
+//   send arrow while not; locked (55%, its own placeholder) while an
+//   allowance is spent
+//
+// On every appearance (iOS `onAppear`): the profile's coach block is applied
+// (the newer reading wins), and whatever another tab parked for the Coach (a
+// prompt, a programme entry) is taken and run once. An entry parked while
+// this tab has a page pushed (a venue from Book it or Saved, Account) first
+// takes the tab back to the chat: iOS rebuilds the tab on a switch, so its
+// Coach always appears and sends at once. The conversation lives in the
+// store, so it survives tab switches. Location is NOT asked for here: the
+// venue wizard warms a fix when it starts.
+//
+// The saved chats are read only once the sign-in hook has claimed them for
+// this member (src/features/coach/register.ts); the screen never reads them
+// on a sign-in of its own, since the tabs can stay mounted through one.
+//
+// "Report this reply" (Android only, COACH-7): every bubble the store marks
+// as the model's own words (`isReportableReply`) offers it, a day plan's
+// card included (its renderer passes the words it draws), and this screen
+// presents the report sheet (src/features/coach/report), one instance per
+// opening so each has its own choices and Idempotency-Key.
+import { useFocusEffect } from '@react-navigation/native';
+import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { setStatusBarStyle } from 'expo-status-bar';
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  ScrollView,
-  Image,
-  TouchableOpacity,
-  TouchableWithoutFeedback,
-  Pressable,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
+  Dimensions,
   ImageBackground,
   Keyboard,
-  Dimensions,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+  useWindowDimensions,
+  type LayoutChangeEvent,
 } from 'react-native';
-import * as Location from 'expo-location';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRoute, useNavigation, type RouteProp } from '@react-navigation/native';
-import { colors } from './coachTheme';
-import { fonts } from '../../theme';
-import WaveIcon from '../../components/WaveIcon';
-import Wordmark from '../../components/Wordmark';
+
+import { isLiveProgramStatus } from '../../api/profile';
+import { LPText, Wordmark } from '../../components/ui';
+import { bookPlanClass } from '../../features/coach/dayPlan/wizard';
+import { inputPromptKey } from '../../features/coach/freeTier/freeTier';
+import FreeTierStrip from '../../features/coach/freeTier/FreeTierStrip';
+import type { CoachRoute } from '../../features/coach/store/host';
+import { ReplyReportSheet } from '../../features/coach/report';
+import { hasStartedChat, isFlowBubble, isReportableReply, type CoachMessage } from '../../features/coach/store/messages';
 import {
-  mockCoachMessages,
-  selectChips,
-} from '../../data/mockCoach';
-import { deriveActivityTags } from '../../coach/deriveTags';
-import {
-  loadSessions,
-  buildSession,
-  upsertSession,
-  messagesFromSession,
-  type ChatSession,
-} from '../../coach/chatSessions';
-import { sendCoachMessage } from '../../supabase/services/coach';
-import { useBookings } from '../../supabase/hooks/useBookings';
-import { useFavouriteVenues } from '../../supabase/hooks/useFavourites';
-import type { ChatMessage, VenueCard } from '../../types/coach';
-import type { CoachStackParamList } from '../../navigation/types';
-import {
-  detectVenueCategory,
-  VENUE_QUESTIONS,
-  coachLocationFilter,
-  coachCategoryOverride,
-  icelandRegion,
-  type CoachLocationFilter,
-} from '../../data/coachQuestions';
-import { coachCategories } from '../../data/coachCategories';
-import { deriveCoachHeading } from '../../utils/activityHeading';
-import { fetchVenuesFromAPI } from '../../supabase/services/venues';
+  COACH_FLOWS,
+  selectIsAILocked,
+  selectRecentChats,
+  useCoachStore,
+} from '../../features/coach/store/coachStore';
+import { usePlanEditOffered } from '../../features/coach/planEdit';
+import { coachPalette, LOCKED_INPUT_OPACITY } from '../../features/coach/theme/palette';
+import { SavedSheet } from '../../features/library';
+import { selectHasLiveProgram, useHealthStore } from '../../health';
+import { useT } from '../../i18n';
+import { openSharedRoute } from '../../navigation/sharedSheet';
+import type { AppNavigation, TabRootProps } from '../../navigation/types';
+import { selectSupportsPlanRevision, useAppStore } from '../../stores/appStore';
+import { useIntentStore } from '../../stores/intentStore';
+import { TAB_BAR_HEIGHT } from '../../navigation/CustomTabBar';
 import type { Venue } from '../../types/venue';
-import type { SuggestionChip } from '../../data/mockCoach';
+import { CategoryPrompt } from './CategoryStrip';
 import ChatDrawer from './ChatDrawer';
-import SuggestionChips from './SuggestionChips';
-import VenueCarouselMessage from './VenueCarouselMessage';
+import ClassCardsMessage from './ClassCardsMessage';
+import { MessageBubble, TypingIndicator } from './MessageBubble';
+import MicButton from './MicButton';
 import QuestionBubbleMessage from './QuestionBubbleMessage';
+import SuggestionChips, { type SuggestionChipAction } from './SuggestionChips';
+import { useDictation, type Dictation } from './useDictation';
+import VenueCarouselMessage from './VenueCarouselMessage';
 
-let idCounter = 100;
-const nextId = () => String(++idCounter);
+const BACKGROUND = require('../../../assets/bg-chat.jpg');
 
-// Voice dictation lives in a separate module so its native import (which
-// THROWS in Expo Go, where the speech native module is absent) only ever
-// evaluates when that module is actually present. Null in Expo Go / web →
-// the mic button is simply hidden; wired for real in a dev/production build.
-type MicButtonComponent = ComponentType<{ onTranscript: (text: string) => void }>;
-let MicButton: MicButtonComponent | null = null;
-try {
-  MicButton = require('./MicButton').default as MicButtonComponent;
-} catch {
-  MicButton = null;
+/** The input grows to five lines (iOS `.lineLimit(1...5)`). */
+const INPUT_LINES = 5;
+const INPUT_LINE_HEIGHT = 20;
+const INPUT_PADDING_V = 11;
+
+/**
+ * How much of the window the keyboard covers. Android draws edge to edge, so
+ * the window never resizes for the keyboard; and some phones under-report the
+ * keyboard's height (they miss the navigation bar strip), so its top edge in
+ * SCREEN coordinates decides.
+ */
+function useKeyboardCoverage(): number {
+  const [coverage, setCoverage] = useState(0);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (event) => {
+      const { height = 0, screenY } = event.endCoordinates ?? {};
+      const screenHeight = Dimensions.get('screen').height;
+      setCoverage(typeof screenY === 'number' ? Math.max(height, screenHeight - screenY) : height);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => setCoverage(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return coverage;
 }
 
-
-export default function CoachScreen() {
+export default function CoachScreen({ navigation, route }: Partial<TabRootProps<'CoachMain'>>) {
+  const nav = navigation as unknown as AppNavigation;
+  const { t, language } = useT();
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation<any>();
-  const route = useRoute<RouteProp<CoachStackParamList, 'CoachMain'>>();
-  const prefilledMessage = route.params?.prefilledMessage;
-
-  const { bookings: pastBookings }     = useBookings(false);
-  const { bookings: upcomingBookings } = useBookings(true);
-  const { savedVenues } = useFavouriteVenues();
-
-  const contextHeading = useMemo(
-    () => deriveCoachHeading(pastBookings, upcomingBookings),
-    [pastBookings, upcomingBookings],
-  );
-
-  const [messages, setMessages] = useState<ChatMessage[]>(mockCoachMessages);
-  // Persisted RECENTS (drawer) — up to 4 past conversations.
-  const [savedSessions, setSavedSessions] = useState<ChatSession[]>([]);
-  // Id of the on-screen conversation once saved/restored, so re-persisting
-  // upserts the SAME recents entry instead of minting a duplicate.
-  const currentSessionIdRef = useRef<string | null>(null);
-  // Bumped by resetChat/restoreSession — in-flight AI/venue replies capture
-  // it and drop their append when the chat changed underneath them.
-  const chatGenRef = useRef(0);
-  const [input, setInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+  const { fontScale } = useWindowDimensions();
+  const tabBarHeight = useContext(BottomTabBarHeightContext);
+  const keyboard = useKeyboardCoverage();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [userCoords, setUserCoords] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const scrollRef = useRef<ScrollView | null>(null);
-  const categoryScrollRef = useRef<ScrollView | null>(null);
-  const autoSentRef = useRef(false);
+  const [savedOpen, setSavedOpen] = useState(false);
+  // The report sheet on screen (kept while it slides away), one per opening.
+  const [report, setReport] = useState<{ id: number; reply: string; visible: boolean } | null>(null);
+  const reportCount = useRef(0);
 
-  // MIC UNWIRED — restore before launch
-  // useSpeechRecognitionEvent('start', () => setIsListening(true));
-  // useSpeechRecognitionEvent('end',   () => setIsListening(false));
-  // useSpeechRecognitionEvent('result', (event) => {
-  //   const transcript = event.results[0]?.transcript ?? '';
-  //   if (transcript) setInput(transcript);
-  // });
-  // useSpeechRecognitionEvent('error', () => setIsListening(false));
+  // The input's text is NOT read here (./CoachInputBar below): a keystroke or
+  // a dictation partial re-renders the bar, not every row of the chat.
+  const messages = useCoachStore((s) => s.messages);
+  const isTyping = useCoachStore((s) => s.isTyping);
+  const freeLimitReached = useCoachStore((s) => s.freeLimitReached);
+  const freeMessages = useCoachStore((s) => s.freeMessages);
+  const upgrade = useCoachStore((s) => s.upgrade);
+  const savedSessions = useCoachStore((s) => s.savedSessions);
+  const pendingRoute = useCoachStore((s) => s.pendingRoute);
+  const claimed = useCoachStore((s) => s.memberId !== null && s.claimedFor === s.memberId);
 
-  // Q&A flow state — tracks which category and step we're on
-  const [qaFlow, setQaFlow] = useState<{
-    category: string;
-    step: number;
-    answers: string[];
-  } | null>(null);
+  const coachBlock = useAppStore((s) => s.profile?.coach ?? null);
+  const profileReadAt = useAppStore((s) => s.profileReadAt);
+  const healthAccess = useAppStore((s) => s.healthAccess);
+  const supportsPlanRevision = useAppStore(selectSupportsPlanRevision);
+  const profileProgramLive = useAppStore((s) => isLiveProgramStatus(s.profile?.health?.program?.status));
+  const todayProgramLive = useHealthStore(selectHasLiveProgram);
+  // A custom plan refuses a revision: its chip is never "Adjust my plan".
+  const todayProgramCustom = useHealthStore((s) => s.today?.program?.custom === true);
+  const planEditOffered = usePlanEditOffered();
 
-  // Request location permission on mount and cache coordinates for "Close by" chip
-  // Load the persisted recents once on mount.
+  const coach = useCoachStore.getState;
+  const started = hasStartedChat(messages);
+  const recentChats = useMemo(() => selectRecentChats({ savedSessions }), [savedSessions]);
+
+  const dictation = useDictation((text) => coach().setInputText(text));
+  const stopDictation = dictation.stop;
+
+  // MARK: The account
+
+  // The chats belong to the member signed in: read once the sign-in hook has
+  // claimed them (the store refuses before that; the claim also reads them).
   useEffect(() => {
-    loadSessions().then(setSavedSessions);
-  }, []);
+    if (claimed) void coach().loadSessions();
+  }, [claimed, coach]);
 
+  // The greeting follows the account language while it is all there is.
   useEffect(() => {
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') return;
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
+    coach().updateLanguage();
+  }, [language, coach]);
+
+  // A membership bought from the prompt (or anywhere) lifts the free lock on
+  // the next profile read; an older read changes nothing.
+  useEffect(() => {
+    coach().applyProfileCoach(coachBlock, profileReadAt);
+  }, [coachBlock, profileReadAt, coach]);
+
+  // MARK: Every appearance
+
+  useFocusEffect(
+    useCallback(() => {
+      setStatusBarStyle('light');
+      const state = useAppStore.getState();
+      coach().applyProfileCoach(state.profile?.coach ?? null, state.profileReadAt);
+      void coach().consumeParkedEntries();
+      // Something parked while the Coach is already on screen.
+      const unsubscribe = useIntentStore.subscribe((intents, previous) => {
+        const promptArrived = intents.pendingCoachPrompt !== null && intents.pendingCoachPrompt !== previous.pendingCoachPrompt;
+        const programArrived =
+          intents.pendingCoachProgram !== null && intents.pendingCoachProgram !== previous.pendingCoachProgram;
+        const planEditArrived =
+          intents.pendingCoachPlanEdit !== null && intents.pendingCoachPlanEdit !== previous.pendingCoachPlanEdit;
+        if (promptArrived || programArrived || planEditArrived) void coach().consumeParkedEntries();
       });
-      setUserCoords({
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-      });
-    })();
-  }, []);
-
-  // Hide category strip and remove excess bottom padding while keyboard is open
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvent, (e) => {
-      // Android edge-to-edge under-reports endCoordinates.height (it misses the
-      // nav-bar strip the window draws behind), leaving the input hidden on some
-      // OEM skins (OnePlus/OxygenOS). The input bar is anchored inside the
-      // full-bleed edge-to-edge container, so coverage must be measured against
-      // the PHYSICAL screen height — some OEMs shrink window.height by the
-      // nav-bar area, which pushed the bar too low. screenY is the keyboard's
-      // top edge in screen coords; on phones where window == screen (e.g. many
-      // Samsung One UI builds) this is identical to before, so no regression.
-      const { height = 0, screenY } = e.endCoordinates ?? {};
-      const screenH = Dimensions.get('screen').height;
-      const coverage = screenY != null ? Math.max(height, screenH - screenY) : height;
-      setKeyboardHeight(coverage);
-    });
-    const hide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
-    return () => { show.remove(); hide.remove(); };
-  }, []);
-
-  // Derive activity tags from real bookings + favourited venues, then pick
-  // the 4 most-relevant suggestion chips from the bank.
-  const userTags = useMemo(
-    () => deriveActivityTags({ bookings: pastBookings, favourites: savedVenues }),
-    [pastBookings, savedVenues],
-  );
-  const chips = useMemo(() => selectChips(userTags), [userTags]);
-
-  const hasStartedChat = messages.some((m) => m.role === 'user');
-
-  // ── Core AI call (bypasses Q&A detection) ────────────────────────────────
-  async function callAI(outgoing: ChatMessage[]) {
-    const gen = chatGenRef.current; // drop the reply if the chat changes
-    setIsTyping(true);
-    try {
-      // Strip Q&A messages from history so the AI only sees real conversation
-      const clean = outgoing.filter((m) => !m.questionOptions);
-      const reply = await sendCoachMessage(clean);
-      if (gen !== chatGenRef.current) return; // chat was reset/restored mid-flight
-      setMessages((m) => [
-        ...m,
-        {
-          id: nextId(),
-          role: 'assistant',
-          text: reply.text,
-          venueCards: reply.venueCards,
-          searchQuery: reply.searchQuery,
-          createdAt: new Date(),
-        },
-      ]);
-      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
-    } catch (e) {
-      if (gen !== chatGenRef.current) return; // chat was reset/restored mid-flight
-      const err = e instanceof Error ? e.message : 'Coach is unavailable right now.';
-      setMessages((m) => [
-        ...m,
-        {
-          id: nextId(),
-          role: 'assistant',
-          text: `Sorry. ${err}`,
-          createdAt: new Date(),
-        },
-      ]);
-    } finally {
-      setIsTyping(false);
-    }
-  }
-
-  // ── Start Q&A flow when a venue category is detected ─────────────────────
-  function startQAFlow(userText: string, category: string) {
-    const questions = VENUE_QUESTIONS[category];
-    const q = questions[0];
-    const userMsg: ChatMessage = { id: nextId(), role: 'user', text: userText, createdAt: new Date() };
-    const questionMsg: ChatMessage = {
-      id: nextId(),
-      role: 'assistant',
-      text: q.text,
-      questionOptions: q.options,
-      createdAt: new Date(),
-    };
-    setMessages((m) => [...m, userMsg, questionMsg]);
-    setQaFlow({ category, step: 0, answers: [] });
-    setInput('');
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
-  }
-
-  // ── Venue querying (mirrors iOS CoachViewModel.queryVenues) ───────────────
-
-  // Maps a Coach venue-search key (from detectVenueCategory) to a single
-  // DB category the /venues API understands.
-  function apiCategory(key: string): string {
-    switch (key) {
-      case 'gym':      return 'Gym';
-      case 'lagoon':   return 'Lagoon';
-      case 'yoga':     return 'Yoga';
-      case 'swimming': return 'Pool';
-      case 'spa':      return 'Spa';
-      case 'golf':     return 'Golf';
-      default:         return key;
-    }
-  }
-
-  // User-facing word for a broad search key, for chat copy — "swimming"
-  // reads better to a member than the DB's "Pool".
-  function displayCategoryName(key: string): string {
-    return key; // the internal keys are already readable English words
-  }
-
-  function haversineMeters(
-    lat1: number, lon1: number,
-    lat2: number, lon2: number,
-  ): number {
-    const R = 6371000;
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(lat1 * (Math.PI / 180)) *
-      Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  }
-
-  // Same threshold iOS uses when routed ETAs are unavailable — RN has no
-  // MapKit routing, so the straight-line fallback IS the filter here.
-  const NEARBY_RADIUS_METERS = 15_000;
-  const REYKJAVIK_CENTRE = { latitude: 64.1466, longitude: -21.9426 };
-
-  // The "Where in Iceland?" chip is honoured client-side (the API has no
-  // geo filter): 15-min drive → distance from the user's position
-  // (Reykjavík fallback), nearest first; a region → venues whose
-  // coordinates fall in that region; none → list untouched.
-  function applyLocationFilter(
-    venues: Venue[],
-    filter: CoachLocationFilter,
-  ): { venues: Venue[]; note?: string } {
-    switch (filter.kind) {
-      case 'none':
-        return { venues };
-
-      case 'region':
-        return {
-          venues: venues.filter((v) => {
-            if (!v.latitude || !v.longitude) return false;
-            return icelandRegion(v.latitude, v.longitude) === filter.region;
-          }),
-        };
-
-      case 'nearbyDrive': {
-        const hasFix = userCoords != null;
-        const origin = userCoords ?? REYKJAVIK_CENTRE;
-
-        const ranked = venues
-          .filter((v) => v.latitude && v.longitude)
-          .map((v) => ({
-            venue: v,
-            meters: haversineMeters(origin.latitude, origin.longitude, v.latitude, v.longitude),
-          }))
-          .sort((a, b) => a.meters - b.meters);
-        const within = ranked.filter((r) => r.meters <= NEARBY_RADIUS_METERS).map((r) => r.venue);
-        const all = ranked.map((r) => r.venue);
-
-        if (!hasFix) {
-          // No real location — measuring from Reykjavík centre. Prefer the
-          // within-radius set (most venues are in the capital), else the
-          // closest, and be honest about the origin.
-          const pool = within.length > 0 ? within : all;
-          return {
-            venues: pool,
-            note: pool.length > 0
-              ? "I don't have your location yet, so these are around Reykjavík. Turn on location for spots near you:"
-              : undefined,
-          };
-        }
-        if (within.length === 0) {
-          // Nothing within ~15 min — surface the closest options instead of
-          // an empty result, and say so.
-          return {
-            venues: all,
-            note: all.length > 0
-              ? 'Nothing within a 15-minute drive, so here are the closest:'
-              : undefined,
-          };
-        }
-        return { venues: within };
-      }
-    }
-  }
-
-  function venueCardOf(v: Venue, category: string): VenueCard {
-    return {
-      id: v.id,
-      name: v.name,
-      location: [v.city, v.address].filter(Boolean).join(' · '),
-      description: v.description || '',
-      imageUrl: v.imageUrl,
-      creditCost: v.creditCost,
-      category: v.category?.[0] ?? category,
-      // Pricing passthrough for the card's "Included"/premium pill
-      inBundle: v.inBundle,
-      surchargePrice: v.surchargePrice,
-      resolvedSurchargePrice: v.resolvedSurchargePrice,
-      topupPrice: v.topupPrice,
-      daypassPrice: v.daypassPrice,
-      primaryCategory: v.primaryCategory,
-    };
-  }
-
-  async function queryVenues(category: string, answers: string[]) {
-    const gen = chatGenRef.current; // drop the reply if the chat changes
-    setIsTyping(true);
-    try {
-      // A specific training-type chip (e.g. "MMA & Combat") can target a
-      // narrower DB category than the broad one; use it so the matching
-      // venue surfaces (e.g. Mjölnir for MMA). Fall back to the broad
-      // category if the narrower query comes back empty.
-      const broadCategory = apiCategory(category);
-      const override = coachCategoryOverride(answers);
-      // Fetch a generous set, then filter by the member's location chip
-      // client-side. 100 gives the distance/region filters enough to choose
-      // from before we trim to 10 cards.
-      let all = await fetchVenuesFromAPI(override ?? broadCategory, 100);
-      let usedOverride = override != null;
-      if (all.length === 0 && override != null) {
-        all = await fetchVenuesFromAPI(broadCategory, 100);
-        usedOverride = false;
-      }
-      const result = applyLocationFilter(all, coachLocationFilter(answers));
-      if (gen !== chatGenRef.current) return; // chat was reset/restored mid-flight
-      const shown = result.venues.slice(0, 10);
-
-      // What the member asked for (e.g. "MMA"), vs. what we're showing —
-      // a broad fallback shows broad results, so don't mislabel them.
-      const wanted = override ?? displayCategoryName(category);
-      const showing = (usedOverride ? override : null) ?? displayCategoryName(category);
-
-      if (shown.length === 0) {
-        setMessages((m) => [...m, {
-          id: nextId(), role: 'assistant',
-          text: `Hmm, I couldn't find any ${wanted} options in that area. Try a wider location?`,
-          createdAt: new Date(),
-        }]);
-      } else {
-        const intro = result.note
-          ?? `Found ${shown.length} ${showing} option${shown.length > 1 ? 's' : ''} for you:`;
-        setMessages((m) => [...m, {
-          id: nextId(), role: 'assistant',
-          text: intro,
-          venueCards: shown.map((v) => venueCardOf(v, category)),
-          createdAt: new Date(),
-        }]);
-      }
-      // Follow-up: invite the member to explore another category. The
-      // category cards start a fresh Q&A flow when tapped.
-      setMessages((m) => [...m, {
-        id: nextId(), role: 'assistant',
-        text: 'Want to explore something else?',
-        categoryPicker: true,
-        createdAt: new Date(),
-      }]);
-      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
-    } catch (e) {
-      if (gen !== chatGenRef.current) return; // chat was reset/restored mid-flight
-      setMessages((m) => [...m, {
-        id: nextId(), role: 'assistant',
-        text: "Sorry, I couldn't load venues right now. Please try again.",
-        createdAt: new Date(),
-      }]);
-    } finally {
-      setIsTyping(false);
-    }
-  }
-
-  // ── Suggestion chips (mirrors iOS showCategoryPicker) ─────────────────────
-
-  // "What's nearby?" / "After work" / "Something new" don't name a venue
-  // type, so rather than presuming one they show the same category strip
-  // used after a completed search, letting the member pick.
-  function showCategoryPicker(chipLabel: string) {
-    if (isTyping) return;
-    setQaFlow(null);
-    setMessages((m) => [
-      ...m,
-      { id: nextId(), role: 'user', text: chipLabel, createdAt: new Date() },
-      {
-        id: nextId(), role: 'assistant',
-        text: 'What would you like to find nearby?',
-        categoryPicker: true,
-        createdAt: new Date(),
-      },
-    ]);
-  }
-
-  function handleChipSelect(chip: SuggestionChip) {
-    if (chip.showsCategoryStrip) {
-      showCategoryPicker(chip.text);
-    } else {
-      send(chip.prompt);
-    }
-  }
-
-  // ── Handle chip selection inside a Q&A bubble ─────────────────────────────
-  async function handleOptionSelect(msgId: string, value: string, label: string) {
-    if (!qaFlow) return;
-
-    // Mark the question message as answered
-    setMessages((m) =>
-      m.map((msg) =>
-        msg.id === msgId
-          ? { ...msg, questionAnswered: true, selectedAnswer: label }
-          : msg,
-      ),
-    );
-
-    const newAnswers = [...qaFlow.answers, value];
-    const questions = VENUE_QUESTIONS[qaFlow.category];
-    const nextStep = qaFlow.step + 1;
-
-    // Add user bubble showing what was selected
-    const userMsg: ChatMessage = { id: nextId(), role: 'user', text: label, createdAt: new Date() };
-
-    if (nextStep < questions.length) {
-      // Show next question
-      const nextQ = questions[nextStep];
-      const questionMsg: ChatMessage = {
-        id: nextId(),
-        role: 'assistant',
-        text: nextQ.text,
-        questionOptions: nextQ.options,
-        createdAt: new Date(),
+      return () => {
+        unsubscribe();
+        // Leaving the tab stops the mic (iOS `onDisappear { speech.stop() }`).
+        stopDictation();
+        setStatusBarStyle('dark');
       };
-      setMessages((m) => [...m, userMsg, questionMsg]);
-      setQaFlow({ ...qaFlow, step: nextStep, answers: newAnswers });
-    } else {
-      // All questions answered → query real venues, honouring the location
-      // chip (and any other answers) the member picked.
-      const { category } = qaFlow;
-      setMessages((m) => [...m, userMsg]);
-      setQaFlow(null);
-      await queryVenues(category, newAnswers);
-    }
-
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
-  }
-
-  // ── Main send — detects venue searches, otherwise sends to AI ────────────
-  async function send(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed || isTyping) return;
-    setInput('');
-
-    // If mid-flow and user types manually, treat as answer to current question
-    if (qaFlow) {
-      const currentQMsg = [...messages].reverse().find((m) => m.questionOptions && !m.questionAnswered);
-      if (currentQMsg) {
-        handleOptionSelect(currentQMsg.id, trimmed, trimmed);
-        return;
-      }
-    }
-
-    // Detect venue search → start Q&A
-    const category = detectVenueCategory(trimmed);
-    if (category) {
-      startQAFlow(trimmed, category);
-      return;
-    }
-
-    // Regular message → straight to AI
-    const userMsg: ChatMessage = { id: nextId(), role: 'user', text: trimmed, createdAt: new Date() };
-    setMessages((m) => [...m, userMsg]);
-    callAI([...messages, userMsg]);
-  }
-
-  function handleOtherIdeas(searchQuery: string, category: string) {
-    send(`Show me other ${searchQuery || category} options in Iceland`);
-  }
-
-  function handleBook(venue: VenueCard) {
-    // Navigate to the venue detail screen via the Explore stack
-    navigation.getParent()?.navigate('Explore', {
-      screen: 'VenueDetail',
-      params: { venueId: venue.id },
-    });
-  }
-
-  // Auto-send a message passed via navigation params (e.g. when the user
-  // tapped a category card on Home). Fires once on mount only.
-  useEffect(() => {
-    if (!prefilledMessage || autoSentRef.current) return;
-    autoSentRef.current = true;
-    send(prefilledMessage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefilledMessage]);
-
-  /** Snapshot the live conversation into RECENTS (no-op before the first
-   *  user message). Mirrors iOS persistCurrentSession(). */
-  async function persistCurrentSession() {
-    const session = buildSession(messages, currentSessionIdRef.current);
-    if (!session) return;
-    currentSessionIdRef.current = session.id;
-    setSavedSessions(await upsertSession(savedSessions, session));
-  }
-
-  function resetChat() {
-    persistCurrentSession(); // save the outgoing chat before wiping it
-    chatGenRef.current += 1; // drop any in-flight reply
-    currentSessionIdRef.current = null; // the new chat is a brand-new session
-    setMessages(mockCoachMessages);
-    setInput('');
-    setIsTyping(false);
-    setQaFlow(null);
-  }
-
-  /** Reload a saved session (drawer RECENTS tap). Mirrors iOS restoreSession(). */
-  function restoreSession(sessionId: string) {
-    // Re-selecting the OPEN session would restore a stale snapshot and
-    // silently drop the newest turns — no-op instead.
-    if (sessionId === currentSessionIdRef.current) return;
-    const session = savedSessions.find((s) => s.id === sessionId);
-    if (!session) return;
-    // Save the active conversation FIRST so opening a recent never
-    // silently discards in-progress work.
-    persistCurrentSession();
-    chatGenRef.current += 1; // drop any in-flight reply
-    currentSessionIdRef.current = session.id;
-    setMessages(messagesFromSession(session));
-    // Restored messages keep their ORIGINAL ids, which can be ≥ this
-    // launch's idCounter — advance it past them so new ids never collide.
-    const restoredIds = session.messages
-      .map((m) => parseInt(m.id, 10))
-      .filter(Number.isFinite);
-    idCounter = Math.max(idCounter, ...restoredIds, idCounter);
-    setInput('');
-    setIsTyping(false);
-    setQaFlow(null);
-  }
-
-  // Render the category strip (reused in both chat and empty states)
-  const CategoryStrip = (
-    <View style={styles.categoryStripRow}>
-      <TouchableOpacity
-        style={styles.categoryArrow}
-        onPress={() => categoryScrollRef.current?.scrollTo({ x: 0, animated: true })}
-        activeOpacity={0.6}
-        hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-      >
-        <Ionicons name="chevron-back" size={16} color="rgba(255,255,255,0.45)" />
-      </TouchableOpacity>
-
-      <ScrollView
-        ref={categoryScrollRef}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoryScroll}
-        style={{ flex: 1 }}
-      >
-        {coachCategories.map((cat) => (
-          <TouchableOpacity
-            key={cat.id}
-            style={styles.categoryCard}
-            onPress={() => send(cat.prompt)}
-            activeOpacity={0.85}
-          >
-            <Image source={cat.image} style={styles.categoryImage} />
-            <Text style={styles.categoryLabel} numberOfLines={2}>
-              {cat.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      <TouchableOpacity
-        style={styles.categoryArrow}
-        onPress={() => categoryScrollRef.current?.scrollToEnd({ animated: true })}
-        activeOpacity={0.6}
-        hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-      >
-        <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.45)" />
-      </TouchableOpacity>
-    </View>
+    }, [coach, stopDictation]),
   );
+
+  // An entry parked while a page is pushed on this tab (focused or not):
+  // back to the chat, whose focus then runs it. Mounted, not focused: the
+  // chat is not focused exactly when a page covers it.
+  useEffect(() => {
+    if (!navigation) return undefined;
+    return useIntentStore.subscribe((intents, previous) => {
+      const promptArrived = intents.pendingCoachPrompt !== null && intents.pendingCoachPrompt !== previous.pendingCoachPrompt;
+      const programArrived =
+        intents.pendingCoachProgram !== null && intents.pendingCoachProgram !== previous.pendingCoachProgram;
+      const planEditArrived =
+        intents.pendingCoachPlanEdit !== null && intents.pendingCoachPlanEdit !== previous.pendingCoachPlanEdit;
+      if (!promptArrived && !programArrived && !planEditArrived) return;
+      const stack = navigation.getState();
+      if (stack && stack.index > 0) navigation.popToTop();
+    });
+  }, [navigation]);
+
+  // The first build's Home passed its prompt as a route param; it is parked
+  // like any other, so it is sent once per tap, never once per mount.
+  const legacyPrompt = route?.params?.prefilledMessage;
+  useEffect(() => {
+    if (!legacyPrompt) return;
+    navigation?.setParams({ prefilledMessage: undefined });
+    useIntentStore.getState().parkCoachPrompt(legacyPrompt);
+  }, [legacyPrompt, navigation]);
+
+  // MARK: Routes a flow asks for
+
+  const perform = useCallback(
+    (target: CoachRoute) => {
+      const intents = useIntentStore.getState();
+      switch (target.kind) {
+        case 'plans':
+          nav.navigate('Plans', undefined);
+          return;
+        case 'account':
+          openSharedRoute(nav, 'Account');
+          return;
+        case 'planTab':
+          intents.requestTab('Plan');
+          return;
+        case 'pastPlans':
+          intents.parkPlanAction({ kind: 'openPastPlans' });
+          intents.requestTab('Plan');
+          return;
+        case 'savedProposal':
+          intents.parkPlanAction({ kind: 'openProposal' });
+          intents.requestTab('Plan');
+          return;
+        case 'venue':
+          openSharedRoute(nav, 'VenueDetail', { slug: target.slug });
+          return;
+        case 'sight':
+          openSharedRoute(nav, 'AttractionDetail', { slug: target.slug });
+          return;
+      }
+    },
+    [nav],
+  );
+
+  useEffect(() => {
+    if (!pendingRoute) return;
+    const target = coach().takeRoute();
+    if (target) perform(target);
+  }, [pendingRoute, perform, coach]);
+
+  // MARK: Actions
+
+  const openVenue = useCallback((venue: Venue) => perform({ kind: 'venue', slug: venue.slug }), [perform]);
+
+  /** A reply's "...", long-press or TalkBack action: the report sheet for the words it shows (one at a time). */
+  const openReport = useCallback((words: string) => {
+    Keyboard.dismiss();
+    reportCount.current += 1;
+    const id = reportCount.current;
+    setReport((current) => current ?? { id, reply: words, visible: true });
+  }, []);
+
+  /** That presentation asked to close (Cancel, Back, Send, a pan down): it slides away. */
+  const closeReport = useCallback((id: number) => {
+    setReport((current) => (current?.id === id ? { ...current, visible: false } : current));
+  }, []);
+
+  /**
+   * That presentation has gone: the next "..." opens a new one. Matched by its
+   * id, never by `visible`: the member's pan down or backdrop tap reports
+   * `onClosed` BEFORE `onClose` (the UI kit Sheet), while it still counts as up.
+   */
+  const clearReport = useCallback((id: number) => {
+    setReport((current) => (current?.id === id ? null : current));
+  }, []);
+
+  /** The app's own memberships screen; the public plans page only when the server asks for one this build has no screen for. */
+  const openMembership = useCallback(() => {
+    if (upgrade?.action && upgrade.action !== 'plans' && upgrade.url) {
+      void Linking.openURL(upgrade.url);
+    } else {
+      perform({ kind: 'plans' });
+    }
+  }, [upgrade, perform]);
+
+  const onChip = (action: SuggestionChipAction) => {
+    switch (action.kind) {
+      case 'categoryPicker':
+        coach().showCategoryPicker(action.labelKey);
+        return;
+      case 'search':
+        coach().startSearch(action.categoryKey, action.labelKey);
+        return;
+      case 'plan':
+        void coach().startPlan(action.labelKey);
+        return;
+      case 'program':
+        void coach().startProgram();
+        return;
+      case 'adjust':
+        void coach().startAdjust();
+        return;
+      case 'planEdit':
+        void coach().startPlanEdit();
+        return;
+    }
+  };
+
+  const send = useCallback(() => {
+    Keyboard.dismiss();
+    // Cancels: nothing the recogniser still says lands in the emptied input.
+    stopDictation();
+    void coach().send(coach().inputText);
+  }, [coach, stopDictation]);
+
+  // MARK: The chat list
+
+  const scroll = useRef<ScrollView>(null);
+  const offsets = useRef(new Map<string, number>());
+  const noteOffset = useCallback((id: string, y: number) => {
+    offsets.current.set(id, y);
+  }, []);
+  const last = messages[messages.length - 1];
+  const lastId = last?.id;
+  const lastAnchorsTop = !!last?.anchorTop;
+
+  // New messages scroll to the end, where the chips and buttons are; a day
+  // plan (`anchorTop`) is taller than the screen, so it lands on its top and
+  // the member reads down through it (iOS `last.plan == nil ? .bottom : .top`).
+  useEffect(() => {
+    if (!started || !lastId) return;
+    const timer = setTimeout(() => {
+      const top = lastAnchorsTop ? offsets.current.get(lastId) : undefined;
+      if (top !== undefined) scroll.current?.scrollTo({ y: Math.max(0, top - 8), animated: true });
+      else scroll.current?.scrollToEnd({ animated: true });
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [messages.length, lastId, lastAnchorsTop, started]);
+
+  useEffect(() => {
+    if (isTyping) scroll.current?.scrollToEnd({ animated: true });
+  }, [isTyping]);
+
+  // MARK: Layout
+
+  // Above the keyboard when it is up; otherwise clear of the floating tab bar
+  // (iOS: the safe area plus 96).
+  const barClearance = tabBarHeight ?? TAB_BAR_HEIGHT + insets.bottom;
+  const bottomPadding = keyboard > 0 ? keyboard + 8 : barClearance + 20;
+  const inputMaxHeight = INPUT_LINES * INPUT_LINE_HEIGHT * Math.max(1, fontScale) + INPUT_PADDING_V * 2;
 
   return (
-    // iOS: native 'padding' avoidance smoothly lifts the whole view above the
-    // keyboard, so the inputBar only needs a small bottom margin. Android is
-    // edge-to-edge (app.json) so the window never resizes and KAV can't help —
-    // there we lift the inputBar manually by the measured keyboard height (below).
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-      <ImageBackground
-        source={require('../../../assets/bg-chat.jpg')}
-        style={styles.bg}
-        resizeMode="cover"
-      >
-        {/* Light neutral scrim: darkens only the top (heading + status bar) and
-            the very bottom (input bar) for legibility, and stays nearly clear
-            through the middle so the Seljavallalaug photo reads as the backdrop.
-            Neutral (not tinted) so it doesn't fight the photo's cool tones. */}
+    <View style={styles.root} testID="coach.screen">
+      <ImageBackground source={BACKGROUND} style={StyleSheet.absoluteFill} resizeMode="cover" accessible={false}>
         <LinearGradient
           pointerEvents="none"
-          colors={[
-            'rgba(0,0,0,0.45)',
-            'rgba(0,0,0,0.10)',
-            'rgba(0,0,0,0.14)',
-            'rgba(0,0,0,0.52)',
-          ]}
-          locations={[0, 0.26, 0.72, 1]}
+          colors={coachPalette.scrimColors}
+          locations={coachPalette.scrimLocations}
           style={StyleSheet.absoluteFill}
         />
+      </ImageBackground>
 
-        {/* ── Top bar ── */}
-        <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
-          <TouchableOpacity
-            style={styles.burgerBtn}
-            onPress={() => setDrawerOpen(true)}
-            activeOpacity={0.7}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Ionicons name="menu-outline" size={26} color="#FFFFFF" />
-          </TouchableOpacity>
+      <View style={[styles.topBar, { paddingTop: insets.top + 6 }]}>
+        <Wordmark height={22} color="#FFFFFF" />
+        <Pressable
+          onPress={() => setDrawerOpen(true)}
+          style={styles.burger}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={t('coach.android.a11y.menu')}
+          testID="coach.menu"
+        >
+          <Ionicons name="menu-outline" size={26} color="#FFFFFF" />
+        </Pressable>
+      </View>
 
-          <Wordmark height={17} color={colors.paper} />
-          <View style={{ width: 42 }} />
-        </View>
-
-        {/* ── Content ── */}
-        <View style={{ flex: 1 }}>
-          {hasStartedChat ? (
+      <View style={[styles.body, { paddingBottom: bottomPadding }]}>
+        {/* A tap on the chat's background closes the keyboard through the
+            scroll views themselves (keyboardShouldPersistTaps="handled":
+            a tap no child takes blurs the input), never on a touch that
+            lands in a field: the question bubble's "Other" keeps focus. */}
+        <View style={styles.content}>
+          {started ? (
             <ScrollView
-              ref={scrollRef}
-              style={styles.chatList}
-              contentContainerStyle={styles.chatListContent}
+              ref={scroll}
+              style={styles.flex}
+              contentContainerStyle={styles.chat}
               showsVerticalScrollIndicator={false}
-              onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+              keyboardDismissMode="on-drag"
+              keyboardShouldPersistTaps="handled"
+              testID="coach.chat"
             >
-              {messages.map((m) =>
-                m.venueCards && m.venueCards.length > 0 ? (
-                  <VenueCarouselMessage
-                    key={m.id}
-                    intro={m.text}
-                    venues={m.venueCards}
-                    searchQuery={m.searchQuery}
-                    onOtherIdeas={handleOtherIdeas}
-                    onBook={handleBook}
-                  />
-                ) : m.questionOptions && m.questionOptions.length > 0 ? (
-                  <QuestionBubbleMessage
-                    key={m.id}
-                    question={m.text}
-                    options={m.questionOptions}
-                    answered={!!m.questionAnswered}
-                    selectedAnswer={m.selectedAnswer}
-                    onSelect={(value, label) => handleOptionSelect(m.id, value, label)}
-                  />
-                ) : m.categoryPicker ? (
-                  // "Want to explore something else?" — category cards start
-                  // a fresh Q&A flow when tapped (same as iOS).
-                  <View key={m.id}>
-                    <MessageBubble message={m} />
-                    {CategoryStrip}
-                  </View>
-                ) : (
-                  <MessageBubble key={m.id} message={m} />
-                )
-              )}
-              {isTyping && <TypingIndicator />}
+              {messages.map((message) => (
+                <MessageRow
+                  key={message.id}
+                  message={message}
+                  busy={isFlowBubble(message) ? isTyping : false}
+                  onBook={openVenue}
+                  onReport={openReport}
+                  onOffset={noteOffset}
+                />
+              ))}
+              {isTyping ? <TypingIndicator /> : null}
             </ScrollView>
           ) : (
-            <>
-              {/* Heading pinned near top */}
-              <Pressable style={styles.headingContainer} onPress={Keyboard.dismiss}>
-                <Text style={styles.heading}>{contextHeading}</Text>
-              </Pressable>
-              {/* Flex spacer pushes chips as far down as possible */}
-              <View style={{ flex: 1 }} />
-              <SuggestionChips chips={chips} onSelect={handleChipSelect} />
-            </>
-          )}
-
-          {/* ── Input bar ── */}
-          {/* Keyboard open → sit the input just above it. iOS: KAV already lifted
-              the view, so just an 8px margin. Android: anchor the bar absolutely
-              at the keyboard's top edge — immune to flex/padding interactions.
-              Closed → in-flow, clearing the floating tab bar (row 76 + inset). */}
-          <View
-            style={[
-              styles.inputBar,
-              keyboardHeight > 0 && Platform.OS === 'android'
-                ? { position: 'absolute', left: 0, right: 0, bottom: keyboardHeight + 8 }
-                : { paddingBottom: keyboardHeight > 0 ? 8 : insets.bottom + 94 },
-            ]}
-          >
-            {/* Send/mic live inside the input pill (trailing). */}
-            <View style={styles.inputPill}>
-              <TextInput
-                value={input}
-                onChangeText={setInput}
-                placeholder="Feeling stuck? Let me help!"
-                placeholderTextColor="rgba(255,255,255,0.40)"
-                style={styles.input}
-                multiline
-                onSubmitEditing={() => send(input)}
-                blurOnSubmit={false}
-                selectionColor={colors.blue}
-                underlineColorAndroid="transparent"
+            <ScrollView
+              style={styles.flex}
+              contentContainerStyle={styles.empty}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <LPText
+                serif
+                size={32}
+                color="#FFFFFF"
+                align="center"
+                tracking={-0.5}
+                style={styles.heading}
+                accessibilityRole="header"
+                testID="coach.empty.heading"
+              >
+                {t('coach.empty.heading')}
+              </LPText>
+              <View style={styles.flex} />
+              <SuggestionChips
+                isMinor={healthAccess === 'minor'}
+                programChipAdjusts={(todayProgramLive || profileProgramLive) && supportsPlanRevision && !todayProgramCustom}
+                programChipEdits={planEditOffered}
+                onAction={onChip}
               />
-              {input.trim() ? (
-                <TouchableOpacity
-                  style={styles.sendButton}
-                  onPress={() => send(input)}
-                  disabled={isTyping}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="arrow-up" size={18} color={colors.ink} />
-                </TouchableOpacity>
-              ) : MicButton ? (
-                // Voice dictation — only present in dev/production builds (hidden
-                // in Expo Go, where the speech native module isn't available).
-                <MicButton onTranscript={setInput} />
-              ) : null}
-            </View>
-          </View>
+            </ScrollView>
+          )}
         </View>
-      </ImageBackground>
-      </TouchableWithoutFeedback>
+
+        <FreeTierStrip freeMessages={freeMessages} freeLimitReached={freeLimitReached} onGetMembership={openMembership} />
+
+        <CoachInputBar dictation={dictation} onSend={send} maxHeight={inputMaxHeight} />
+      </View>
 
       <ChatDrawer
         visible={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        onNewChat={resetChat}
-        onSaved={() =>
-          navigation.navigate('Bookings', {
-            screen: 'BookingsMain',
-            params: { initialTab: 'saved' },
-          })
-        }
-        recentChats={savedSessions.map((s) => ({ id: s.id, title: s.title }))}
-        onSelectRecent={restoreSession}
+        onNewChat={() => coach().resetChat()}
+        onSaved={() => {
+          // iOS closes the drawer and presents FavouritesView as a sheet.
+          setDrawerOpen(false);
+          setSavedOpen(true);
+        }}
+        recentChats={recentChats}
+        onSelectRecent={(id) => {
+          coach().restoreSession(id);
+          setDrawerOpen(false);
+        }}
       />
-    </KeyboardAvoidingView>
-  );
-}
 
-// ─── Message bubble ────────────────────────────────────────────────────────────
+      <SavedSheet visible={savedOpen} onClose={() => setSavedOpen(false)} />
 
-function MessageBubble({ message }: { message: ChatMessage }) {
-  const isUser = message.role === 'user';
-  return (
-    <View style={[bubble.row, isUser && bubble.rowUser]}>
-      {!isUser && (
-        <View style={bubble.avatar}>
-          <WaveIcon size={13} color={colors.paper} />
-        </View>
-      )}
-      <View style={[bubble.wrap, isUser ? bubble.wrapUser : bubble.wrapAssistant]}>
-        <Text style={[bubble.text, isUser && bubble.textUser]}>{message.text}</Text>
-      </View>
+      {report ? (
+        <ReplyReportSheet
+          key={report.id}
+          visible={report.visible}
+          reply={report.reply}
+          onClose={() => closeReport(report.id)}
+          onClosed={() => clearReport(report.id)}
+        />
+      ) : null}
     </View>
   );
 }
 
-// ─── Typing indicator ──────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// One row of the chat. Memoised: a row draws again only when its message (a
+// new object only when that message changed), its busy flag or a callback
+// changes, never on a keystroke.
 
-function TypingIndicator() {
+type MessageRowProps = {
+  message: CoachMessage;
+  /** For a flow's own bubble only (iOS `isBusy: vm.isTyping`); false for every other row. */
+  busy: boolean;
+  onBook: (venue: Venue) => void;
+  /** "Report this reply" on a bubble with the model's own words: the words it shows. */
+  onReport: (words: string) => void;
+  onOffset: (id: string, y: number) => void;
+};
+
+const MessageRow = memo(function MessageRow({ message, busy, onBook, onReport, onOffset }: MessageRowProps) {
   return (
-    <View style={bubble.row}>
-      <View style={bubble.avatar}>
-        <WaveIcon size={13} color={colors.paper} />
-      </View>
-      <View style={[bubble.wrap, bubble.wrapAssistant, bubble.typing]}>
-        <View style={bubble.dot} />
-        <View style={[bubble.dot, { opacity: 0.6 }]} />
-        <View style={[bubble.dot, { opacity: 0.3 }]} />
-      </View>
+    <View onLayout={(event: LayoutChangeEvent) => onOffset(message.id, event.nativeEvent.layout.y)}>
+      <MessageContent message={message} busy={busy} onBook={onBook} onReport={onReport} />
     </View>
   );
-}
-
-// ─── Styles ────────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.ink },
-  bg: { flex: 1 },
-
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-  },
-  burgerBtn: {
-    width: 42, height: 42,
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-  },
-  screenTitle: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: 'rgba(255,255,255,0.85)',
-    letterSpacing: 0.2,
-  },
-
-  headingContainer: {
-    alignItems: 'center',
-    paddingHorizontal: 32,
-    paddingTop: 48,
-    marginBottom:160,
-  },
-  heading: {
-    fontFamily: fonts.serif,
-    fontSize: 36,
-    fontWeight: '400',
-    color: '#FFFFFF',
-    textAlign: 'center',
-    lineHeight: 46,
-    letterSpacing: -0.5,
-  },
-
-  chatList: { flex: 1 },
-  chatListContent: { paddingTop: 20, paddingHorizontal: 16, paddingBottom: 20, gap: 14 },
-
-  inputBar: {
-    paddingHorizontal: 16,
-  },
-  // The pill wraps the text field + the trailing send/mic button.
-  inputPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(26,22,18,0.82)',
-    borderRadius: 26,
-    borderWidth: 0.8,
-    borderColor: 'rgba(255,255,255,0.22)',
-    paddingLeft: 18,
-    paddingRight: 6,
-  },
-  input: {
-    flex: 1,
-    maxHeight: 120,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: '#FFFFFF',
-  },
-  sendButton: {
-    width: 42, height: 42,
-    borderRadius: 21,
-    // Warm paper button with ink icon — matches the app's editorial CTAs.
-    backgroundColor: colors.paper,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Category image strip — pinned just above input bar
-  categoryScroll: {
-    gap: 12,
-    paddingHorizontal: 8,
-  },
-  categoryCard: {
-    width: 92,
-    alignItems: 'center',
-    gap: 6,
-  },
-  categoryImage: {
-    width: 82,
-    height: 62,
-    borderRadius: 12,
-    backgroundColor: colors.ink3,
-  },
-  categoryLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    textAlign: 'center',
-    lineHeight: 17,
-    // Sits directly on the photo — a soft shadow keeps it crisp anywhere.
-    textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  categoryStripRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingTop: 12,
-    marginBottom: 20,
-  },
-  categoryArrow: {
-    width: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 });
 
-const bubble = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
-  rowUser: { justifyContent: 'flex-end' },
-  avatar: {
-    width: 26, height: 26,
-    borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.14)',
+function MessageContent({ message, busy, onBook, onReport }: Omit<MessageRowProps, 'onOffset'>) {
+  // Only the model's own words, never the member's turn or the app's sentences.
+  const reportable = isReportableReply(message);
+  const report = reportable ? () => onReport(message.text) : undefined;
+  if (isFlowBubble(message)) {
+    const Renderer = COACH_FLOWS[message.flow].renderers[message.kind];
+    // The message as the store keeps it (no copy), so a renderer can memoise on
+    // it; a reportable one (a day plan) says which of its words are reported.
+    if (Renderer) return <Renderer message={message} busy={busy} onReport={reportable ? onReport : undefined} />;
+  }
+  if (message.venues && message.venues.length > 0) {
+    return <VenueCarouselMessage intro={message.text} venues={message.venues} onBook={onBook} onReport={report} />;
+  }
+  if (message.classCards && message.classCards.length > 0) {
+    // The chat's class cards (API 0.36.0): Book opens the same class sheet
+    // as a day plan's class and a Classes row (iOS CoachView `bookClass`).
+    return (
+      <ClassCardsMessage
+        intro={message.text}
+        classes={message.classCards}
+        hidden={!!message.classCardsHidden}
+        onSetHidden={(hidden) => useCoachStore.getState().setClassCardsHidden(hidden, message.id)}
+        onBook={bookPlanClass}
+        onReport={report}
+      />
+    );
+  }
+  if (message.options && message.options.length > 0) {
+    return (
+      <QuestionBubbleMessage
+        question={message.text}
+        options={message.options}
+        answered={!!message.answered}
+        selectedAnswer={message.selectedAnswer}
+        onSelect={(value, label) => void useCoachStore.getState().selectOption(message.id, value, label)}
+      />
+    );
+  }
+  if (message.showCategoryStrip) {
+    return (
+      <CategoryPrompt
+        intro={message.text}
+        onSelect={(tile) => useCoachStore.getState().startSearch(tile.id, tile.labelKey)}
+      />
+    );
+  }
+  return <MessageBubble role={message.role} text={message.text} onReport={report} />;
+}
+
+// ---------------------------------------------------------------------------
+// The input: 1 to 5 lines, Send on the keyboard, the mic while empty, the
+// send arrow while not; locked (55%, its own placeholder) while an allowance
+// is spent. Its own component, so the text it follows re-renders only it.
+
+function CoachInputBar({
+  dictation,
+  onSend,
+  maxHeight,
+}: {
+  dictation: Dictation;
+  onSend: () => void;
+  maxHeight: number;
+}) {
+  const { t } = useT();
+  const inputText = useCoachStore((s) => s.inputText);
+  const isTyping = useCoachStore((s) => s.isTyping);
+  // Locked only while the plan cannot be changed in chat either (the lock
+  // covers the chat, not the plan change).
+  const aiLocked = useCoachStore(selectIsAILocked);
+  const planEditOffered = usePlanEditOffered();
+  const locked = aiLocked && !planEditOffered;
+  const limitReached = useCoachStore((s) => s.limitReached);
+  const freeLimitReached = useCoachStore((s) => s.freeLimitReached);
+  const inputEmpty = inputText.trim().length === 0;
+  const prompt = t(inputPromptKey({ limitReached, freeLimitReached }));
+
+  return (
+    <View style={[styles.inputBar, locked && { opacity: LOCKED_INPUT_OPACITY }]}>
+      <TextInput
+        value={inputText}
+        onChangeText={(text) => useCoachStore.getState().setInputText(text)}
+        placeholder={prompt}
+        placeholderTextColor={coachPalette.placeholder}
+        editable={!locked}
+        multiline
+        submitBehavior="blurAndSubmit"
+        returnKeyType="send"
+        enterKeyHint="send"
+        onSubmitEditing={onSend}
+        selectionColor={coachPalette.accent}
+        underlineColorAndroid="transparent"
+        textAlignVertical="center"
+        style={[styles.input, { maxHeight }]}
+        accessibilityLabel={prompt}
+        accessibilityState={{ disabled: locked }}
+        testID="coach.input"
+      />
+      {dictation.isRecording ? (
+        <MicButton recording disabled={false} onStart={() => undefined} onStop={dictation.stop} />
+      ) : inputEmpty ? (
+        dictation.available ? (
+          <MicButton recording={false} disabled={locked} onStart={() => void dictation.start()} onStop={dictation.stop} />
+        ) : null
+      ) : (
+        <Pressable
+          onPress={onSend}
+          disabled={isTyping}
+          style={({ pressed }) => [styles.send, (pressed || isTyping) && styles.sendDimmed]}
+          accessibilityRole="button"
+          accessibilityLabel={t('coach.a11y.send_message')}
+          accessibilityState={{ disabled: isTyping }}
+          testID="coach.send"
+        >
+          <Ionicons name="arrow-up" size={18} color="#FFFFFF" />
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: coachPalette.ink },
+  flex: { flex: 1 },
+  topBar: { paddingHorizontal: 20, paddingBottom: 4, gap: 6, alignItems: 'flex-start' },
+  burger: { width: 42, height: 42, justifyContent: 'center' },
+  body: { flex: 1 },
+  content: { flex: 1 },
+  chat: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 20, gap: 14 },
+  empty: { flexGrow: 1 },
+  heading: { paddingHorizontal: 28, paddingTop: 48, lineHeight: 42 },
+  inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 16, paddingTop: 8 },
+  input: {
+    flex: 1,
+    minHeight: 44,
+    paddingHorizontal: 18,
+    paddingVertical: INPUT_PADDING_V,
+    fontSize: 15,
+    lineHeight: INPUT_LINE_HEIGHT,
+    color: '#FFFFFF',
+    borderRadius: 26,
+    backgroundColor: coachPalette.inputFill,
+    borderWidth: 0.8,
+    borderColor: coachPalette.stroke,
+  },
+  send: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: coachPalette.accent,
     alignItems: 'center',
     justifyContent: 'center',
-    flexShrink: 0,
   },
-  wrap: {
-    maxWidth: '80%',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
-  },
-  wrapAssistant: {
-    // Opaque near-white so the AI's (dark) text stays readable over the photo.
-    backgroundColor: 'rgba(255,255,255,0.94)',
-    borderTopLeftRadius: 4,
-    borderWidth: 0.5,
-    borderColor: 'rgba(15,23,42,0.06)',
-  },
-  wrapUser: {
-    // Warm paper bubble with ink text (was bright blue).
-    backgroundColor: colors.paper,
-    borderTopRightRadius: 4,
-  },
-  text: { fontSize: 14, color: colors.ink, lineHeight: 20 },
-  textUser: { color: colors.ink },
-  typing: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingVertical: 14,
-  },
-  dot: {
-    width: 6, height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.paper2,
-  },
+  sendDimmed: { opacity: 0.6 },
 });

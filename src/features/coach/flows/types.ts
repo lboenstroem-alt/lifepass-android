@@ -1,0 +1,351 @@
+// How a Coach flow plugs into COACH-1's store (plan 3.0.3); COACH-1 owns this file.
+//
+// iOS `CoachViewModel.send(_:detectPlanRequest:detectScheduleQuestion:)` runs
+// ONE ordered pipeline for every typed message. Each step is either a flow
+// already under way taking the words (in progress for the programme wizard
+// and Adjust my plan, a question OPEN for the other two), or a flow STARTING
+// from them, and the two kinds interleave (`SEND_PIPELINE`):
+//
+//   1. program.open      the programme wizard is IN PROGRESS (`isActive`, iOS
+//                        `programFlow != nil`), question open or not: it reads
+//                        nothing typed (ruling 2), says so once and repeats
+//                        its question. The words stop here, always: they never
+//                        go on to another flow or to the model;
+//   2. adjust.open       Adjust my plan is in progress: the same (tap to choose),
+//                        UNLESS the server changes plans by chat
+//                        (`handsTypedOn`): then the words close Adjust and go
+//                        on to the plan change (step 4 sends them whatever
+//                        they say);
+//   2a. planEdit.open    a plan change the Coach suggested is still open (a
+//                        preview card waiting, a clarifying question, or
+//                        "Change my plan" tapped): the words refine it
+//                        (OP-58 with `replacesEditId`);
+//   2b. planEdit.start   words that ask to change the running plan ("swap
+//                        bench for push-ups", "I don't have a cable machine")
+//                        go to OP-58. Only with `detectPlanRequest`;
+//                        either plan-edit step may answer "not a plan edit":
+//                        then its bubble goes and the words go on from
+//                        step 3 as if it never ran (`'passed'`);
+//   3. program.start     a typed request for WEEKS ("a 4 week plan") OFFERS
+//                        the programme wizard. Only with `detectPlanRequest`.
+//                        It comes BEFORE the venue and day-plan wizards' open
+//                        questions: asked for weeks mid-wizard, the member is
+//                        offered the programme, never has the words taken as
+//                        a venue answer or the day-plan question re-asked;
+//   4. venueWizard.open  the venue wizard has a question open: the words answer it;
+//   5. dayPlan.open      the day-plan wizard has a question open: its
+//                        class-type question takes the words as the answer;
+//                        any other question drops them (a hint once per
+//                        flow) and is asked again under them;
+//   6. dayPlan.start     "plan my day", "a hike", "hvað á ég að gera í dag"
+//                        start the day-plan wizard with what the words already
+//                        answer. Only with `detectPlanRequest`;
+//   7. venueWizard.start a venue search starts the venue wizard. With
+//                        `detectScheduleQuestion` a question about classes
+//                        or a time is left for the chat (the wizard only
+//                        finds places); without it, any venue type starts it.
+//
+// A start that takes the words in steps 3 and 6 first ABANDONS every open
+// question (iOS `abandonOpenQuestions`: every flow dropped, every unanswered
+// question bubble closed), BEFORE it appends anything, so its own new
+// question stays open. The flow decides whether the words start it, so the
+// pipeline hands it `abandonOpenQuestions` to call at that moment.
+//
+// The words reach the model (`/coach`) only when no step took them AND the
+// AI path is not locked (the free tier or the daily cap): a locked AI path
+// drops them. The wizards never call the model, so they keep working at
+// either lock. A prompt the app parks (Home's cards) is sent after
+// `abandonOpenQuestions`, with both detect options off.
+//
+// A flow is a module that exports a `CoachFlow`. COACH-1's store runs the
+// pipeline (`runSendPipeline`); COACH-2 to COACH-5 fill the four flows. The
+// message renderers are the flow's own bubbles (plan cards, proposal cards,
+// multi-selects), keyed by the message kind the flow appends.
+//
+// WHAT A FLOW WORKS WITH. Everything a flow does to the chat goes through the
+// store's host (`coachHost()` in ../store/host.ts): append and update
+// messages (a QUESTION bubble is a message with `options`, drawn by COACH-1's
+// question bubble and answered back through `selectOption` below), the
+// typing dots and the chat generation (`host.busy()`), the AI locks, the
+// model history, and the one-shot routes (Plans, Account, the Plan tab). A
+// flow keeps its own state (what it has asked, the answers) and resets it in
+// `abandon` and `reset`.
+//
+// HOW A FLOW IS ENTERED. Typed words reach it through the pipeline above. A
+// tap reaches it through `enter` (a category tile, an empty-state chip, a
+// parked entry from another tab) and `selectOption` (a chip on a question
+// bubble the flow asked: the message carries `flow`, so the tap goes back to
+// the flow that asked it, iOS `selectOption`'s routing). The store checks
+// `!isTyping` and abandons every open question before `enter`, as each iOS
+// entry point does first.
+import type { ComponentType } from 'react';
+
+import type { CoachPlanEditEntry, CoachProgramEntry } from '../../../stores/intentStore';
+
+export type CoachFlowId = 'venueWizard' | 'dayPlan' | 'program' | 'adjust' | 'planEdit';
+
+/** One step of the send pipeline: a flow, and whether it takes words for an open question or starts from them. */
+export type CoachSendStep =
+  | 'program.open'
+  | 'adjust.open'
+  | 'planEdit.open'
+  | 'planEdit.start'
+  | 'program.start'
+  | 'venueWizard.open'
+  | 'dayPlan.open'
+  | 'dayPlan.start'
+  | 'venueWizard.start';
+
+/** The send pipeline, in iOS `CoachViewModel.send`'s order. The first step that takes the words ends it. */
+export const SEND_PIPELINE: readonly CoachSendStep[] = [
+  'program.open',
+  'adjust.open',
+  'planEdit.open',
+  'planEdit.start',
+  'program.start',
+  'venueWizard.open',
+  'dayPlan.open',
+  'dayPlan.start',
+  'venueWizard.start',
+];
+
+/**
+ * What a step that looked at the words answers: `true` it took them,
+ * `false` it did not (the next step looks), `'passed'` it sent them to the
+ * server, which said they are not a plan change: the words go on from
+ * `PASSED_RESUMES_AT`, skipping the rest of the plan-edit steps, so they are
+ * never sent twice.
+ */
+export type CoachStepResult = boolean | 'passed';
+
+/** Where words a plan-edit step passed on go next. */
+export const PASSED_RESUMES_AT: CoachSendStep = 'program.start';
+
+/**
+ * The steps gated on the flow being IN PROGRESS rather than on an open
+ * question (iOS `if programFlow != nil { ...; return }`). Such a flow always
+ * swallows the words: a summary, a body or days sheet, or a confirmation
+ * pending is still the wizard, and "my knee hurts" typed then must never go
+ * on to the day plan, the venue wizard or the model.
+ */
+export const ACTIVE_FLOW_STEPS: readonly CoachSendStep[] = ['program.open', 'adjust.open'];
+
+/** The steps that run only when the words may start a wizard (`detectPlanRequest`). */
+export const PLAN_REQUEST_STEPS: readonly CoachSendStep[] = ['planEdit.start', 'program.start', 'dayPlan.start'];
+
+/** A step's flow and kind. */
+export function sendStepParts(step: CoachSendStep): { readonly flow: CoachFlowId; readonly phase: 'open' | 'start' } {
+  const [flow, phase] = step.split('.') as [CoachFlowId, 'open' | 'start'];
+  return { flow, phase };
+}
+
+export interface CoachSendOptions {
+  /** Off for prompts the app parks (Home's cards): a stray "plan" in the app's own wording must not start a wizard. */
+  readonly detectPlanRequest: boolean;
+  /** Off for parked prompts: a question about classes or a time goes to the chat. */
+  readonly detectScheduleQuestion: boolean;
+}
+
+/** What the pipeline hands a flow that may start. */
+export interface CoachStartContext {
+  /**
+   * iOS `abandonOpenQuestions`: drops every flow's open question and closes
+   * every unanswered question bubble. The programme offer and the day-plan
+   * start call it once they know the words start them, BEFORE appending
+   * anything; the venue wizard does not (no question can be open by then).
+   */
+  abandonOpenQuestions(): void;
+  /**
+   * The in-progress step that closed itself and handed the words on (Adjust
+   * my plan when the server changes plans by chat), else null. The plan
+   * change takes such words whatever they say: they were typed AT a plan.
+   */
+  readonly handedOnFrom?: CoachSendStep | null;
+}
+
+/**
+ * A flow's own bubble, as COACH-1's store keeps it (a `CoachMessage` with a
+ * `kind`; see ../store/messages.ts for the whole message).
+ */
+export interface CoachFlowMessage {
+  readonly id: string;
+  /** Which renderer draws it. */
+  readonly kind: string;
+  /** The flow's own data for the bubble. */
+  readonly payload?: unknown;
+  /** The text the bubble keeps when the chat is saved (a plan's intro), or its caption. */
+  readonly text: string;
+  /** The health lane: never saved, never sent to the model, wiped with the health data. */
+  readonly isHealth?: boolean;
+}
+
+export interface CoachMessageRendererProps {
+  readonly message: CoachFlowMessage;
+  /** A reply or a build is in flight (iOS `isBusy: vm.isTyping`): chips that would call out wait. */
+  readonly busy: boolean;
+  /**
+   * Set only for a message in the model's own words (`isReportableReply`,
+   * Android COACH-7): the renderer offers "Report this reply" and passes the
+   * model's words it draws, which are what the report sends.
+   */
+  readonly onReport?: (words: string) => void;
+}
+
+/**
+ * The venue wizard's categories (iOS `venueQuestions` keys): what a category
+ * tile, the strip and the lagoon chip start (`CoachViewModel.wizardCategory`).
+ */
+export type CoachWizardCategory = 'swimming' | 'gym' | 'spa' | 'yoga' | 'golf' | 'lagoon';
+
+/**
+ * A tap that starts a flow (never typed words: those go through the pipeline).
+ *
+ * - `category`: a category tile, the strip after a search, or the lagoon
+ *   chip. The venue wizard, under `userText` (the tile's own label, so an
+ *   Icelandic member sees an Icelandic bubble). iOS `startSearch`.
+ * - `chip`: the empty state's full-width chips: "Plan my day" (the day-plan
+ *   wizard), "Get a 4-week plan" (the programme wizard), "Adjust my plan"
+ *   (Adjust my plan). `userText` is the chip's label for the member's bubble.
+ *   iOS `startPlan(labelKey:)`, `startProgram(entry: .chip)`, `startAdjust()`.
+ * - `parked`: an entry another tab parked (Plan's intro card, Home, the end
+ *   of a block, a feedback line's Adjust). The programme flow takes
+ *   `planTab`, `home` and `nextBlock`; Adjust my plan takes `adjust`. iOS
+ *   `startProgram(parked:)`, after the store has waited out a reply in flight.
+ */
+export type CoachFlowEntry =
+  | { readonly kind: 'category'; readonly category: CoachWizardCategory; readonly userText: string }
+  | { readonly kind: 'chip'; readonly userText: string }
+  | { readonly kind: 'parked'; readonly entry: CoachProgramEntry }
+  /**
+   * A plan change asked for from another tab (Plan's "Change with Coach",
+   * the runner's "I don't have this"): the day or exercise it is about, and
+   * the words to put in the input for the member to send (never sent for
+   * them).
+   */
+  | { readonly kind: 'planEdit'; readonly entry: CoachPlanEditEntry };
+
+export interface CoachFlow {
+  readonly id: CoachFlowId;
+  /**
+   * True while this flow is in progress at all (iOS `programFlow != nil`,
+   * `adjustFlow != nil`), whether or not a question bubble is open: a summary
+   * waiting for Build it, a body or days sheet up, a confirmation pending.
+   * False again after `abandon` and `reset`. The programme wizard and Adjust
+   * my plan are gated on THIS (`ACTIVE_FLOW_STEPS`); the venue wizard and the
+   * day plan on `hasOpenQuestion`.
+   */
+  isActive(): boolean;
+  /** True while this flow has a question bubble open. */
+  hasOpenQuestion(): boolean;
+  /**
+   * An `.open` step: the words while this flow is in progress (programme,
+   * Adjust) or has a question open (venue wizard, day plan). True when the
+   * flow took them. For the programme wizard and Adjust my plan the answer is
+   * ignored: the words are theirs whatever they return (they show the typed
+   * hint and repeat the open question; they never keep the words).
+   */
+  takeTyped(text: string): CoachStepResult | Promise<CoachStepResult>;
+  /** A `.start` step: start from the words. True when it started (or offered). */
+  startFrom(text: string, options: CoachSendOptions, context: CoachStartContext): CoachStepResult | Promise<CoachStepResult>;
+  /**
+   * While this flow is in progress, typed words close it and go on down the
+   * pipeline instead of being swallowed (Adjust my plan, when the server
+   * changes plans by chat). Absent: false.
+   */
+  handsTypedOn?(): boolean;
+  /** Drop this flow's open question and state (part of `abandonOpenQuestions`). */
+  abandon(): void;
+  /** Forget everything (sign-out, a new chat). */
+  reset(): void;
+  /** The flow's bubbles, by message kind. */
+  readonly renderers: Readonly<Record<string, ComponentType<CoachMessageRendererProps>>>;
+  /**
+   * A tap that starts this flow (see `CoachFlowEntry`). The store has checked
+   * that no reply is in flight and abandoned every open question first.
+   * Absent: the flow has no button entry (or has not landed yet), and the tap
+   * does nothing.
+   */
+  enter?(entry: CoachFlowEntry): void | Promise<void>;
+  /**
+   * A chip on a question bubble this flow asked (`message.flow === id`):
+   * `value` is the option's wire value, `label` what the member saw (or the
+   * text typed into an "Other" field, for both). The flow checks that the
+   * bubble is still its open question (iOS: "only the CURRENT flow's open
+   * question may answer").
+   */
+  selectOption?(messageId: string, value: string, label: string): void | Promise<void>;
+  /**
+   * The health data on this phone was wiped (tracking switched off, here or
+   * elsewhere; iOS `.healthLocalDataWiped`). A flow that holds health answers
+   * (the programme wizard, Adjust my plan) ends here. The flows are told
+   * FIRST: the store removes every `isHealth` turn from the chat right after
+   * this returns (iOS `dropHealthMessages`: `programFlow = nil`,
+   * `endAdjustFlow()`, then `messages.removeAll { $0.isHealth }`), so
+   * `host.messages()` read here still holds them.
+   */
+  healthWiped?(): void;
+}
+
+/**
+ * Runs the send pipeline over the four flows. Returns the step that took the
+ * words, or null: then the words go to the model, unless the AI path is
+ * locked (COACH-1's store decides; this never calls the model).
+ */
+export async function runSendPipeline(
+  flows: Readonly<Record<CoachFlowId, CoachFlow>>,
+  text: string,
+  options: CoachSendOptions,
+  context: CoachStartContext,
+  from: CoachSendStep = SEND_PIPELINE[0]!,
+): Promise<CoachSendStep | null> {
+  let handedOnFrom: CoachSendStep | null = context.handedOnFrom ?? null;
+  for (let index = Math.max(0, SEND_PIPELINE.indexOf(from)); index < SEND_PIPELINE.length; index += 1) {
+    const step = SEND_PIPELINE[index]!;
+    const { flow, phase } = sendStepParts(step);
+    const target = flows[flow];
+    if (ACTIVE_FLOW_STEPS.includes(step)) {
+      if (target.isActive()) {
+        if (target.handsTypedOn?.()) {
+          // The flow closes (its open question with it) and the words go on.
+          context.abandonOpenQuestions();
+          handedOnFrom = step;
+          continue;
+        }
+        // In progress: the words end here whatever the flow answers.
+        await target.takeTyped(text);
+        return step;
+      }
+      continue;
+    }
+    let result: CoachStepResult = false;
+    if (phase === 'open') {
+      if (!target.hasOpenQuestion()) continue;
+      result = await target.takeTyped(text);
+    } else {
+      if (PLAN_REQUEST_STEPS.includes(step) && !options.detectPlanRequest && handedOnFrom === null) continue;
+      result = await target.startFrom(text, options, { ...context, handedOnFrom });
+    }
+    if (result === true) return step;
+    if (result === 'passed') {
+      // Not a plan change: on from the programme offer, never past it twice.
+      const resume = SEND_PIPELINE.indexOf(PASSED_RESUMES_AT);
+      if (resume > index) index = resume - 1;
+      handedOnFrom = null;
+    }
+  }
+  return null;
+}
+
+/** A flow that takes nothing: what each flow file exports until its package lands. */
+export function inactiveFlow(id: CoachFlowId): CoachFlow {
+  return {
+    id,
+    isActive: () => false,
+    hasOpenQuestion: () => false,
+    takeTyped: () => false,
+    startFrom: () => false,
+    abandon: () => undefined,
+    reset: () => undefined,
+    renderers: {},
+  };
+}

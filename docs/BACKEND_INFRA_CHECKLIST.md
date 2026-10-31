@@ -113,3 +113,51 @@ up.
 `POST /payments/checkout-sessions/confirm` exists on `main` (Kling has no mobile
 webhook, so the app calls confirm + polls `GET /payments/status` on return). If
 a future deploy drops it, the app degrades gracefully to polling only.
+
+---
+
+## ⚠️ Update prompt — needs `GET /app-version` deployed and two web settings
+
+The app asks `GET /api/v1/app-version?platform=android` at launch (signed in
+or not), and again when it comes back to the foreground: every time while it
+is blocked, otherwise once the last answer is 30 minutes old. The route is
+anonymous and additive (monorepo branch `feat/app-version-config`, contract
+0.43.0). Until it is deployed the app gets an error, fails open and shows
+nothing, so nothing breaks. A failed check never blocks.
+
+On the web deployment, the owner controls the prompt with:
+
+- `APP_MIN_VERSION_ANDROID`: below this version the app is blocked behind
+  an "Update" button that opens Google Play. Unset means no minimum. It only
+  applies while `APP_LATEST_VERSION_ANDROID` is set: without it the server
+  answers no minimum.
+- `APP_LATEST_VERSION_ANDROID`: the version on Google Play. Google Play has
+  no public version lookup, so set it when a release goes live. Below it the
+  app shows "A new version is available" (Update / Not now), once per new
+  version. Unset means no soft prompt.
+
+**Watch:** set the minimum only after the release it names is live on Google
+Play. The server cannot see Google Play, so it relies on
+`APP_LATEST_VERSION_ANDROID`: it ignores the minimum while that is unset, and
+caps a minimum above it at that version. With the latest version set higher
+than what is really live, a minimum above the live release still blocks
+members with nothing to install, so keep it equal to the live release.
+Only builds that include the prompt ask at all; older builds never see it.
+Code: `src/api/appVersion.ts`, `src/features/appUpdate/`.
+
+---
+
+## ⚠️ First build's `coach` Edge Function: delete it if it is still deployed
+
+The first Android build shipped a Supabase Edge Function, `coach`, that
+proxied the Anthropic API with its own `ANTHROPIC_API_KEY` secret and a
+system prompt from the retired credits model. The app has never called it
+since the Coach moved to `POST /coach` on the LifePass API (as iOS), and its
+source is gone from this repo. If it is still deployed, anyone with the
+public anon key can spend the Anthropic budget through it.
+
+**Owner:** in the Supabase dashboard (production project → Edge Functions),
+or with `supabase functions list`, check whether `coach` is deployed. If it
+is, delete it (`supabase functions delete coach`) and remove its
+`ANTHROPIC_API_KEY` secret (`supabase secrets unset ANTHROPIC_API_KEY`) unless
+another function uses it. Plan section 6, step 13.
